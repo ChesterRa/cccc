@@ -228,6 +228,9 @@ it("explains settings-scoped setup refresh and lists troubleshooting for all sup
     (section) => section.querySelector("summary")?.textContent === enLayout.localSessions.setup,
   )!;
   await click(setup.querySelector("summary"));
+  const enableCommand = setup.querySelector("pre");
+  expect(enableCommand?.textContent).toBe("cccc sessions enable --runtime codex");
+  expect(enableCommand?.className).toContain("whitespace-pre-wrap");
   expect(setup.textContent).toContain(enLayout.localSessions.setupFinishInSettings);
   const readsBefore = mocks.fetch.mock.calls.length;
   await click(button(enLayout.localSessions.refreshSessions));

@@ -110,7 +110,7 @@
     "groupScopeTitle": "作業グループ範囲",
     "groupScopeContent": "{{scopeRoot}} にのみ適用されます。グループ固有のタイムアウトと統合に役立ちます。",
     "groupScopeNoGroup": "開いている作業グループがありません。作業グループから設定を開くと、その作業グループの設定を変更できます。",
-    "globalScopeTitle": "グローバル範囲",
+    "globalScopeTitle": "このインスタンス",
     "globalScopeContent": "CCCC インスタンス全体 (daemon + Web) に適用されます。これらの設定は、オーバーライドしない限り、すべてのグループに影響します。",
     "globalLockedTitle": "管理者権限が必要です",
     "globalLockedContent": "グローバル設定は管理者専用です。グループ設定を変更したい場合は対象グループから Settings を開き、グローバル設定を管理したい場合は管理者アクセストークンでサインインしてください。"

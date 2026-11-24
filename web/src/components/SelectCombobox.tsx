@@ -16,6 +16,7 @@ interface SelectComboboxProps {
   placeholder?: string;
   searchable?: boolean;
   searchPlaceholder?: string;
+  wrapOptionLabels?: boolean;
 }
 
 export function SelectCombobox({
@@ -30,6 +31,7 @@ export function SelectCombobox({
   placeholder = ariaLabel,
   searchable = false,
   searchPlaceholder = ariaLabel,
+  wrapOptionLabels = false,
 }: SelectComboboxProps) {
   const { t } = useTranslation("common");
   return (
@@ -46,6 +48,7 @@ export function SelectCombobox({
       contentClassName={cn("p-0", contentClassName)}
       searchable={searchable}
       matchTriggerWidth
+      wrapOptionLabels={wrapOptionLabels}
     />
   );
 }

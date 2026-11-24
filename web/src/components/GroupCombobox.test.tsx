@@ -217,3 +217,48 @@ it("opens the list in a portal with pixel icons and the search focused", async (
   const input = popover.querySelector<HTMLInputElement>("[cmdk-input]")!;
   expect(document.activeElement).toBe(input);
 });
+
+it("truncates option labels by default and wraps only when wrapOptionLabels is enabled", async () => {
+  const trigger = await open();
+  const triggerLabel = trigger.querySelector("span")!;
+  expect(triggerLabel.className).toContain("truncate");
+  const defaultItems = [...document.querySelectorAll<HTMLElement>("[cmdk-item]")];
+  expect(defaultItems).toHaveLength(2);
+  for (const item of defaultItems) {
+    expect(item.className).not.toContain("items-start");
+    const label = item.querySelector<HTMLElement>(":scope > div > div:first-child")!;
+    expect(label.className).toContain("truncate");
+    expect(label.className).not.toContain("whitespace-normal");
+  }
+
+  await act(async () =>
+    root.render(
+      <GroupCombobox
+        items={[
+          { value: "foreman", label: "foreman (foreman can read peers)" },
+          { value: "all", label: "all (any agent can read others)" },
+        ]}
+        value="foreman"
+        onChange={vi.fn()}
+        placeholder="Choose"
+        searchPlaceholder="Search"
+        emptyText="No matches"
+        ariaLabel="Visibility"
+        searchable={false}
+        wrapOptionLabels
+      />,
+    ),
+  );
+  const wrapTrigger = host.querySelector<HTMLButtonElement>('button[role="combobox"]')!;
+  await act(async () => wrapTrigger.click());
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 20)));
+  expect(wrapTrigger.querySelector("span")!.className).toContain("truncate");
+  const wrappedItems = [...document.querySelectorAll<HTMLElement>("[cmdk-item]")];
+  expect(wrappedItems).toHaveLength(2);
+  for (const item of wrappedItems) {
+    expect(item.className).toContain("items-start");
+    const label = item.querySelector<HTMLElement>(":scope > div > div:first-child")!;
+    expect(label.className).toContain("whitespace-normal");
+    expect(label.className).not.toContain("truncate");
+  }
+});

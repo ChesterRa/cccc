@@ -258,4 +258,70 @@ describe("Web Access connection drafts", () => {
       "webAccess.providerLabel",
     );
   });
+
+  it("shows the current-browser info button only when a help note applies", async () => {
+    vi.mocked(api.fetchWebAccessSession).mockResolvedValueOnce({
+      ok: true,
+      result: {
+        web_access_session: {
+          can_access_global_settings: true,
+          current_browser_signed_in: true,
+          principal_kind: "local",
+          login_active: false,
+        },
+      },
+    });
+    vi.mocked(api.fetchAccessTokens).mockResolvedValueOnce({
+      ok: true,
+      result: { access_tokens: [] },
+    });
+    await render();
+    expect(host.querySelector('button[aria-label="webAccess.currentBrowserTitle"]')).toBeNull();
+
+    await act(async () => root.unmount());
+    root = createRoot(host);
+    vi.mocked(api.fetchWebAccessSession).mockResolvedValueOnce({
+      ok: true,
+      result: {
+        web_access_session: {
+          can_access_global_settings: true,
+          current_browser_signed_in: true,
+          principal_kind: "local",
+          login_active: true,
+        },
+      },
+    });
+    await render();
+    const localWithTokenTrigger = host.querySelector<HTMLButtonElement>(
+      'button[aria-label="webAccess.currentBrowserTitle"]',
+    );
+    expect(localWithTokenTrigger).not.toBeNull();
+    await act(async () => localWithTokenTrigger!.click());
+    const localPopoverText = document.querySelector("[data-settings-info-popover]")?.textContent;
+    expect(localPopoverText).toContain("webAccess.currentBrowserVerifyHint");
+    expect(localPopoverText).not.toContain("webAccess.signOutHint");
+
+    await act(async () => root.unmount());
+    root = createRoot(host);
+    vi.mocked(api.fetchWebAccessSession).mockResolvedValueOnce({
+      ok: true,
+      result: {
+        web_access_session: {
+          can_access_global_settings: true,
+          current_browser_signed_in: true,
+          principal_kind: "token",
+          login_active: true,
+        },
+      },
+    });
+    await render();
+    const signedInTrigger = host.querySelector<HTMLButtonElement>(
+      'button[aria-label="webAccess.currentBrowserTitle"]',
+    );
+    expect(signedInTrigger).not.toBeNull();
+    await act(async () => signedInTrigger!.click());
+    const signedInPopoverText = document.querySelector("[data-settings-info-popover]")?.textContent;
+    expect(signedInPopoverText).toContain("webAccess.currentBrowserVerifyHint");
+    expect(signedInPopoverText).toContain("webAccess.signOutHint");
+  });
 });

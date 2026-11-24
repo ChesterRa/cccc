@@ -37,6 +37,7 @@ interface GroupComboboxProps {
   caretClassName?: string;
   searchable?: boolean;
   matchTriggerWidth?: boolean;
+  wrapOptionLabels?: boolean;
 }
 
 export function GroupCombobox({
@@ -54,6 +55,7 @@ export function GroupCombobox({
   caretClassName,
   searchable = true,
   matchTriggerWidth = false,
+  wrapOptionLabels = false,
 }: GroupComboboxProps) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
@@ -151,6 +153,7 @@ export function GroupCombobox({
                       value={`=${item.value}=`}
                       disabled={item.disabled}
                       keywords={[item.label, item.description || "", ...(item.keywords || [])]}
+                      className={wrapOptionLabels ? "items-start" : undefined}
                       onSelect={() => {
                         if (item.disabled) return;
                         onChange(item.value);
@@ -160,10 +163,22 @@ export function GroupCombobox({
                       <CheckIcon
                         size={24}
                         absoluteStrokeWidth={false}
-                        className={cn("h-4 w-4 shrink-0", selected ? "opacity-100" : "opacity-0")}
+                        className={cn(
+                          "h-4 w-4 shrink-0",
+                          wrapOptionLabels && "mt-0.5",
+                          selected ? "opacity-100" : "opacity-0",
+                        )}
                       />
                       <div className="min-w-0 flex-1">
-                        <div className="truncate text-sm">{item.label}</div>
+                        <div
+                          className={
+                            wrapOptionLabels
+                              ? "whitespace-normal break-words text-sm leading-5"
+                              : "truncate text-sm"
+                          }
+                        >
+                          {item.label}
+                        </div>
                         {item.description ? (
                           <div
                             className={cn(

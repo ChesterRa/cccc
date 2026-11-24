@@ -100,6 +100,7 @@ export function TranscriptTab({
               }}
               ariaLabel={t("transcript.visibilityLabel")}
               className={inputClass()}
+              wrapOptionLabels
             />
           </div>
         </SettingsRow>

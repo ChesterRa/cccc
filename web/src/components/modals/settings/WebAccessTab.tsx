@@ -210,6 +210,9 @@ export function WebAccessTab({
   const knownAccessTokenCount =
     typeof session?.access_token_count === "number" ? session.access_token_count : accessTokenCount;
   const loginActive = Boolean(session?.login_active ?? knownAccessTokenCount > 0);
+  const canSignOutCurrentBrowser = Boolean(
+    session?.current_browser_signed_in && session.principal_kind !== "local",
+  );
   const canAccessGlobalSettings = Boolean(session?.can_access_global_settings ?? !loginActive);
   const publicAccessTokenConfigured = hasAdminToken;
   const { accessSummary, currentBrowserSummary } = useWebAccessSessionSummaries(
@@ -1493,34 +1496,37 @@ export function WebAccessTab({
                       {currentBrowserSummary.detail}
                     </div>
                   </div>
-                  <InfoPopover
-                    isDark={isDark}
-                    title={t("webAccess.currentBrowserTitle")}
-                    content={
-                      <div className="space-y-2">
-                        {loginActive ? <div>{t("webAccess.currentBrowserVerifyHint")}</div> : null}
-                        {session?.current_browser_signed_in &&
-                        session.principal_kind !== "local" ? (
-                          <div>{t("webAccess.signOutHint")}</div>
-                        ) : null}
-                      </div>
-                    }
-                  >
-                    {(getReferenceProps, setReference) => (
-                      <button
-                        type="button"
-                        ref={setReference as never}
-                        {...getReferenceProps()}
-                        className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border transition-colors ${statusChipClass(isDark, currentBrowserSummary.tone)}`}
-                        aria-label={t("webAccess.currentBrowserTitle")}
-                        data-status-tone={lcdStatusTone(currentBrowserSummary.tone)}
-                      >
-                        <InfoIcon size={12} />
-                      </button>
-                    )}
-                  </InfoPopover>
+                  {loginActive || canSignOutCurrentBrowser ? (
+                    <InfoPopover
+                      isDark={isDark}
+                      title={t("webAccess.currentBrowserTitle")}
+                      content={
+                        <div className="space-y-2">
+                          {loginActive ? (
+                            <div>{t("webAccess.currentBrowserVerifyHint")}</div>
+                          ) : null}
+                          {canSignOutCurrentBrowser ? (
+                            <div>{t("webAccess.signOutHint")}</div>
+                          ) : null}
+                        </div>
+                      }
+                    >
+                      {(getReferenceProps, setReference) => (
+                        <button
+                          type="button"
+                          ref={setReference as never}
+                          {...getReferenceProps()}
+                          className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border transition-colors ${statusChipClass(isDark, currentBrowserSummary.tone)}`}
+                          aria-label={t("webAccess.currentBrowserTitle")}
+                          data-status-tone={lcdStatusTone(currentBrowserSummary.tone)}
+                        >
+                          <InfoIcon size={12} />
+                        </button>
+                      )}
+                    </InfoPopover>
+                  ) : null}
                 </div>
-                {session?.current_browser_signed_in && session.principal_kind !== "local" ? (
+                {canSignOutCurrentBrowser ? (
                   <div className="mt-3 flex flex-wrap gap-2">
                     <button
                       type="button"

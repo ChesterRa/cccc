@@ -107,7 +107,7 @@
     "groupScopeTitle": "工作组范围",
     "groupScopeContent": "仅应用于 {{scopeRoot}}。适用于工作组特定的超时和集成设置。",
     "groupScopeNoGroup": "当前没有打开的工作组。从某个工作组打开设置，才能修改它的设置。",
-    "globalScopeTitle": "全局范围",
+    "globalScopeTitle": "整个实例",
     "globalScopeContent": "应用于整个 CCCC 实例（守护进程 + Web）。这些设置影响所有工作组，除非被覆盖。",
     "globalLockedTitle": "需要管理员权限",
     "globalLockedContent": "全局设置仅限管理员使用。若要调整工作组内设置，请从某个工作组打开设置；若要管理全局设置，请使用管理员访问令牌登录。"
