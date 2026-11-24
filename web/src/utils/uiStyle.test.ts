@@ -6,6 +6,8 @@ import {
   LCD_BODY_STORAGE_KEY,
   LCD_MOTION_STORAGE_KEY,
   LCD_WIDTH_STORAGE_KEY,
+  LOOK_STORAGE_KEY,
+  SKIN_STORAGE_KEY,
   normalizeUiStylePrefs,
 } from "./uiStyle";
 
@@ -21,6 +23,8 @@ beforeEach(() => {
   delete root.dataset.lcdBody;
   delete root.dataset.lcdWidth;
   delete root.dataset.lcdMotion;
+  delete root.dataset.skin;
+  delete root.dataset.look;
 });
 
 afterEach(() => {
@@ -29,9 +33,21 @@ afterEach(() => {
 
 describe("LCD appearance preferences", () => {
   it("accepts only known values and falls back to the defaults", () => {
-    expect(normalizeUiStylePrefs({ lcdBody: "pixel", lcdWidth: "full", lcdMotion: "off" })).toEqual(
-      { lcdBody: "pixel", lcdWidth: "full", lcdMotion: "off" },
-    );
+    expect(
+      normalizeUiStylePrefs({
+        lcdBody: "pixel",
+        lcdWidth: "full",
+        lcdMotion: "off",
+        skin: "classic",
+        look: "square",
+      }),
+    ).toEqual({
+      lcdBody: "pixel",
+      lcdWidth: "full",
+      lcdMotion: "off",
+      skin: "classic",
+      look: "square",
+    });
     expect(normalizeUiStylePrefs({ lcdWidth: "wide" }).lcdWidth).toBe("wide");
     expect(normalizeUiStylePrefs({ lcdBody: "mono" }).lcdBody).toBe("mono");
     expect(normalizeUiStylePrefs({ lcdBody: "proportional" }).lcdBody).toBe("proportional");
@@ -49,6 +65,8 @@ describe("LCD appearance preferences", () => {
       lcdBody: "proportional",
       lcdWidth: "full",
       lcdMotion: "off",
+      skin: "classic",
+      look: "square",
     });
   });
 
@@ -142,5 +160,31 @@ describe("LCD appearance preferences", () => {
     store.setUiStylePrefs({ lcdBody: "pixel" });
     expect(store.getUiStylePrefs().lcdBody).toBe("pixel");
     expect(document.documentElement.dataset.lcdBody).toBe("pixel");
+  });
+
+  it("keeps the plain square look unless a skin or the soft style is chosen", async () => {
+    expect(DEFAULT_UI_STYLE_PREFS).toMatchObject({ skin: "classic", look: "square" });
+    expect(normalizeUiStylePrefs({ skin: "studio", look: "soft" })).toMatchObject({
+      skin: "studio",
+      look: "soft",
+    });
+    expect(normalizeUiStylePrefs({ skin: "ocean", look: "round" })).toMatchObject({
+      skin: "classic",
+      look: "square",
+    });
+  });
+
+  it("marks the root with the chosen skin and style, and the plain palette with no skin", async () => {
+    window.localStorage.setItem(SKIN_STORAGE_KEY, "studio");
+    window.localStorage.setItem(LOOK_STORAGE_KEY, "soft");
+    const store = await loadStore();
+    const root = document.documentElement;
+    store.applyUiStylePrefs(store.getUiStylePrefs());
+    expect(root.dataset.skin).toBe("studio");
+    expect(root.dataset.look).toBe("soft");
+    store.setUiStylePrefs({ skin: "classic", look: "square" });
+    expect(root.dataset.skin).toBeUndefined();
+    expect(root.dataset.look).toBe("square");
+    expect(window.localStorage.getItem(SKIN_STORAGE_KEY)).toBe("classic");
   });
 });

@@ -16,6 +16,26 @@ classes that its hooks already override.
   (`text-rose-600`, `bg-black/5`) needs a hook below; do not add an LCD rule keyed on the
   palette class.
 
+## Style and skin
+
+Appearance has two independent halves, both chosen per browser in the appearance menu
+(`utils/uiStyle.ts`) and painted from the first frame by `index.html`:
+
+- **Style** (`data-look` on `<html>`): `square`, the default LCD shape, or `soft`
+  (`lcdSoft.css`): rounded corners, soft shadows instead of strong frames, sans-serif text,
+  line icons and tints rather than full reverses under the pointer. The LCD rule that
+  squares every corner skips the soft style, so components' own radii come back. Soft rules
+  start with `:root[data-ui-style="lcd"][data-look="soft"]`, one attribute more than the
+  LCD rules they restyle, and the file is imported last, so the shape wins without
+  `!important`. They take every colour from the `--lcd-*` tokens.
+- **Skin** (`data-skin` on `<html>`, absent for the plain palette): a file in `skins/`
+  that only redefines the `--lcd-*` tokens, for light and `.dark`. `studio` is a quiet
+  neutral palette with one indigo accent. A skin works with either style.
+
+To add a skin, add `skins/<name>.css` with both palettes, import it in `index.css` before
+`lcdSoft.css`, and list it in `UI_SKINS`, the appearance menu and the `index.html`
+bootstrap.
+
 ## Choose a hook by meaning, not by the classic colour
 
 | Hook                    | Values                                                 | Use for                                                                                                                                                                                                                          |

@@ -11,6 +11,8 @@ import {
   type LcdBodyFont,
   type LcdMotion,
   type LcdWidth,
+  type UiLook,
+  type UiSkin,
 } from "../../utils/uiStyle";
 import { SegmentedChoice, type SegmentedOption } from "../ui/segmented-choice";
 import { ChevronDownIcon } from "../Icons";
@@ -36,6 +38,8 @@ function AppearanceChoice<Value extends string | number>({
     | "lcdBody"
     | "lcdWidth"
     | "lcdMotion"
+    | "skin"
+    | "look"
     | "textScale"
     | "language"
     | "pendingPrompts";
@@ -121,6 +125,26 @@ export function AppearancePreferences({
         />
       </button>
       <div id={moreId} hidden={!moreOpen}>
+        <AppearanceChoice<UiLook>
+          name="look"
+          label={t("lookLabel")}
+          value={uiStyle.look}
+          onChange={(look) => setUiStylePrefs({ look })}
+          options={[
+            { value: "square", label: t("lookSquare"), title: t("lookSquareHint") },
+            { value: "soft", label: t("lookSoft"), title: t("lookSoftHint") },
+          ]}
+        />
+        <AppearanceChoice<UiSkin>
+          name="skin"
+          label={t("skinLabel")}
+          value={uiStyle.skin}
+          onChange={(skin) => setUiStylePrefs({ skin })}
+          options={[
+            { value: "classic", label: t("skinClassic") },
+            { value: "studio", label: t("skinStudio"), title: t("skinStudioHint") },
+          ]}
+        />
         <AppearanceChoice<LcdBodyFont>
           name="lcdBody"
           label={t("lcdBodyLabel")}

@@ -115,6 +115,8 @@ describe("appearance choices inside their real hosts", () => {
       expect(more.getAttribute("aria-expanded")).toBe("false");
       expect(folded.hidden).toBe(true);
       expect(names(folded)).toEqual([
+        "look",
+        "skin",
         "lcdBody",
         "lcdWidth",
         "lcdMotion",

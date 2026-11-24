@@ -13,6 +13,17 @@
         const automatic = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
         const theme = stored === "light" || stored === "dark" ? stored : automatic;
         document.documentElement.classList.add(theme);
+        // The skin and the style (utils/uiStyle.ts) paint from the first frame too.
+        let skin = null;
+        let look = null;
+        try {
+          skin = localStorage.getItem("cccc-ui-skin");
+          look = localStorage.getItem("cccc-ui-look");
+        } catch {
+          // As above.
+        }
+        if (skin === "studio") document.documentElement.dataset.skin = skin;
+        document.documentElement.dataset.look = look === "soft" ? "soft" : "square";
       })();
     </script>
     <meta

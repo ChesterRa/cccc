@@ -1,0 +1,73 @@
+/* Studio skin: a quiet neutral palette, a pale warm-grey ground with white cards and ink
+   text, and one accent, indigo, for what is chosen or primary. It only sets colours, like
+   the other skins; the shape (rounded corners, soft shadows, sans-serif text) is the soft
+   style (lcdSoft.css), chosen on its own, so studio colours also work on the square style
+   and the soft style works with every skin.
+
+   Contrast: body text on panel-2 stays above 7:1 in both themes, muted text above 4.5:1. */
+
+:root[data-ui-style="lcd"][data-skin="studio"] {
+  --lcd-bg: #f5f5f3;
+  --lcd-panel: #f0f0ed;
+  --lcd-panel-2: #ebebe7;
+  --lcd-raised: #ffffff;
+  --lcd-plate: #ffffff;
+  --lcd-plate-ink: #3a3d44;
+  --lcd-ink: #1d2027;
+  --lcd-ink-strong: #0f1116;
+  --lcd-dim: #474b55;
+  --lcd-muted: #5f636d;
+  --lcd-rule: #e4e3df;
+  --lcd-rule-strong: #cfcdc7;
+  --lcd-sep: #ecebe7;
+  --lcd-wait: #c2410c;
+  --lcd-on-wait: #ffffff;
+  --lcd-danger: #b42318;
+  --lcd-link: #3949c4;
+  --lcd-sel-bg: #4450d6;
+  --lcd-sel-fg: #ffffff;
+  --lcd-sel-soft: #eceefb;
+  --lcd-code-bg: #f1f1ee;
+  --lcd-overlay: rgba(20, 22, 30, 0.28);
+  --lcd-name-0: #3949c4;
+  --lcd-name-1: #b4541a;
+  --lcd-name-2: #7c3aad;
+  --lcd-name-3: #b42d4f;
+  --lcd-name-4: #16708a;
+  --lcd-name-5: #4d7c0f;
+  --lcd-name-6: #946200;
+  --lcd-name-7: #5b4fc4;
+}
+
+:root[data-ui-style="lcd"][data-skin="studio"].dark {
+  --lcd-bg: #141518;
+  --lcd-panel: #1a1c20;
+  --lcd-panel-2: #202227;
+  --lcd-raised: #1f2126;
+  --lcd-plate: #2a2d33;
+  --lcd-plate-ink: #dfe1e6;
+  --lcd-ink: #e4e6eb;
+  --lcd-ink-strong: #f4f5f8;
+  --lcd-dim: #b9bcc5;
+  --lcd-muted: #9a9ea8;
+  --lcd-rule: #2a2d33;
+  --lcd-rule-strong: #3c4048;
+  --lcd-sep: #25282d;
+  --lcd-wait: #f59e5b;
+  --lcd-on-wait: #1a1206;
+  --lcd-danger: #f28b7d;
+  --lcd-link: #9aa8ff;
+  --lcd-sel-bg: #8590ff;
+  --lcd-sel-fg: #10121a;
+  --lcd-sel-soft: #252940;
+  --lcd-code-bg: #1a1c20;
+  --lcd-overlay: rgba(0, 0, 0, 0.5);
+  --lcd-name-0: #9aa8ff;
+  --lcd-name-1: #f0a36b;
+  --lcd-name-2: #c9a0f5;
+  --lcd-name-3: #f39ab0;
+  --lcd-name-4: #6cc8e0;
+  --lcd-name-5: #a4d36a;
+  --lcd-name-6: #e8c060;
+  --lcd-name-7: #b2aaff;
+}

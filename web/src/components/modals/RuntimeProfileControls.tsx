@@ -72,6 +72,8 @@ export function RuntimeConfigurationModePicker({
           type="button"
           variant="outline"
           className={modeButtonClass(value === "custom")}
+          data-runtime-mode-choice
+          aria-pressed={value === "custom"}
           onClick={() => onChange("custom")}
           disabled={disabled}
         >
@@ -81,6 +83,8 @@ export function RuntimeConfigurationModePicker({
           type="button"
           variant="outline"
           className={modeButtonClass(value === "profile")}
+          data-runtime-mode-choice
+          aria-pressed={value === "profile"}
           onClick={() => onChange("profile")}
           disabled={disabled}
         >

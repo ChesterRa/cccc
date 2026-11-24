@@ -1,0 +1,601 @@
+/* Soft style: the LCD layout with rounded corners, soft shadows instead of strong frames,
+   sans-serif text with tabular figures, and tints rather than full reverses under the
+   pointer. It is the shape half of the appearance; the skin (styles/skins/) is the colour
+   half, and the two are chosen independently (utils/uiStyle.ts). Every colour here comes
+   from the skin's `--lcd-*` tokens, so the style follows whichever skin is on.
+
+   The style is set by `data-look="soft"` on the root (index.html sets it before the first
+   paint). The LCD catch-all that squares every corner skips it (lcd.css), so components'
+   own radii come back, and the radius tokens below give them sizes. Rules start with
+   `:root[data-ui-style="lcd"][data-look="soft"]`, one attribute more than the LCD rules
+   they restyle, and this file is imported after the skins, so on a shared hook the shape
+   wins without `!important`. */
+
+:root[data-ui-style="lcd"][data-look="soft"] {
+  --soft-hover: color-mix(in srgb, var(--lcd-ink) 5%, transparent);
+  --soft-hover-strong: color-mix(in srgb, var(--lcd-ink) 9%, transparent);
+  --soft-shadow-sm: 0 1px 2px rgba(20, 24, 40, 0.06);
+  --soft-shadow: 0 1px 2px rgba(20, 24, 40, 0.05), 0 4px 14px rgba(20, 24, 40, 0.06);
+  --soft-shadow-lg: 0 2px 6px rgba(20, 24, 40, 0.06), 0 16px 40px rgba(20, 24, 40, 0.12);
+  --soft-ring: 0 0 0 3px color-mix(in srgb, var(--lcd-sel-bg) 22%, transparent);
+  --soft-accent-soft: color-mix(in srgb, var(--lcd-sel-bg) 12%, transparent);
+  --soft-wait-soft: color-mix(in srgb, var(--lcd-wait) 12%, transparent);
+  --lcd-bubble-radius: 16px;
+  --lcd-bubble-tail: 5px;
+
+  --lcd-font-cjk:
+    "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Microsoft YaHei", "Hiragino Sans",
+    "Yu Gothic", "Meiryo", sans-serif;
+  --lcd-font-body:
+    "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "IBM Plex Sans", var(--lcd-font-cjk);
+  --lcd-font-pixel: var(--lcd-font-body);
+  --lcd-font-brand: var(--lcd-font-body);
+}
+
+:root[data-ui-style="lcd"][data-look="soft"].dark {
+  --soft-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --soft-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 18px rgba(0, 0, 0, 0.25);
+  --soft-shadow-lg: 0 2px 8px rgba(0, 0, 0, 0.35), 0 18px 44px rgba(0, 0, 0, 0.45);
+}
+
+:root[data-ui-style="lcd"][data-look="soft"]:lang(ja) {
+  --lcd-font-cjk:
+    "Hiragino Sans", "Noto Sans CJK JP", "Yu Gothic", "Meiryo", "PingFang SC", sans-serif;
+  --lcd-font-pixel: var(--lcd-font-body);
+}
+
+/* The body-font preference picks a mono or pixel face for text; the soft style keeps it. */
+:root[data-ui-style="lcd"][data-look="soft"][data-lcd-body="mono"] {
+  --lcd-font-body: "IBM Plex Mono", var(--lcd-font-cjk);
+}
+
+:root[data-ui-style="lcd"][data-look="soft"][data-lcd-body="pixel"] {
+  --lcd-font-body: "RoundPix 16", "IBM Plex Mono", var(--lcd-font-cjk);
+}
+
+/* Corners and type. */
+:root[data-ui-style="lcd"][data-look="soft"] [data-lcd-scope] {
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 12px;
+  --radius-2xl: 16px;
+  --radius-3xl: 20px;
+  --radius-4xl: 24px;
+  --glass-shadow: var(--soft-shadow);
+  --glass-shadow-lg: var(--soft-shadow-lg);
+  --focus-ring: var(--soft-ring);
+  font-feature-settings:
+    "tnum" 1,
+    "cv11" 1;
+  -webkit-font-smoothing: antialiased;
+  letter-spacing: -0.003em;
+}
+
+:root[data-ui-style="lcd"][data-look="soft"] [data-lcd-scope] :focus-visible {
+  outline: 2px solid var(--lcd-sel-bg);
+  outline-offset: 2px;
+}
+
+:root[data-ui-style="lcd"][data-look="soft"]
+  [data-lcd-scope]
+  input[role="switch"]:focus-visible
+  + [data-switch-track] {
+  outline: 2px solid var(--lcd-sel-bg);
+}
+
+:root[data-ui-style="lcd"][data-look="soft"] [data-lcd-scope] ::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+}
+
+/* Controls: a soft key, tinted under the pointer rather than reversed. */
+:root[data-ui-style="lcd"][data-look="soft"]
+  [data-lcd-scope]
+  :is(
+    [data-lcd-key],
+    [data-lcd-primary],
+    [data-lcd-field],
+    [data-group-work-shortcuts] > button,
+    [data-group-side-panel-controls-host] > button,
+    [data-app-settings-trigger],
+    [data-group-view-toggle],
+    [data-group-run-controls] > span,
+    .glass-input,
+    button,
+    input,
+    select,
+    textarea
+  ) {
+  border-radius: 8px;
+}
+
+:root[data-ui-style="lcd"][data-look="soft"]
+  [data-lcd-scope]
+  :is(
+    [data-lcd-key],
+    [data-group-work-shortcuts] > button,
+    [data-group-side-panel-controls-host] > button,
+    [data-app-settings-trigger],
+    [data-group-view-toggle],
+    [data-group-run-controls] > span
+  ) {
+  border: 1px solid var(--lcd-rule);
+  background: var(--lcd-raised);
+  box-shadow: var(--soft-shadow-sm);
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+:root[data-ui-style="lcd"][data-look="soft"] [data-lcd-scope] [data-lcd-key]:hover:not(:disabled),
+:root[data-ui-style="lcd"][data-look="soft"]
+  [data-lcd-scope]
+  :is([data-group-work-shortcuts], [data-group-side-panel-controls-host])
+  > button:hover:not(:disabled),
+:root[data-ui-style="lcd"][data-look="soft"]
+  [data-lcd-scope]
+  :is([data-app-settings-trigger], [data-group-view-toggle]):hover,
+:root[data-ui-style="lcd"][data-look="soft"]
+  [data-lcd-scope]
+  [data-group-run-controls]:hover
+  > span {
+  border-color: var(--lcd-rule-strong);
+  background: var(--lcd-panel);
+  color: var(--lcd-ink);
+}
+
+:root[data-ui-style="lcd"][data-look="soft"]
+  [data-lcd-scope]
+  [data-group-run-controls]:hover
+  > svg {
+  color: var(--lcd-ink);
+}
+
+:root[data-ui-style="lcd"][data-look="soft"] [data-lcd-scope] [data-lcd-primary] {
+  border-color: var(--lcd-sel-bg);
+  background: var(--lcd-sel-bg);
+  color: var(--lcd-sel-fg);
+  box-shadow: var(--soft-shadow-sm);
+}
+
+:root[data-ui-style="lcd"][data-look="soft"]
+  [data-lcd-scope]
+  [data-lcd-primary]:hover:not(:disabled) {
+  border-color: var(--lcd-sel-bg);
+  background: var(--lcd-sel-bg);
+  filter: brightness(1.08);
+}
+
+:root[data-ui-style="lcd"][data-look="soft"] [data-lcd-scope] :is([data-lcd-field], .glass-input) {
+  border-color: var(--lcd-rule-strong);
+  background: var(--lcd-raised);
+}
+
+:root[data-ui-style="lcd"][data-look="soft"]
+  [data-lcd-scope]
+  :is([data-lcd-field], .glass-input):focus {
+  border-color: var(--lcd-sel-bg);
+  box-shadow: var(--soft-ring);
+}
+
+/* Menus float on a shadow; items are rounded rows tinted under the pointer. */
+:root[data-ui-style="lcd"][data-look="soft"]
+  :is([data-lcd-scope], [data-lcd-scope] *):is([data-group-menu], [data-lcd-menu]) {
+  border: 1px solid var(--lcd-rule);
+  border-radius: 12px;
+  background: var(--lcd-raised);
+  box-shadow: var(--soft-shadow-lg);
+  padding: 4px;
+}
+
+:root[data-ui-style="lcd"][data-look="soft"]
+  :is([data-lcd-scope], [data-lcd-scope] *):is([data-group-menu], [data-lcd-menu])
+  :is([role^="menuitem"], [role="option"], button) {
+  border-radius: 7px;
+}
+
+:root[data-ui-style="lcd"][data-look="soft"]
+  :is([data-lcd-scope], [data-lcd-scope] *):is([data-group-menu], [data-lcd-menu])
+  :is([role^="menuitem"], [role="option"], button):is(
+    :hover,
+    :focus-visible,
+    [aria-selected="true"]
+  ):not(:disabled) {
+  background: var(--lcd-sel-soft);
+  color: var(--lcd-ink);
+}
+
+:root[data-ui-style="lcd"][data-look="soft"]
+  :is([data-lcd-scope], [data-lcd-scope] *):is([data-group-menu], [data-lcd-menu])
+  [data-lcd-tag] {
+  border-radius: 999px;
+}
+
+/* Dialogs. */
+:root[data-ui-style="lcd"][data-look="soft"] [data-lcd-scope] [role="dialog"],
+:root[data-ui-style="lcd"][data-look="soft"] [role="dialog"][data-lcd-scope] {
+  border-radius: 16px;
+  box-shadow: var(--soft-shadow-lg);
+}
+
+/* Switches: a pill track; the current choice is a raised white key on it. */
+:root[data-ui-style="lcd"][data-look="soft"]
+  [data-lcd-scope]
+  :is(
+    [data-group-view-switch],
+    [data-settings-scope-switch],
+    [data-segmented-choice],
+    [data-search-kind],
+    [data-voice-pane-switch],
+    [data-workspace-mode-switch],
+    [data-connect-mode-switch],
+    [data-browser-view-switch],
+    [data-voice-panel-views],
+    [data-voice-document-views],
+    [data-presentation-snapshot-tabs],
+    [data-presentation-preview-mode],
+    [data-presentation-slot-switch]
+  ) {
+  gap: 2px;
+  padding: 3px;
+  border-radius: 10px;
+  background: var(--lcd-panel-2);
+}
+
+:root[data-ui-style="lcd"][data-look="soft"]
+  [data-lcd-scope]
+  :is(
+    [data-group-view-switch] > button,
+    [data-settings-scope-switch] > button,
+    [data-segmented-choice] > [role="radio"],
+    [data-search-kind] > button,
+    [data-voice-pane-switch] > button,
+    [data-workspace-mode-switch] > button,
+    [data-connect-mode-switch] > button,
+    [data-browser-view-switch] > button,
+    [data-voice-panel-views] > button,
+    [data-voice-document-views] > button,
+    [data-presentation-snapshot-tabs] > button,
+    [data-presentation-preview-mode] > button,
+    [data-presentation-slot-switch] > button
+  ) {
+  margin: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--lcd-dim);
+  transition:
+    background-color 140ms ease,
+    color 140ms ease;
+}
+
+:root[data-ui-style="lcd"][data-look="soft"] [data-lcd-scope] [data-group-view-switch] > button {
+  height: calc(2rem - 6px);
+}
+
+:root[data-ui-style="lcd"][data-look="soft"]
+  [data-lcd-scope]
+  :is(
+    [data-group-view-switch],
+    [data-settings-scope-switch],
+    [data-segmented-choice],
+    [data-search-kind],
+    [data-voice-pane-switch],
+    [data-workspace-mode-switch],
+    [data-connect-mode-switch],
+    [data-browser-view-switch],
+    [data-voice-panel-views],
+    [data-voice-document-views],
+    [data-presentation-snapshot-tabs],
+    [data-presentation-preview-mode],
+    [data-presentation-slot-switch]
+  )
+  > :is([aria-pressed="true"], [aria-checked="true"], [aria-selected="true"]) {
+  background: var(--lcd-raised);
+  color: var(--lcd-ink);
+  box-shadow: var(--soft-shadow-sm);
+}
+
+:root[data-ui-style="lcd"][data-look="soft"]
+  [data-lcd-scope]
+  [data-group-view-switch]
+  > button[aria-pressed="false"]:hover {
+  background: var(--soft-hover-strong);
+  color: var(--lcd-ink);
+}
+
+:root[data-ui-style="lcd"][data-look="soft"]
+  [data-lcd-scope]
+  :is([data-group-work-shortcuts], [data-group-side-panel-controls-host]) {
+  gap: 4px;
+}
+
+:root[data-ui-style="lcd"][data-look="soft"]
+  [data-lcd-scope]
+  :is([data-group-work-shortcuts], [data-group-side-panel-controls-host])
+  > button
+  + button {
+  margin-left: 0;
+}
+
+/* Sidebar: the open chat is a soft accent row, not a filled bar. */
+:root[data-ui-style="lcd"][data-look="soft"] [data-lcd-scope] .glass-group-item-active {
+  border-color: transparent;
+  background: var(--lcd-sel-soft);
+  color: var(--lcd-ink);
+}
+
+:root[data-ui-style="lcd"][data-look="soft"]
+  [data-lcd-scope]
+  .glass-group-item-active
+  :is(span, button, svg) {
+  color: inherit;
+}
+
+:root[data-ui-style="lcd"][data-look="soft"] [data-lcd-scope] .glass-group-item:hover {
+  background: var(--soft-hover);
+}
+
+/* Avatars and runtime logos: round plates. */
+:root[data-ui-style="lcd"][data-look="soft"] .lcd-tile {
+  border-color: var(--lcd-rule);
+  border-radius: 8px;
+}
+
+:root[data-ui-style="lcd"][data-look="soft"]
+  [data-lcd-scope]
+  :is([data-lcd-dock-button], [data-lcd-dock-add], [data-lcd-dock-add] > span) {
+  border-radius: 10px;
+}
+
+/* Code. */
+:root[data-ui-style="lcd"][data-look="soft"]
+  [data-lcd-scope]
+  :is(.code-block-wrapper, .markdown-body pre) {
+  border-color: var(--lcd-rule);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+:root[data-ui-style="lcd"][data-look="soft"] [data-lcd-scope] .code-block-header {
+  border-bottom-color: var(--lcd-rule);
+}
+
+/* Switches: a pill track with a round knob that casts a small shadow. Off, the track is a
+   quiet tint and the knob the page ground; on, the track fills with the accent and the knob
+   stays light on it, as on a phone. */
+:root[data-ui-style="lcd"][data-look="soft"] [data-lcd-scope] [data-switch-track] {
+  border-color: transparent;
+  border-radius: 999px;
+  background: var(--soft-hover-strong);
+  transition: background-color 160ms ease;
+}
+
+:root[data-ui-style="lcd"][data-look="soft"] [data-lcd-scope] [data-switch-track]::after {
+  border: 0;
+  border-radius: 999px;
+  background: var(--lcd-bg);
+  box-shadow:
+    var(--soft-shadow-sm),
+    0 0 0 0.5px var(--lcd-rule-strong);
+}
+
+:root[data-ui-style="lcd"][data-look="soft"]
+  [data-lcd-scope]
+  input[role="switch"]:checked
+  + [data-switch-track] {
+  border-color: transparent;
+  background: var(--lcd-sel-bg);
+}
+
+:root[data-ui-style="lcd"][data-look="soft"]
+  [data-lcd-scope]
+  input[role="switch"]:checked
+  + [data-switch-track]::after {
+  background: var(--lcd-sel-fg);
+  box-shadow: var(--soft-shadow-sm);
+}
+
+:root[data-ui-style="lcd"][data-look="soft"]
+  [data-lcd-scope]
+  input[role="switch"]:hover:not(:disabled, :checked)
+  + [data-switch-track] {
+  background: color-mix(in srgb, var(--lcd-ink) 14%, transparent);
+}
+
+/* A choice between two ways of setting something up (custom or a Runtime Profile): the chosen
+   one is tinted in the accent with an accent frame, not filled in ink. */
+:root[data-ui-style="lcd"][data-look="soft"] [data-lcd-scope] [data-runtime-mode-choice] {
+  border-color: var(--lcd-rule);
+  border-radius: 10px;
+  background: var(--lcd-bg);
+  color: var(--lcd-dim);
+  box-shadow: none;
+}
+
+:root[data-ui-style="lcd"][data-look="soft"]
+  [data-lcd-scope]
+  [data-runtime-mode-choice]:hover:not(:disabled) {
+  background: var(--soft-hover);
+  color: var(--lcd-ink);
+}
+
+:root[data-ui-style="lcd"][data-look="soft"]
+  [data-lcd-scope]
+  [data-runtime-mode-choice][aria-pressed="true"] {
+  border-color: var(--lcd-sel-bg);
+  background: var(--soft-accent-soft);
+  color: var(--lcd-sel-bg);
+  opacity: 1;
+}
+
+/* Checkboxes and the single choices of a question: smooth native controls in the accent,
+   not the pixel ring, and Recommended is a small tinted pill rather than bracketed. */
+:root[data-ui-style="lcd"][data-look="soft"]
+  [data-lcd-scope]
+  input[type="checkbox"]:not([role="switch"]) {
+  accent-color: var(--lcd-sel-bg);
+}
+
+:root[data-ui-style="lcd"][data-look="soft"] [data-pending-reply] input[type="radio"] {
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border: 1.5px solid var(--lcd-rule-strong);
+  border-radius: 999px;
+  background: var(--lcd-bg);
+  -webkit-mask: none;
+  mask: none;
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+:root[data-ui-style="lcd"][data-look="soft"] [data-pending-reply] input[type="radio"]:checked {
+  border-color: var(--lcd-sel-bg);
+  box-shadow: inset 0 0 0 3.5px var(--lcd-bg);
+  background: var(--lcd-sel-bg);
+}
+
+:root[data-ui-style="lcd"][data-look="soft"] [data-pending-reply] input[type="radio"]:disabled {
+  border-color: var(--lcd-rule);
+  background: var(--soft-hover);
+}
+
+:root[data-ui-style="lcd"][data-look="soft"] [data-pending-reply] fieldset label {
+  border-radius: 8px;
+}
+
+:root[data-ui-style="lcd"][data-look="soft"] [data-pending-reply] [data-recommended-tag] {
+  padding: 0 0.5rem;
+  border-radius: 999px;
+  background: var(--soft-accent-soft);
+  color: var(--lcd-sel-bg);
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+:root[data-ui-style="lcd"][data-look="soft"] [data-pending-reply] [data-recommended-tag]::before,
+:root[data-ui-style="lcd"][data-look="soft"] [data-pending-reply] [data-recommended-tag]::after {
+  content: none;
+}
+
+/* Small pieces the LCD style squares: the members list, recipient and dock badges, the
+   avatar picker's scrim and a bottom sheet's handle take round corners here too. */
+:root[data-ui-style="lcd"][data-look="soft"] .lcd-members-popover {
+  border-color: var(--lcd-rule);
+  border-radius: 12px;
+  box-shadow: var(--soft-shadow-lg);
+}
+
+:root[data-ui-style="lcd"][data-look="soft"]
+  [data-lcd-scope]
+  :is([data-recipient-badge], [data-dock-badge]) {
+  border-radius: 999px;
+}
+
+:root[data-ui-style="lcd"][data-look="soft"] [data-lcd-scope] [data-avatar-scrim] {
+  border-radius: inherit;
+}
+
+:root[data-ui-style="lcd"][data-look="soft"] [data-lcd-scope] [data-sheet-handle] {
+  border-radius: 999px;
+}
+
+/* Waiting counts and status tags are pills. */
+:root[data-ui-style="lcd"][data-look="soft"] [data-lcd-scope] [data-pending-state] {
+  border-radius: 999px;
+}
+
+/* Icons: each one carries its Lucide line drawing beside the pixel glyph (Icons.tsx,
+   lcdIcons.css); the soft style shows the line drawing instead. */
+:root[data-ui-style="lcd"][data-look="soft"]
+  [data-lcd-scope]
+  svg[data-lcd-icon]
+  > :is(path, line, polyline, polygon, circle, ellipse, rect, g):not([data-lcd-glyph]) {
+  display: inline;
+}
+
+:root[data-ui-style="lcd"][data-look="soft"]
+  [data-lcd-scope]
+  svg[data-lcd-icon]
+  > [data-lcd-glyph] {
+  display: none;
+}
+
+/* Status marks: round where the square look draws corners. */
+:root[data-ui-style="lcd"][data-look="soft"] .lcd-group-symbol[data-lcd-shape="idle"]::before {
+  border-radius: 999px;
+  transform: none;
+}
+
+:root[data-ui-style="lcd"][data-look="soft"] .lcd-group-symbol[data-lcd-shape="stop"]::before {
+  border-radius: 2px;
+}
+
+:root[data-ui-style="lcd"][data-look="soft"] .lcd-group-symbol[data-lcd-shape="offline"]::before {
+  border-radius: 999px;
+}
+
+/* ---------------------------------------------------------------- Message actions */
+
+/* Beside a bubble, a message's actions are a small floating pill: rounded, lifted by a soft
+   shadow on the bubble's own ground, with round keys and no rules between them. The key
+   under the pointer takes a tint (the skin may give its own). */
+:root[data-ui-style="lcd"][data-look="soft"] [data-lcd-scope] [data-message-actions-inline] {
+  gap: 1px;
+  padding: 2px;
+  border: 1px solid var(--lcd-bubble-border, var(--lcd-rule));
+  border-radius: 10px;
+  background: var(--lcd-bubble-bg, var(--lcd-bg));
+  box-shadow: var(--soft-shadow);
+}
+
+:root[data-ui-style="lcd"][data-look="soft"]
+  [data-lcd-scope]
+  [data-message-actions-inline]
+  > button {
+  min-width: 1.5rem;
+  min-height: 1.5rem;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  color: var(--lcd-dim);
+}
+
+:root[data-ui-style="lcd"][data-look="soft"]
+  [data-lcd-scope]
+  [data-message-actions-inline]
+  > button
+  + button {
+  border-left: 0;
+}
+
+:root[data-ui-style="lcd"][data-look="soft"]
+  [data-lcd-scope]
+  [data-message-actions-inline]
+  > button:hover {
+  background: var(--soft-hover-strong);
+  color: var(--lcd-ink);
+}
+
+/* ---------------------------------------------------------------- Reply quotes */
+
+/* The excerpt a reply quotes is a tinted rounded block, as in DingTalk, instead of a rule down
+   its left side, which a rounded corner bends into a bracket. It is as wide as its text. */
+:root[data-ui-style="lcd"][data-look="soft"] [data-lcd-scope] [data-message-quote] {
+  width: fit-content;
+  max-width: 100%;
+  padding: 0.375rem 0.75rem;
+  border: 0;
+  border-radius: 8px;
+  background: var(--soft-hover-strong);
+  color: var(--lcd-dim);
+}
+
+:root[data-ui-style="lcd"][data-look="soft"] [data-lcd-scope] button[data-message-quote]:hover {
+  background: color-mix(in srgb, var(--lcd-ink) 13%, transparent);
+  color: var(--lcd-ink);
+}

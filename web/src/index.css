@@ -15,6 +15,10 @@
 @import "./styles/lcdVoiceSecretary.css";
 @import "./styles/lcdVoiceDocuments.css";
 @import "./styles/lcdPresentation.css";
+/* Skins come after every LCD rule they recolour. */
+@import "./styles/skins/studio.css";
+/* The soft style comes after the skins, so its shape wins on hooks they also decorate. */
+@import "./styles/lcdSoft.css";
 @import "tailwindcss";
 
 @config "../tailwind.config.ts";
