@@ -601,18 +601,7 @@ async fn rollback_started_job(config_dir: &Path, short: &str) -> io::Result<()> 
 }
 
 async fn kill_and_confirm(endpoint: &control::Endpoint, short: &str) -> io::Result<()> {
-    confirm_job_removal(endpoint, short, STOP_TIMEOUT)
-        .await
-        .map_err(unconfirmed_stop)
-}
-
-#[cfg(test)]
-async fn kill_and_confirm_with_timeout(
-    endpoint: &control::Endpoint,
-    short: &str,
-    timeout: Duration,
-) -> io::Result<()> {
-    confirm_job_removal(endpoint, short, timeout)
+    confirm_job_removal(endpoint, short)
         .await
         .map_err(unconfirmed_stop)
 }
@@ -624,11 +613,7 @@ fn unconfirmed_stop(error: io::Error) -> io::Error {
     )
 }
 
-async fn confirm_job_removal(
-    endpoint: &control::Endpoint,
-    short: &str,
-    timeout: Duration,
-) -> io::Result<()> {
+async fn confirm_job_removal(endpoint: &control::Endpoint, short: &str) -> io::Result<()> {
     let mut kill_error = None;
     match control::list(endpoint).await {
         Ok(jobs)
@@ -645,7 +630,7 @@ async fn confirm_job_removal(
     if let Err(error) = control::kill(endpoint, short).await {
         kill_error = Some(error);
     }
-    let deadline = tokio::time::Instant::now() + timeout;
+    let deadline = tokio::time::Instant::now() + STOP_TIMEOUT;
     let mut last_error: Option<io::Error>;
     // Agent View jobs can outlive their control harness. This adapter owns a
     // job identifier, not a process identity it can verify has exited, so only
@@ -1730,28 +1715,25 @@ mod tests {
         (config_dir, listener, guard)
     }
 
+    #[cfg(unix)]
     async fn unconfirmed_after_logical_timeout(
         endpoint: &control::Endpoint,
         short: &str,
     ) -> io::Error {
         tokio::time::pause();
-        let mut task = std::pin::pin!(kill_and_confirm_with_timeout(endpoint, short, STOP_TIMEOUT));
-        let mut before_deadline = std::pin::pin!(tokio::time::sleep(Duration::from_secs(9)));
-        tokio::task::yield_now().await;
-        tokio::time::advance(Duration::from_secs(9)).await;
-        let early = tokio::select! {
-            result = &mut task => Some(result),
-            _ = &mut before_deadline => None,
-        };
+        let started = tokio::time::Instant::now();
+        let error = kill_and_confirm(endpoint, short)
+            .await
+            .expect_err("unconfirmed stop must fail");
+        // Every control request here fails at once, so the paused clock moves
+        // only through the confirmation loop's own waits: this is the logical
+        // time it actually waited.
+        let waited = started.elapsed();
         assert!(
-            early.is_none(),
-            "stop confirmation must keep waiting for the full configured timeout"
+            waited >= STOP_TIMEOUT && waited < STOP_TIMEOUT + Duration::from_secs(1),
+            "stop confirmation must wait the full configured timeout, waited {waited:?}"
         );
-        tokio::time::advance(Duration::from_secs(1)).await;
-        for _ in 0..4 {
-            tokio::task::yield_now().await;
-        }
-        task.await.expect_err("unconfirmed stop must fail")
+        error
     }
 
     #[cfg(unix)]
@@ -2901,9 +2883,15 @@ mod tests {
             }
         });
         let endpoint = control::Endpoint::resolve(&config_dir).expect("endpoint resolves");
-        let error = unconfirmed_after_logical_timeout(&endpoint, "deadbeef").await;
+        // Real time: while a reply is in flight a paused clock can jump to the
+        // next timer, so logical time would not measure this loop.
+        let started = std::time::Instant::now();
+        let error = kill_and_confirm(&endpoint, "deadbeef")
+            .await
+            .expect_err("a stuck task still fails the stop");
         assert_eq!(error.kind(), io::ErrorKind::TimedOut);
         assert!(error.to_string().contains("stop unconfirmed"), "{error}");
+        assert!(started.elapsed() >= STOP_TIMEOUT, "{:?}", started.elapsed());
         server.abort();
     }
 

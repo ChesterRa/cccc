@@ -12,7 +12,11 @@ pub(super) fn scoped(
         .map_err(|e| OpError::new("permission_denied", e.to_string()))?;
     let key = match string_arg(request, "scope_key").filter(|key| !key.is_empty()) {
         Some(key) => key,
-        None if writing => return Err(OpError::invalid("scope_key is required")),
+        None if writing => {
+            return Err(OpError::invalid(
+                "scope_key and scope_url are required for writes; pass the values from get",
+            ));
+        }
         None => match super::super::actor_runtime::caller_scope(&group, &by(request))? {
             Some(scope) => {
                 if !group.scopes.iter().any(|item| {
@@ -30,14 +34,22 @@ pub(super) fn scoped(
             None => return Ok(None),
         },
     };
+    if writing
+        && string_arg(request, "scope_url")
+            .as_deref()
+            .is_none_or(str::is_empty)
+    {
+        return Err(OpError::invalid(
+            "scope_url is required for writes; pass the value from get",
+        ));
+    }
     let scope = group
         .scopes
         .iter()
         .find(|scope| scope.scope_key == key)
         .ok_or_else(|| OpError::new("scope_conflict", "Scope is no longer attached"))?;
-    if (writing || request.args.contains_key("scope_url"))
-        && string_arg(request, "scope_url").as_deref() != Some(scope.url.as_str())
-    {
+    let scope_url = string_arg(request, "scope_url");
+    if request.args.contains_key("scope_url") && scope_url.as_deref() != Some(scope.url.as_str()) {
         return Err(OpError::new(
             "scope_conflict",
             "Workspace changed; reload before writing",

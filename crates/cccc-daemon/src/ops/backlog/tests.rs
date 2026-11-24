@@ -272,6 +272,33 @@ fn stale_hash_scope_file_switch_and_peer_permissions_refuse_before_writing() {
     .expect("valid test fixture");
     assert_eq!(f.call("backlog_add", json!({"path":"BACKLOG.md","section":"Open","title":"new","body":"","if_file_sha256":empty["sha256"]})).expect_err("operation is rejected").code, "backlog_file_conflict");
     assert_eq!(f.call("backlog_add", json!({"path":"BACKLOG.md","section":"Open","title":"new","body":"","scope_url":"/different"})).expect_err("operation is rejected").code, "scope_conflict");
+    // A write that leaves out the scope names what is missing, not a workspace change.
+    for (missing, value) in [
+        ("scope_key", json!(null)),
+        ("scope_url", json!(null)),
+        ("scope_url", json!("")),
+    ] {
+        let error = f
+            .call(
+                "backlog_add",
+                json!({"path":"BACKLOG.md","section":"Open","title":"new","body":"",missing:value}),
+            )
+            .expect_err("operation is rejected");
+        assert_eq!(error.code, "invalid_args", "{missing}");
+        assert!(
+            error.message.contains("scope_url"),
+            "{missing}: {}",
+            error.message
+        );
+    }
+    // A missing argument is reported before the attachment is looked up.
+    let error = f
+        .call(
+            "backlog_add",
+            json!({"path":"BACKLOG.md","section":"Open","title":"new","body":"","scope_key":"s_detached","scope_url":null}),
+        )
+        .expect_err("operation is rejected");
+    assert_eq!(error.code, "invalid_args");
     std::fs::write(f.root.join("other.md"), original).expect("valid test fixture");
     f.call("backlog_use", json!({"path":"other.md"}))
         .expect("valid test fixture");

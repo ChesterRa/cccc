@@ -7560,8 +7560,10 @@ All operations take `group_id` and the usual port-bound `by`. Reads and entry
 mutations require Group membership. Selecting/creating the file or changing
 local Git exclusion requires the user or foreman. `backlog_get` defaults to the
 caller's effective scope and accepts explicit `scope_key`; other operations
-require the snapshot's `scope_key` and `scope_url`. A changed/missing attachment
-is rejected. Entry mutations, promote and exclude MUST also echo snapshot.path;
+require the snapshot's `scope_key` and `scope_url`. A missing or empty
+`scope_key` or `scope_url` on those operations fails with `invalid_args`; a
+`scope_url` that differs from the attached scope, or a missing attachment,
+fails with `scope_conflict`. Entry mutations, promote and exclude MUST also echo snapshot.path;
 changing the configured file invalidates a pending edit even if both files have
 identical content. Paths remain inside the selected workspace, including symlink
 resolution. Public exhibit Web MUST reject all backlog routes, including GET.

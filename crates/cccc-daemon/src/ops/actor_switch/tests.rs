@@ -1264,6 +1264,7 @@ fn terminal_that_stops_reading(fixture: &Fixture) -> Vec<String> {
 
 struct BlockedTerminalRelease {
     _hook: crate::ops::actor_delivery::ShutdownHook,
+    release: std::path::PathBuf,
     stop_watchdog: Option<Sender<()>>,
     watchdog: Option<std::thread::JoinHandle<()>>,
     timed_out: std::sync::Arc<AtomicBool>,
@@ -1280,6 +1281,10 @@ impl BlockedTerminalRelease {
 
 impl Drop for BlockedTerminalRelease {
     fn drop(&mut self) {
+        // A test that fails before shutdown never runs the hook. Release the
+        // terminal anyway: if terminal cancellation has regressed, the
+        // fixture's group shutdown would otherwise wait on it forever.
+        let _ = std::fs::write(&self.release, []);
         if let Some(stop) = self.stop_watchdog.take() {
             let _ = stop.send(());
         }
@@ -1305,12 +1310,14 @@ fn release_blocked_terminal_on_shutdown(fixture: &Fixture) -> BlockedTerminalRel
             let _ = std::fs::write(watchdog_release, []);
         }
     });
+    let hook_release = release.clone();
     let hook = crate::ops::actor_delivery::on_shutdown(&fixture.group_id, "x", move || {
         assert!(stalled.exists(), "shutdown began before the stalled marker");
-        std::fs::write(&release, []).expect("release blocked terminal");
+        std::fs::write(&hook_release, []).expect("release blocked terminal");
     });
     BlockedTerminalRelease {
         _hook: hook,
+        release,
         stop_watchdog: Some(stop_watchdog),
         watchdog: Some(watchdog),
         timed_out,
