@@ -18,6 +18,8 @@ pub(crate) use drain::drain_group;
 pub(crate) use drain::{
     PreparedDrain, apply_drain, drain_local_completions, pending_group_ids, prepare_drain,
 };
+#[cfg(test)]
+pub(crate) use lifecycle::{ShutdownHook, on_shutdown};
 pub use lifecycle::{
     ShutdownReason, pause_group, shutdown_actor, shutdown_actor_for, shutdown_all, shutdown_group,
 };
@@ -125,6 +127,8 @@ struct DeliveryWorker {
     cancelled: Arc<AtomicBool>,
     /// Set before cancellation when the Actor's runtime owner is replaced.
     replaced: Arc<AtomicBool>,
+    #[cfg(test)]
+    shutdown_hook: Option<Box<dyn FnOnce() + Send>>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
 
@@ -143,6 +147,10 @@ impl DeliveryWorker {
     fn stop(&mut self) {
         self.cancelled.store(true, Ordering::Release);
         self.sender.take();
+        #[cfg(test)]
+        if let Some(hook) = self.shutdown_hook.take() {
+            hook();
+        }
         if let Some(thread) = self.thread.take()
             && thread.join().is_err()
         {
@@ -1664,6 +1672,8 @@ fn spawn_worker(key: &Key) -> DeliveryWorker {
         sender: thread.as_ref().map(|_| sender),
         cancelled,
         replaced,
+        #[cfg(test)]
+        shutdown_hook: None,
         thread,
     }
 }

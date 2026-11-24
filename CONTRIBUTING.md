@@ -24,7 +24,7 @@ and do not paste tokens, credentials, or provider transcripts into issues.
 
 Source builds require:
 
-- Rust 1.88 (pinned in `rust-toolchain.toml`; `rustup` installs it automatically)
+- Rust 1.91 or newer, the minimum declared in `Cargo.toml` (CI builds with 1.91.0, pinned in `rust-toolchain.toml`; `rustup` installs it automatically)
 - Node.js 24 with npm (CI pins 24.19.0)
 - Python 3.11+ — for release packaging and repository-contract checks only;
   the product itself contains no Python implementation

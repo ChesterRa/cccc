@@ -12,7 +12,8 @@ use cccc_core::profiles::ProfileStore;
 use cccc_core::{ledger, scope};
 use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Sender};
 use std::time::{Duration, Instant};
 
 mod receiver;
@@ -1238,6 +1239,7 @@ fn a_submission_cut_off_by_the_switch_is_not_repeated_and_queued_work_moves_on()
     let group = fixture.group();
     let actor = fixture.actor();
     let queued = fixture.send(&group, &actor, "queued behind the blocked write".into());
+    let release = release_blocked_terminal_on_shutdown(&fixture);
 
     receiver::while_connected(&fixture, &source, || {
         let result = fixture.switch(native_target(&source));
@@ -1245,17 +1247,74 @@ fn a_submission_cut_off_by_the_switch_is_not_repeated_and_queued_work_moves_on()
         assert_eq!(result["completion"], "done");
         fixture.assert_cut_off_work_moves_on(&source, &cut, &queued);
     });
+    release.assert_success();
 }
 
 /// A program that reads into the large message of `a_write_cut_part_way`, says
 /// so, and reads no more: the rest of that write blocks.
 fn terminal_that_stops_reading(fixture: &Fixture) -> Vec<String> {
     let script = format!(
-        "stty -icanon -echo; head -c 65536 | grep -q {} && : > '{}'; exec sleep 60",
+        "stty -icanon -echo; head -c 65536 | grep -q {} && : > '{}'; while [ ! -f '{}' ]; do sleep 0.01; done; exit 0",
         "x".repeat(64),
-        fixture.workspace.join("stalled").display()
+        fixture.workspace.join("stalled").display(),
+        fixture.workspace.join("release").display(),
     );
     vec!["sh".to_owned(), "-c".to_owned(), script]
+}
+
+struct BlockedTerminalRelease {
+    _hook: crate::ops::actor_delivery::ShutdownHook,
+    stop_watchdog: Option<Sender<()>>,
+    watchdog: Option<std::thread::JoinHandle<()>>,
+    timed_out: std::sync::Arc<AtomicBool>,
+}
+
+impl BlockedTerminalRelease {
+    fn assert_success(&self) {
+        assert!(
+            !self.timed_out.load(Ordering::Acquire),
+            "shutdown watchdog timed out waiting for the worker shutdown hook"
+        );
+    }
+}
+
+impl Drop for BlockedTerminalRelease {
+    fn drop(&mut self) {
+        if let Some(stop) = self.stop_watchdog.take() {
+            let _ = stop.send(());
+        }
+        if let Some(watchdog) = self.watchdog.take() {
+            watchdog.join().expect("shutdown watchdog");
+        }
+    }
+}
+
+fn release_blocked_terminal_on_shutdown(fixture: &Fixture) -> BlockedTerminalRelease {
+    let release = fixture.workspace.join("release");
+    let stalled = fixture.workspace.join("stalled");
+    let timed_out = std::sync::Arc::new(AtomicBool::new(false));
+    let watchdog_timed_out = std::sync::Arc::clone(&timed_out);
+    let (stop_watchdog, watchdog_stop) = mpsc::channel();
+    let watchdog_release = release.clone();
+    let watchdog = std::thread::spawn(move || {
+        if watchdog_stop.recv_timeout(Duration::from_secs(30)).is_err() {
+            watchdog_timed_out.store(true, Ordering::Release);
+            eprintln!(
+                "shutdown watchdog timed out waiting for worker removal, cancellation, sender disconnect, and shutdown hook; releasing terminal"
+            );
+            let _ = std::fs::write(watchdog_release, []);
+        }
+    });
+    let hook = crate::ops::actor_delivery::on_shutdown(&fixture.group_id, "x", move || {
+        assert!(stalled.exists(), "shutdown began before the stalled marker");
+        std::fs::write(&release, []).expect("release blocked terminal");
+    });
+    BlockedTerminalRelease {
+        _hook: hook,
+        stop_watchdog: Some(stop_watchdog),
+        watchdog: Some(watchdog),
+        timed_out,
+    }
 }
 
 /// A large message whose first bytes have reached the program.
@@ -1296,6 +1355,7 @@ fn terminal_with_a_blocked_write(fixture: &Fixture) -> Event {
 fn a_submission_cut_off_by_a_restart_is_not_repeated() {
     let fixture = Fixture::new();
     let cut = terminal_with_a_blocked_write(&fixture);
+    let release = release_blocked_terminal_on_shutdown(&fixture);
 
     let restarted = fixture.request("actor_restart", json!({"actor_id": "x"}));
 
@@ -1303,18 +1363,21 @@ fn a_submission_cut_off_by_a_restart_is_not_repeated() {
     assert_eq!(fixture.delivery_state(&cut).as_deref(), Some("ambiguous"));
     let stopped = fixture.request("actor_stop", json!({"actor_id": "x"}));
     assert!(stopped.ok, "{:?}", stopped.error);
+    release.assert_success();
 }
 
 #[test]
 fn a_submission_cut_off_by_a_stop_stays_out_of_the_queue() {
     let fixture = Fixture::new();
     let cut = terminal_with_a_blocked_write(&fixture);
+    let release = release_blocked_terminal_on_shutdown(&fixture);
 
     let stopped = fixture.request("actor_stop", json!({"actor_id": "x"}));
 
     assert!(stopped.ok, "{:?}", stopped.error);
     assert_eq!(fixture.delivery_state(&cut).as_deref(), Some("ambiguous"));
     assert!(!fixture.pending().contains(&cut.id));
+    release.assert_success();
 }
 
 /// A DeepSeek member that took the returned message; `answer` is its provider's

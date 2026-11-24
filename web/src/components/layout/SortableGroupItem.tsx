@@ -10,6 +10,7 @@ import { classNames } from "../../utils/classNames";
 import { getGroupStatusFromSource } from "../../utils/groupStatus";
 import { useGroupMenu, type GroupMenuActionItem } from "./useGroupMenu";
 import { GroupStatusIndicator } from "./GroupStatusIndicator";
+import { GroupSidebarName } from "./GroupSidebarName";
 import { GroupItemMenuTrigger } from "./GroupItemMenuTrigger";
 import { GroupPendingIndicator } from "../../features/pendingReplies/PendingIndicator";
 import { usePendingGroupLabel } from "../../features/pendingReplies/usePendingGroupLabel";
@@ -211,22 +212,7 @@ export function SortableGroupItem({
           onMouseEnter={onWarm}
           onFocus={onWarm}
         >
-          <div className="flex items-center gap-2 min-w-0">
-            <span
-              className={classNames(
-                "text-sm truncate",
-                isActive
-                  ? "font-semibold text-[rgb(35,36,37)] dark:text-white"
-                  : "font-normal text-[var(--color-text-primary)] group-hover/item:text-[var(--color-text-primary)]",
-              )}
-              title={group.title || gid}
-            >
-              {group.title || gid}
-            </span>
-          </div>
-          {/* At the row end, so the row starts with the name and the symbol is not taken
-              for an expand or collapse control. */}
-          <GroupStatusIndicator status={status} />
+          <GroupSidebarName title={group.title || gid} status={status} isActive={isActive} />
         </button>
         <GroupPendingIndicator groupId={gid} groupName={group.title || gid} />
         {connection?.count && onOpenConnections ? (

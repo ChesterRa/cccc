@@ -451,6 +451,8 @@ mod tests {
                 sender: Some(tx),
                 cancelled: Arc::new(AtomicBool::new(false)),
                 replaced: Arc::new(AtomicBool::new(false)),
+                #[cfg(test)]
+                shutdown_hook: None,
                 thread: None,
             },
         );

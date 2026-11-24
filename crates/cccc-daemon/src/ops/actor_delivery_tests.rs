@@ -602,6 +602,8 @@ fn worker_shutdown_cancels_blocked_terminal_submission_before_runtime_stop() {
         sender: None,
         cancelled,
         replaced: Arc::new(AtomicBool::new(false)),
+        #[cfg(test)]
+        shutdown_hook: None,
         thread: Some(thread),
     };
     let (done_tx, done_rx) = mpsc::channel();
@@ -758,6 +760,8 @@ fn install_stub_worker(group_id: &str, actor_id: &str) -> mpsc::Receiver<Deliver
             sender: Some(tx),
             cancelled: Arc::new(AtomicBool::new(false)),
             replaced: Arc::new(AtomicBool::new(false)),
+            #[cfg(test)]
+            shutdown_hook: None,
             thread: None,
         },
     );

@@ -70,6 +70,12 @@ import { useShortTouchViewport } from "../../hooks/useShortTouchViewport";
 import { CHET_SELECTOR } from "../../utils/chetIdentity";
 import { messageModeForRecipients } from "../../stores/composerMessageMode";
 import {
+  type ComposerSendKey,
+  isComposerSendKeystroke,
+  loadComposerSendKeyPreference,
+  saveComposerSendKeyPreference,
+} from "../../stores/composerSendKey";
+import {
   buildComposerHistoryEntries,
   canStartComposerHistory,
   getComposerHistoryText,
@@ -257,6 +263,11 @@ export function ChatComposer({
   const isWebAdmin = useUIStore((s) => s.isWebAdmin);
   const composerHistoryRef = useRef<ComposerHistorySession | null>(null);
   const [showModeMenu, setShowModeMenu] = useState(false);
+  const [sendKey, setSendKeyState] = useState<ComposerSendKey>(loadComposerSendKeyPreference);
+  const setSendKey = useCallback((next: ComposerSendKey) => {
+    saveComposerSendKeyPreference(next);
+    setSendKeyState(next);
+  }, []);
   const [composerFocused, setComposerFocused] = useState(false);
   const [expandedGroup, setExpandedGroup] = useState("");
   const [voiceBlocksCompact, setVoiceBlocksCompact] = useState(false);
@@ -759,7 +770,7 @@ export function ChatComposer({
 
     if (e.key === "Enter" && (!showMentionMenu || mentionSuggestions.length === 0)) {
       if (showSlashMenu) return;
-      if (e.ctrlKey || e.metaKey) {
+      if (isComposerSendKeystroke(sendKey, e)) {
         e.preventDefault();
         if (canSend) onSendMessage();
       }
@@ -863,7 +874,7 @@ export function ChatComposer({
     if (busy === "send") return t("busy");
     return t("attachFile");
   })();
-  const sendShortcutLabel = useMemo(() => {
+  const modEnterShortcutLabel = useMemo(() => {
     if (
       typeof navigator !== "undefined" &&
       /Mac|iPhone|iPad|iPod/i.test(navigator.platform || "")
@@ -872,6 +883,7 @@ export function ChatComposer({
     }
     return "Ctrl+Enter";
   }, []);
+  const sendShortcutLabel = sendKey === "enter" ? "Enter" : modEnterShortcutLabel;
   // Send + Reply needs concrete recipients; say why Send is off where the recipients are chosen.
   const replyRecipientsBlocked =
     effectiveMessageMode === "request_reply" && !requestReplyRecipientsReady;
@@ -1409,6 +1421,9 @@ export function ChatComposer({
                 open={showModeMenu}
                 onOpenChange={setShowModeMenu}
                 onModeChange={setMessageMode}
+                sendKey={sendKey}
+                onSendKeyChange={setSendKey}
+                modEnterShortcutLabel={modEnterShortcutLabel}
                 onSend={onSendMessage}
                 busy={busy === "send" || sendInFlight}
                 onStopUploadWaiting={uploadInFlight ? onStopUploadWaiting : undefined}
