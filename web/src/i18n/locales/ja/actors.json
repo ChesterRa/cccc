@@ -336,7 +336,7 @@
   "readOnlyConnection": "読み取り専用",
   "terminalReadOnlyNotice": "この端末は読み取り専用です。入力するには操作権を取得してください。",
   "webModelActorBoundConnectorTitle": "ChatGPT Web Model",
-  "webModelActorBoundConnectorHint": "共通 Web モデル設定で共有ログインとコネクターを管理します。このエージェントを保存して通常どおり起動すると、会話に自動接続してからタスクを配信します。",
+  "webModelActorBoundConnectorHint": "「設定 → このインスタンス → Web モデル」で共有ログインとコネクターを管理します。このエージェントを保存して通常どおり起動すると、会話に自動接続してからタスクを配信します。",
   "webModelProfileHint": "Web モデルのプロファイルは実行環境と機能設定を共有します。各エージェントは接続を個別に設定します。",
   "saveAndApply": "保存して適用",
   "applyWebModelTargetConfirm": "「{{label}}」に新しい Bot を適用しますか？未完了のタスクは先に完了するか明示的に解決してください。Bot を変更すると古い Routine の認証情報は消去されます。適用に失敗しても入力内容は保持されます。",

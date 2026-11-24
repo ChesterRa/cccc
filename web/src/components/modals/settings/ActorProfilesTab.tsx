@@ -974,7 +974,7 @@ export function ActorProfilesTab({
             <p className="mt-1 text-xs text-[var(--color-text-muted)]">
               {isMyScope
                 ? t("actorProfiles.myProfilesLoginRequired")
-                : t("actorProfiles.searchPlaceholder")}
+                : t("actorProfiles.description")}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -1004,7 +1004,7 @@ export function ActorProfilesTab({
           <div className="min-w-0">
             <div className="grid gap-3 lg:grid-cols-[minmax(0,320px)_1fr] lg:items-end">
               <div>
-                <label className={labelClass()}>{t("actorProfiles.searchPlaceholder")}</label>
+                <label className={labelClass()}>{t("common:search")}</label>
                 <input
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}

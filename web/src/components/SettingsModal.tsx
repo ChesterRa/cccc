@@ -106,10 +106,11 @@ interface SettingsModalProps {
   notificationsAllowed?: boolean;
 }
 
-function SettingsTabFallback() {
+export function SettingsTabFallback() {
+  const { t } = useTranslation("common");
   return (
     <div className="rounded-2xl border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] p-5 text-sm text-[var(--color-text-secondary)]">
-      Loading...
+      {t("loading")}
     </div>
   );
 }

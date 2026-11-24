@@ -3,10 +3,10 @@ import { useTranslation } from "react-i18next";
 import { LocalSessionsSetup } from "./LocalSessionsSetup";
 
 export function LocalSessionsHelp({
-  onChooseSessions,
+  onRefreshSessions,
   defaultSetupOpen = false,
 }: {
-  onChooseSessions?: () => void;
+  onRefreshSessions?: () => void;
   defaultSetupOpen?: boolean;
 }) {
   const { t } = useTranslation("layout");
@@ -18,7 +18,7 @@ export function LocalSessionsHelp({
         <summary className="cursor-pointer py-2 font-medium text-[var(--color-text-primary)]">
           {t("localSessions.setup")}
         </summary>
-        <LocalSessionsSetup onChooseSessions={onChooseSessions} />
+        <LocalSessionsSetup onRefreshSessions={onRefreshSessions} />
       </details>
       <details
         open={troubleshootingOpen}
@@ -36,6 +36,8 @@ export function LocalSessionsHelp({
             <li>{t("localSessions.setupReload")}</li>
             <li>{t("localSessions.troubleshootCodex")}</li>
             <li>{t("localSessions.troubleshootClaude")}</li>
+            <li>{t("localSessions.troubleshootPi")}</li>
+            <li>{t("localSessions.troubleshootOpencode")}</li>
           </ul>
         </div>
       </details>

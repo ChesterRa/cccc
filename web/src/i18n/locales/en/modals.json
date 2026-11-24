@@ -54,6 +54,7 @@
   "createGroup": {
     "title": "Create Working Group",
     "subtitle": "Select a project directory to start collaborating",
+    "subtitleExisting": "Select existing sessions to create a Group from them",
     "quickSelect": "Quick Select",
     "suggestionHome": "Home",
     "suggestionCurrent": "Current folder",

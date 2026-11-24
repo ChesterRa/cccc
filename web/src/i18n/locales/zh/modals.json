@@ -54,6 +54,7 @@
   "createGroup": {
     "title": "创建工作组",
     "subtitle": "选择一个项目目录开始协作",
+    "subtitleExisting": "勾选已有会话，用它们创建工作组",
     "quickSelect": "快速选择",
     "suggestionHome": "主目录",
     "suggestionCurrent": "当前目录",

@@ -75,7 +75,7 @@ export function SessionAccessTab({ isActive }: { isActive: boolean }) {
           </p>
         )}
         <LocalSourceManagement directory={directory} management={management} busy={busy} />
-        <LocalSessionsHelp onChooseSessions={() => void directory.reload()} />
+        <LocalSessionsHelp onRefreshSessions={() => void directory.reload()} />
       </section>
       <section
         aria-labelledby="session-access-computers"

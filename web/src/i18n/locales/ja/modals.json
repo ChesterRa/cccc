@@ -54,6 +54,7 @@
   "createGroup": {
     "title": "作業グループを作成",
     "subtitle": "共同作業を始めるために、プロジェクトディレクトリを選択してください",
+    "subtitleExisting": "既存のセッションを選んでグループを作成します",
     "quickSelect": "クイック選択",
     "suggestionHome": "ホーム",
     "suggestionCurrent": "現在のディレクトリ",

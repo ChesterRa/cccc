@@ -336,7 +336,7 @@
   "readOnlyConnection": "Read only",
   "terminalReadOnlyNotice": "This terminal is read-only. Take control to type here.",
   "webModelActorBoundConnectorTitle": "ChatGPT Web Model",
-  "webModelActorBoundConnectorHint": "Global Web Model settings manage shared login and one connector. Save this agent and start it normally; its conversation connects automatically before task delivery.",
+  "webModelActorBoundConnectorHint": "Settings → This instance → Web Models manages shared login and one connector. Save this agent and start it normally; its conversation connects automatically before task delivery.",
   "webModelProfileHint": "Web Model profiles share runtime and capability settings. Each agent configures its own connection.",
   "saveAndApply": "Save & apply",
   "applyWebModelTargetConfirm": "Apply the new Bot for \"{{label}}\"? An unfinished task must complete or be explicitly resolved first. Changing Bots clears the old Routine credentials. Failed changes retain your draft.",

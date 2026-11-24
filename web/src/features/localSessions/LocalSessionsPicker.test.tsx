@@ -239,6 +239,7 @@ it.each([true, false])(
       ),
     );
     const fromExisting = button(t("modals:createGroup.fromExistingSessions"));
+    expect(host.textContent).toContain(t("modals:createGroup.subtitle"));
     expect(mocks.local).not.toHaveBeenCalled();
     expect(mocks.deviceSources).not.toHaveBeenCalled();
     expect(mocks.deviceStatus).not.toHaveBeenCalled();
@@ -250,6 +251,8 @@ it.each([true, false])(
       return;
     }
     expect(mocks.members).not.toHaveBeenCalled();
+    expect(host.textContent).toContain(t("modals:createGroup.subtitleExisting"));
+    expect(host.textContent).not.toContain(t("modals:createGroup.subtitle"));
     await click(checkbox(second.title));
     expect(create().disabled).toBe(false);
     await click(create());

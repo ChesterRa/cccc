@@ -219,3 +219,26 @@ it("stops reading while the tab is hidden and reads again when shown", async () 
   expect(mocks.fetch.mock.calls.length).toBeGreaterThan(shownReads);
   expect(mocks.nodes.mock.calls.length).toBeGreaterThan(shownNodeReads);
 });
+
+it("explains settings-scoped setup refresh and lists troubleshooting for all supported runtimes", async () => {
+  mocks.fetch.mockResolvedValue({ ok: true, result: { sources: [] } });
+  await mount(true);
+  await tick(0);
+  const setup = [...host.querySelectorAll("details")].find(
+    (section) => section.querySelector("summary")?.textContent === enLayout.localSessions.setup,
+  )!;
+  await click(setup.querySelector("summary"));
+  expect(setup.textContent).toContain(enLayout.localSessions.setupFinishInSettings);
+  const readsBefore = mocks.fetch.mock.calls.length;
+  await click(button(enLayout.localSessions.refreshSessions));
+  expect(mocks.fetch.mock.calls.length).toBeGreaterThan(readsBefore);
+
+  const troubleshooting = [...host.querySelectorAll("details")].find(
+    (section) =>
+      section.querySelector("summary")?.textContent === enLayout.localSessions.troubleshooting,
+  )!;
+  expect(troubleshooting.textContent).toContain(enLayout.localSessions.troubleshootCodex);
+  expect(troubleshooting.textContent).toContain(enLayout.localSessions.troubleshootClaude);
+  expect(troubleshooting.textContent).toContain(enLayout.localSessions.troubleshootPi);
+  expect(troubleshooting.textContent).toContain(enLayout.localSessions.troubleshootOpencode);
+});

@@ -183,6 +183,7 @@
     }
   },
   "actorProfiles": {
+    "description": "Manage reusable agent runtime settings, commands, and default capabilities across Groups.",
     "searchPlaceholder": "Search profiles by name/id/runtime",
     "newProfile": "New Profile",
     "refresh": "Refresh",

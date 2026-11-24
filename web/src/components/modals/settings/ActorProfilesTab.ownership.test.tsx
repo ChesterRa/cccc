@@ -331,4 +331,17 @@ describe("ActorProfilesTab async ownership fencing", () => {
       expect(onSaved).not.toHaveBeenCalled();
     },
   );
+
+  it("renders distinct page description, search label, and search placeholder for global profiles", async () => {
+    mocks.listProfiles.mockResolvedValue({ ok: true, result: { profiles: [] } });
+    await renderTab("global");
+    expect(host.textContent).toContain("actorProfiles.description");
+    const label = host.querySelector("label");
+    expect(label?.textContent).toBe("common:search");
+    const searchInput = host.querySelector<HTMLInputElement>(
+      'input[placeholder="actorProfiles.searchPlaceholder"]',
+    );
+    expect(searchInput).not.toBeNull();
+    expect(host.textContent).not.toContain("actorProfiles.searchPlaceholder");
+  });
 });

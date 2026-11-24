@@ -2,7 +2,7 @@
 import { act, type ComponentProps } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { SettingsModal } from "./SettingsModal";
+import { SettingsModal, SettingsTabFallback } from "./SettingsModal";
 import type { DeveloperTab } from "./modals/settings/DeveloperTab";
 import type { IMBridgeTab } from "./modals/settings/IMBridgeTab";
 import { writeSettingsLastLocation } from "./modals/settings/settingsLastLocation";
@@ -310,5 +310,10 @@ describe("settings read ownership", () => {
     await tab("guidance");
     await tab("im");
     expect(api.startIMBridge).not.toHaveBeenCalled();
+  });
+  it("translates the lazy settings tab fallback through common:loading", async () => {
+    await act(async () => root.render(<SettingsTabFallback />));
+    expect(host.textContent).toBe("loading");
+    expect(host.textContent).not.toContain("Loading...");
   });
 });

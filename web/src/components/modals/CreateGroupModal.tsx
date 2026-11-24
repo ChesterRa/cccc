@@ -124,7 +124,7 @@ export function CreateGroupModal({
             {t("createGroup.title")}
           </div>
           <div className="text-sm mt-1 text-[var(--color-text-muted)]">
-            {t("createGroup.subtitle")}
+            {t(existingActive ? "createGroup.subtitleExisting" : "createGroup.subtitle")}
           </div>
         </div>
       }
@@ -210,9 +210,11 @@ export function CreateGroupModal({
                       onChange={(e) => {
                         setCreateGroupPath(e.target.value);
                         const dirName = directoryNameFromPath(e.target.value);
+                        // Follow the path while the name is still the one derived from the
+                        // previous path; a name the user typed stays.
                         if (
                           !createGroupName ||
-                          createGroupName === directoryNameFromPath(currentDir)
+                          createGroupName === directoryNameFromPath(createGroupPath)
                         ) {
                           setCreateGroupName(dirName);
                         }
