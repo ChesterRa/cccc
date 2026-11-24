@@ -55,6 +55,9 @@
     "invalid_project_root": "The project directory bound to this Group is missing or inaccessible. Check that it still exists, or re-attach a valid directory ({{code}}).",
     "no_enabled_recipients": "No members can receive this message. Add a member first or choose different recipients ({{code}}).",
     "file_too_large": "This file exceeds the upload size limit. Try a smaller file, or pin a URL or choose a workspace file instead ({{code}}).",
+    "avatar_too_large": "Avatar image exceeds {{limit}}. Choose an image up to {{limit}} ({{code}}).",
+    "branding_asset_too_large": "Branding image exceeds {{limit}}. Choose an image up to {{limit}} ({{code}}).",
+    "group_copy_too_large": "Group copy package exceeds {{limit}}. Reduce its size and try again ({{code}}).",
     "actor_browser_busy": "The browser is delivering work. Wait for it to finish, then try again ({{code}}).",
     "actor_switch_pending": "Finish the previous switch first. Refresh the page, then choose Retry completion on the member ({{code}})."
   }

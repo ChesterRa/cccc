@@ -11,7 +11,7 @@ use crate::fs::atomic_write;
 
 pub use crate::branding_icon::{apple_touch_icon_url, pwa_icon_svg};
 
-const MAX_BYTES: usize = 2 * 1024 * 1024;
+pub const MAX_BYTES: usize = 2 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct StoredAsset {
@@ -42,7 +42,10 @@ pub fn store(
 ) -> io::Result<StoredAsset> {
     validate_kind(kind)?;
     if data.len() > MAX_BYTES {
-        return Err(io::Error::other("branding asset exceeds 2 MiB"));
+        return Err(io::Error::other(format!(
+            "branding asset exceeds {} MiB",
+            MAX_BYTES / (1024 * 1024)
+        )));
     }
     let mime = normalize_mime(content_type, filename);
     if !allowed(kind, &mime) {

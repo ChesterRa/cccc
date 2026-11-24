@@ -4,7 +4,7 @@ use axum::{Json, Router};
 use serde_json::{Value, json};
 
 use crate::AppState;
-use crate::api::{ApiError, ApiResult, body_object, call, object};
+use crate::api::{ApiError, ApiResult, body_object, call, format_byte_limit, object};
 
 const MAX_AVATAR_BYTES: usize = 2 * 1024 * 1024;
 
@@ -69,6 +69,17 @@ async fn avatar_get(
         .map_err(|error| ApiError::not_found(error.to_string()))
 }
 
+fn avatar_too_large() -> ApiError {
+    ApiError::bad_code(
+        "avatar_too_large",
+        format!(
+            "avatar file exceeds {}",
+            format_byte_limit(MAX_AVATAR_BYTES)
+        ),
+        json!({"max_bytes": MAX_AVATAR_BYTES}),
+    )
+}
+
 async fn avatar_upload(
     State(state): State<AppState>,
     Path((group_id, actor_id)): Path<(String, String)>,
@@ -78,20 +89,16 @@ async fn avatar_upload(
     while let Some(field) = multipart
         .next_field()
         .await
-        .map_err(|error| ApiError::bad(error.to_string()))?
+        .map_err(|error| ApiError::from_multipart(error, avatar_too_large))?
     {
         if field.name() == Some("file") {
             data = field
                 .bytes()
                 .await
-                .map_err(|error| ApiError::bad(error.to_string()))?
+                .map_err(|error| ApiError::from_multipart(error, avatar_too_large))?
                 .to_vec();
             if data.len() > MAX_AVATAR_BYTES {
-                return Err(ApiError::bad_code(
-                    "avatar_too_large",
-                    "avatar file exceeds 2 MiB",
-                    json!({"max_bytes":MAX_AVATAR_BYTES}),
-                ));
+                return Err(avatar_too_large());
             }
             break;
         }

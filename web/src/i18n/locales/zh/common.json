@@ -55,6 +55,9 @@
     "invalid_project_root": "工作组绑定的项目目录已不存在或无法访问。请确认目录未被移动或删除，或在工作组里重新绑定有效目录（{{code}}）。",
     "no_enabled_recipients": "没有可接收这条消息的成员。请先添加成员，或改选其他收件人（{{code}}）。",
     "file_too_large": "文件超出上传大小上限。请改用更小的文件，或改为固定 URL、从工作区选择文件（{{code}}）。",
+    "avatar_too_large": "头像图片超出 {{limit}} 上限。请换一张不超过 {{limit}} 的图片（{{code}}）。",
+    "branding_asset_too_large": "品牌图片超出 {{limit}} 上限。请换一张不超过 {{limit}} 的图片（{{code}}）。",
+    "group_copy_too_large": "工作组复制包超出 {{limit}} 上限。请减小文件体积后重试（{{code}}）。",
     "actor_browser_busy": "浏览器正在投递消息，请等当前投递结束后重试（{{code}}）。",
     "actor_switch_pending": "请先完成上一次切换：刷新页面后，在成员上点「重试收尾」（{{code}}）。"
   }

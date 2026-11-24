@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import * as api from "../../../services/api";
 import { useBrandingStore } from "../../../stores";
 import { resolveThemeAwareFaviconUrl, resolveThemeAwareLogoUrl } from "../../../utils/branding";
+import { formatDaemonError } from "../../../utils/daemonErrorText";
 import { inputClass, secondaryButtonClass } from "./types";
 import { SettingsCard, SettingsPage, SettingsRow, SettingsSaveBar } from "./SettingsKit";
 
@@ -80,7 +81,7 @@ export function BrandingTab({ isDark, isActive = true }: BrandingTabProps) {
     try {
       const resp = await api.uploadWebBrandingAsset(assetKind, file);
       if (!resp.ok) {
-        setError(resp.error?.message || t("branding.uploadFailed"));
+        setError(formatDaemonError(resp.error, t("branding.uploadFailed")));
         return;
       }
       setBranding(resp.result?.branding);

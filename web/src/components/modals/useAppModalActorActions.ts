@@ -1053,7 +1053,7 @@ export function useAppModalActorActions(args: {
         const avatarResp = await api.uploadActorAvatar(selectedGroupId, createdActorId, avatarFile);
         if (!avatarResp.ok) {
           postCreateErrors.push(
-            `${t("avatarTitle")}: ${avatarResp.error?.message || t("avatarUploadFailed")}`,
+            `${t("avatarTitle")}: ${formatDaemonError(avatarResp.error, t("avatarUploadFailed"))}`,
           );
         }
       }

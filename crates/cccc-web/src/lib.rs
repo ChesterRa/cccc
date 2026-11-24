@@ -259,6 +259,20 @@ pub fn app_with_mode(home: HomeLayout, web_mode: WebMode) -> Router {
     .0
 }
 
+#[cfg(test)]
+pub(crate) fn test_state(home: HomeLayout) -> AppState {
+    let (shutdown, _) = broadcast::channel(1);
+    app_with_shutdown(
+        home,
+        shutdown,
+        WebMode::Normal,
+        None,
+        LiveBinding::from_env(),
+        new_web_runtime_id(),
+    )
+    .3
+}
+
 fn new_web_runtime_id() -> String {
     format!("web_{}", uuid::Uuid::new_v4().simple())
 }

@@ -5,7 +5,9 @@ use axum::routing::get;
 use serde_json::{Value, json};
 
 use crate::AppState;
-use crate::api::{ApiResult, call, object};
+use crate::api::{ApiError, ApiResult, call, format_byte_limit, object};
+
+const MULTIPART_OVERHEAD_BYTES: usize = 1024 * 1024;
 
 pub(super) fn routes() -> Router<AppState> {
     Router::new()
@@ -13,7 +15,20 @@ pub(super) fn routes() -> Router<AppState> {
             "/api/v1/branding/assets/{asset_kind}",
             get(get_asset).post(upload_asset).delete(delete_asset),
         )
-        .layer(DefaultBodyLimit::max(3 * 1024 * 1024))
+        .layer(DefaultBodyLimit::max(
+            cccc_core::branding::MAX_BYTES + MULTIPART_OVERHEAD_BYTES,
+        ))
+}
+
+fn branding_asset_too_large() -> ApiError {
+    ApiError::payload_too_large(
+        "branding_asset_too_large",
+        format!(
+            "branding asset exceeds {}",
+            format_byte_limit(cccc_core::branding::MAX_BYTES)
+        ),
+    )
+    .with_details(json!({"max_bytes": cccc_core::branding::MAX_BYTES}))
 }
 
 async fn get_asset(
@@ -57,18 +72,20 @@ async fn upload_asset(
     while let Some(field) = multipart
         .next_field()
         .await
-        .map_err(|error| crate::api::ApiError::bad(error.to_string()))?
+        .map_err(|error| ApiError::from_multipart(error, branding_asset_too_large))?
     {
         if field.name() == Some("file") {
             mime = field.content_type().unwrap_or("").into();
             filename = field.file_name().unwrap_or("asset").into();
-            bytes = Some(
-                field
-                    .bytes()
-                    .await
-                    .map_err(|error| crate::api::ApiError::bad(error.to_string()))?
-                    .to_vec(),
-            );
+            let data = field
+                .bytes()
+                .await
+                .map_err(|error| ApiError::from_multipart(error, branding_asset_too_large))?
+                .to_vec();
+            if data.len() > cccc_core::branding::MAX_BYTES {
+                return Err(branding_asset_too_large());
+            }
+            bytes = Some(data);
         }
     }
     let before = cccc_core::settings::load(&state.home)

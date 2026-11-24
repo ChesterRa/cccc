@@ -1,10 +1,33 @@
 // Drag-and-drop file handling.
 import { useEffect, useRef, useState, useCallback } from "react";
+import i18n from "i18next";
 import { useUIStore, useComposerStore } from "../stores";
 import { useShallow } from "zustand/react/shallow";
 
 const WEB_MAX_FILE_MB = 100;
 const WEB_MAX_FILE_BYTES = WEB_MAX_FILE_MB * 1024 * 1024;
+
+export function formatAttachmentsTooLargeError(tooLarge: File[]): string {
+  const fallbackName =
+    i18n.isInitialized && i18n.exists("chat:attachmentDefaultName")
+      ? i18n.t("chat:attachmentDefaultName")
+      : "file";
+  const names = tooLarge
+    .slice(0, 3)
+    .map((f) => f.name || fallbackName)
+    .join(", ");
+  if (tooLarge.length > 3) {
+    const more = tooLarge.length - 3;
+    if (i18n.isInitialized && i18n.exists("chat:attachmentsExceedLimitMore")) {
+      return i18n.t("chat:attachmentsExceedLimitMore", { maxMb: WEB_MAX_FILE_MB, names, more });
+    }
+    return `Attachments exceed ${WEB_MAX_FILE_MB} MiB: ${names} (+${more} more)`;
+  }
+  if (i18n.isInitialized && i18n.exists("chat:attachmentsExceedLimit")) {
+    return i18n.t("chat:attachmentsExceedLimit", { maxMb: WEB_MAX_FILE_MB, names });
+  }
+  return `Attachments exceed ${WEB_MAX_FILE_MB} MiB: ${names}`;
+}
 
 export function partitionAttachments(
   files: File[],
@@ -53,9 +76,7 @@ export function useDragDrop({ selectedGroupId }: UseDragDropOptions) {
       const { accepted: ok, rejected: tooLarge } = partitionAttachments(files, existingBytes);
 
       if (tooLarge.length > 0) {
-        const names = tooLarge.slice(0, 3).map((f) => f.name || "file");
-        const more = tooLarge.length > 3 ? ` (+${tooLarge.length - 3} more)` : "";
-        showError(`Attachments exceed ${WEB_MAX_FILE_MB} MiB: ${names.join(", ")}${more}`);
+        showError(formatAttachmentsTooLargeError(tooLarge));
       }
 
       if (ok.length > 0) {
@@ -113,7 +134,11 @@ export function useDragDrop({ selectedGroupId }: UseDragDropOptions) {
       const files = Array.from(e.dataTransfer?.files || []);
       if (files.length === 0) return;
       if (!selectedGroupId) {
-        showError("Select a group to attach files.");
+        showError(
+          i18n.isInitialized && i18n.exists("chat:selectGroupFirst")
+            ? i18n.t("chat:selectGroupFirst")
+            : "Select a group first.",
+        );
         return;
       }
       handleAppendComposerFiles(files);

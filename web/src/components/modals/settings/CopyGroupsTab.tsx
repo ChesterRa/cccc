@@ -3,6 +3,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import * as api from "../../../services/api";
 import { useGroupStore } from "../../../stores/useGroupStore";
+import { formatDaemonError } from "../../../utils/daemonErrorText";
 import { CheckIcon, DownloadIcon, FileIcon } from "../../Icons";
 import { CreateGroupDirectoryBrowser } from "../CreateGroupDirectoryBrowser";
 import { driveSuggestions } from "../createGroupDirectoryModel";
@@ -100,7 +101,7 @@ export function CopyGroupsTab({ groupId, groupTitle }: CopyGroupsTabProps) {
       const resp = await api.previewGroupCopy(file);
       if (!resp.ok) {
         if (requestId === previewRequestSeqRef.current) {
-          setErr(resp.error?.message || t("copyGroups.failedToPreview"));
+          setErr(formatDaemonError(resp.error, t("copyGroups.failedToPreview")));
         }
         return;
       }
@@ -174,7 +175,7 @@ export function CopyGroupsTab({ groupId, groupTitle }: CopyGroupsTabProps) {
         targetTitle.trim(),
       );
       if (!resp.ok) {
-        if (isCurrent()) setErr(resp.error?.message || t("copyGroups.failedToImport"));
+        if (isCurrent()) setErr(formatDaemonError(resp.error, t("copyGroups.failedToImport")));
         return;
       }
       const nextGroupId = String(resp.result?.group_id || "").trim();

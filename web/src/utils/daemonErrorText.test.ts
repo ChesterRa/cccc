@@ -18,6 +18,12 @@ const MAPPED_CODES = [
   "actor_switch_pending",
 ] as const;
 
+const LIMIT_MAPPED_CODES = [
+  { code: "avatar_too_large", maxBytes: 2 * 1024 * 1024, expectedLimit: "2 MiB" },
+  { code: "branding_asset_too_large", maxBytes: 2 * 1024 * 1024, expectedLimit: "2 MiB" },
+  { code: "group_copy_too_large", maxBytes: 1024 * 1024 * 1024, expectedLimit: "1 GiB" },
+] as const;
+
 describe("formatDaemonError", () => {
   beforeEach(async () => {
     await i18nReady;
@@ -46,6 +52,64 @@ describe("formatDaemonError", () => {
     const shutdownText = formatDaemonError({ code: "shutdown_in_progress", message: "raw" });
     const runtimeText = formatDaemonError({ code: "runtime_shutting_down", message: "raw" });
     expect(runtimeText).toBe(shutdownText.replace("shutdown_in_progress", "runtime_shutting_down"));
+  });
+
+  it.each(["en", "zh", "ja"] as const)(
+    "formats upload too-large guidance from details.max_bytes for %s",
+    async (lang) => {
+      await i18n.changeLanguage(lang);
+      for (const { code, maxBytes, expectedLimit } of LIMIT_MAPPED_CODES) {
+        const formatted = formatDaemonError({
+          code,
+          message: "raw daemon text",
+          details: { max_bytes: maxBytes },
+        });
+        expect(formatted).not.toContain("raw daemon text");
+        expect(formatted).not.toContain("{{limit}}");
+        expect(formatted).toContain(expectedLimit);
+        expect(formatted).toContain(lang === "en" ? `(${code})` : `（${code}）`);
+      }
+    },
+  );
+
+  it("falls back to raw diagnostic when max_bytes is missing or invalid", async () => {
+    await i18n.changeLanguage("zh");
+    for (const { code } of LIMIT_MAPPED_CODES) {
+      expect(formatDaemonError({ code, message: "raw limit text" })).toBe(
+        `${code}: raw limit text`,
+      );
+      expect(
+        formatDaemonError({ code, message: "raw limit text", details: { max_bytes: 0 } }),
+      ).toBe(`${code}: raw limit text`);
+      expect(
+        formatDaemonError({ code, message: "raw limit text", details: { max_bytes: "2 MiB" } }),
+      ).toBe(`${code}: raw limit text`);
+    }
+  });
+
+  it("preserves raw message or fallback for unmapped errors when a fallback is supplied", async () => {
+    await i18n.changeLanguage("zh");
+    expect(
+      formatDaemonError({ code: "invalid_request", message: "unsupported favicon type" }, "failed"),
+    ).toBe("unsupported favicon type");
+    expect(formatDaemonError({ code: "invalid_request", message: "" }, "failed")).toBe("failed");
+    expect(formatDaemonError(undefined, "failed")).toBe("failed");
+    expect(
+      formatDaemonError(
+        {
+          code: "avatar_too_large",
+          message: "avatar file exceeds 2 MiB",
+          details: { max_bytes: 2 * 1024 * 1024 },
+        },
+        "failed",
+      ),
+    ).toContain("（avatar_too_large）");
+    expect(
+      formatDaemonError(
+        { code: "avatar_too_large", message: "avatar file exceeds 2 MiB" },
+        "failed",
+      ),
+    ).toBe("avatar file exceeds 2 MiB");
   });
 
   it("keeps raw code and message for unmapped and diagnostic errors and handles partial shapes", () => {

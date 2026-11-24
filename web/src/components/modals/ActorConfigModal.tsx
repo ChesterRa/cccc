@@ -26,6 +26,7 @@ import { createPortal } from "react-dom";
 import * as api from "../../services/api";
 import { useModalA11y } from "../../hooks/useModalA11y";
 import { formatCapabilityIdInput, parseCapabilityIdInput } from "../../utils/capabilityAutoload";
+import { formatDaemonError } from "../../utils/daemonErrorText";
 import { actorProfileIdentityKey } from "../../utils/actorProfiles";
 import { formatRuntimeCommand } from "./runtimeProfileControlsModel";
 import { CapabilityPicker } from "../CapabilityPicker";
@@ -1658,7 +1659,7 @@ function EditActorConfigModal({
       const resp = await api.uploadActorAvatar(groupId, actorId, file);
       if (avatarVisitRef.current !== visit) return;
       if (!resp.ok) {
-        setSecretsError(resp.error?.message || t("avatarUploadFailed"));
+        setSecretsError(formatDaemonError(resp.error, t("avatarUploadFailed")));
         return;
       }
       const adopted = await onAvatarChanged?.(resp.result.actor, savedActor);

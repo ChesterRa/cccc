@@ -326,6 +326,10 @@ struct Upload {
     data: Option<Vec<u8>>,
 }
 
+fn file_too_large() -> ApiError {
+    ApiError::payload_too_large("file_too_large", "file too large")
+}
+
 async fn parse_upload(mut multipart: Multipart) -> Result<Upload, ApiError> {
     let mut upload = Upload {
         fields: Map::new(),
@@ -336,7 +340,7 @@ async fn parse_upload(mut multipart: Multipart) -> Result<Upload, ApiError> {
     while let Some(field) = multipart
         .next_field()
         .await
-        .map_err(|error| ApiError::bad(error.to_string()))?
+        .map_err(|error| ApiError::from_multipart(error, file_too_large))?
     {
         let name = field.name().unwrap_or("").to_owned();
         if name == "file" {
@@ -346,7 +350,7 @@ async fn parse_upload(mut multipart: Multipart) -> Result<Upload, ApiError> {
                 field
                     .bytes()
                     .await
-                    .map_err(|error| ApiError::bad(error.to_string()))?
+                    .map_err(|error| ApiError::from_multipart(error, file_too_large))?
                     .to_vec(),
             );
             if upload
@@ -354,10 +358,7 @@ async fn parse_upload(mut multipart: Multipart) -> Result<Upload, ApiError> {
                 .as_ref()
                 .is_some_and(|data| data.len() > MAX_PRESENTATION_UPLOAD_BYTES)
             {
-                return Err(ApiError::payload_too_large(
-                    "file_too_large",
-                    "file too large",
-                ));
+                return Err(file_too_large());
             }
         } else {
             upload.fields.insert(
@@ -366,7 +367,7 @@ async fn parse_upload(mut multipart: Multipart) -> Result<Upload, ApiError> {
                     field
                         .text()
                         .await
-                        .map_err(|error| ApiError::bad(error.to_string()))?,
+                        .map_err(|error| ApiError::from_multipart(error, file_too_large))?,
                 ),
             );
         }
@@ -454,6 +455,11 @@ fn card_type_for_url(value: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode, header};
+    use cccc_core::HomeLayout;
+    use http_body_util::BodyExt;
+    use tower::ServiceExt;
 
     #[test]
     fn only_replaced_publications_invalidate_browser_sessions() {
@@ -471,5 +477,58 @@ mod tests {
             "image"
         );
         assert_eq!(card_type_for("notes.txt", "text/x-markdown"), "markdown");
+    }
+
+    #[tokio::test]
+    async fn multipart_body_limit_maps_to_file_too_large_for_upload_handlers() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+        let group = GroupStore::new(home.clone())
+            .expect("store")
+            .create("presentation limit", "")
+            .expect("group");
+        let app = Router::new()
+            .route(
+                "/api/v1/groups/{group_id}/presentation/publish_upload",
+                post(publish_upload),
+            )
+            .route(
+                "/api/v1/groups/{group_id}/presentation/ref_snapshot",
+                post(reference_snapshot),
+            )
+            .layer(DefaultBodyLimit::max(64))
+            .with_state(crate::test_state(home));
+
+        let payload = format!(
+            "--b\r\nContent-Disposition: form-data; name=\"file\"; filename=\"big.bin\"\r\nContent-Type: application/octet-stream\r\n\r\n{}\r\n--b--\r\n",
+            "x".repeat(256)
+        );
+        for endpoint in ["publish_upload", "ref_snapshot"] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::post(format!(
+                        "/api/v1/groups/{}/presentation/{endpoint}",
+                        group.group_id
+                    ))
+                    .header(header::CONTENT_TYPE, "multipart/form-data; boundary=b")
+                    .body(Body::from(payload.clone()))
+                    .expect("request"),
+                )
+                .await
+                .expect("response");
+            assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+            let body = response
+                .into_body()
+                .collect()
+                .await
+                .expect("body")
+                .to_bytes();
+            let json: Value = serde_json::from_slice(&body).expect("json");
+            assert_eq!(
+                json["error"]["code"], "file_too_large",
+                "{endpoint}: {json}"
+            );
+        }
     }
 }

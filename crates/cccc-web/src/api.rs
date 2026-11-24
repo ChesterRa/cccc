@@ -1,4 +1,5 @@
 use axum::Json;
+use axum::extract::multipart::MultipartError;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use cccc_contracts::DaemonRequest;
@@ -109,6 +110,31 @@ impl ApiError {
             message: message.into(),
             details,
         }
+    }
+
+    pub(crate) fn from_multipart(
+        error: MultipartError,
+        on_too_large: impl FnOnce() -> Self,
+    ) -> Self {
+        if error.status() == StatusCode::PAYLOAD_TOO_LARGE {
+            let mut mapped = on_too_large();
+            mapped.status = StatusCode::PAYLOAD_TOO_LARGE;
+            mapped
+        } else {
+            Self::bad(error.to_string())
+        }
+    }
+}
+
+pub(crate) fn format_byte_limit(bytes: usize) -> String {
+    const MIB: usize = 1024 * 1024;
+    const GIB: usize = 1024 * MIB;
+    if bytes > 0 && bytes.is_multiple_of(GIB) {
+        format!("{} GiB", bytes / GIB)
+    } else if bytes > 0 && bytes.is_multiple_of(MIB) {
+        format!("{} MiB", bytes / MIB)
+    } else {
+        format!("{bytes} bytes")
     }
 }
 

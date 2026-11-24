@@ -4,7 +4,7 @@ use axum::{Extension, Json, Router};
 use serde_json::{Value, json};
 
 use crate::AppState;
-use crate::api::{ApiError, ApiResult, body_object, call, object};
+use crate::api::{ApiError, ApiResult, body_object, call, format_byte_limit, object};
 use crate::auth::Principal;
 
 mod oversized_text;
@@ -248,6 +248,17 @@ async fn reply_upload(
 ) -> ApiResult {
     upload(&state, &principal, &group_id, multipart, true).await
 }
+fn attachment_too_large() -> ApiError {
+    ApiError::bad_code(
+        "attachment_too_large",
+        format!(
+            "attachments exceed {} in total",
+            format_byte_limit(MAX_LOCAL_UPLOAD_BYTES)
+        ),
+        json!({}),
+    )
+}
+
 async fn upload(
     state: &AppState,
     principal: &Principal,
@@ -262,7 +273,7 @@ async fn upload(
     while let Some(field) = multipart
         .next_field()
         .await
-        .map_err(|error| ApiError::bad(error.to_string()))?
+        .map_err(|error| ApiError::from_multipart(error, attachment_too_large))?
     {
         let name = field.name().unwrap_or("").to_owned();
         if name == "files" || name == "file" {
@@ -277,15 +288,11 @@ async fn upload(
             while let Some(chunk) = field
                 .chunk()
                 .await
-                .map_err(|error| ApiError::bad(error.to_string()))?
+                .map_err(|error| ApiError::from_multipart(error, attachment_too_large))?
             {
                 uploaded_bytes = uploaded_bytes.saturating_add(chunk.len());
                 if uploaded_bytes > MAX_LOCAL_UPLOAD_BYTES {
-                    return Err(ApiError::bad_code(
-                        "attachment_too_large",
-                        "attachments exceed 100 MiB in total",
-                        json!({}),
-                    ));
+                    return Err(attachment_too_large());
                 }
                 upload
                     .write_chunk(&chunk)
@@ -296,7 +303,7 @@ async fn upload(
             let value = field
                 .text()
                 .await
-                .map_err(|error| ApiError::bad(error.to_string()))?;
+                .map_err(|error| ApiError::from_multipart(error, attachment_too_large))?;
             upload_fields::insert(&mut args, name, value)?;
         }
     }
@@ -384,4 +391,69 @@ async fn daemon_args(
 ) -> ApiResult {
     args.insert("group_id".into(), Value::String(group_id));
     call(state, op, args).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode, header};
+    use cccc_core::{GroupStore, HomeLayout};
+    use http_body_util::BodyExt;
+    use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn multipart_body_limit_maps_to_attachment_too_large() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+        let group = GroupStore::new(home.clone())
+            .expect("store")
+            .create("messaging limit", "")
+            .expect("group");
+        let principal = Principal {
+            user_id: "user".into(),
+            allowed_groups: vec![group.group_id.clone()],
+            is_admin: true,
+            raw_token: String::new(),
+        };
+        let app = Router::new()
+            .route("/api/v1/groups/{group_id}/send_upload", post(send_upload))
+            .route("/api/v1/groups/{group_id}/reply_upload", post(reply_upload))
+            .layer(DefaultBodyLimit::max(64))
+            .layer(Extension(principal))
+            .with_state(crate::test_state(home));
+
+        let payload = format!(
+            "--b\r\nContent-Disposition: form-data; name=\"files\"; filename=\"big.bin\"\r\nContent-Type: application/octet-stream\r\n\r\n{}\r\n--b--\r\n",
+            "x".repeat(256)
+        );
+        for endpoint in ["send_upload", "reply_upload"] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::post(format!("/api/v1/groups/{}/{endpoint}", group.group_id))
+                        .header(header::CONTENT_TYPE, "multipart/form-data; boundary=b")
+                        .body(Body::from(payload.clone()))
+                        .expect("request"),
+                )
+                .await
+                .expect("response");
+            assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+            let body = response
+                .into_body()
+                .collect()
+                .await
+                .expect("body")
+                .to_bytes();
+            let json: Value = serde_json::from_slice(&body).expect("json");
+            assert_eq!(
+                json["error"]["code"], "attachment_too_large",
+                "{endpoint}: {json}"
+            );
+            assert_eq!(
+                json["error"]["message"],
+                "attachments exceed 100 MiB in total"
+            );
+        }
+    }
 }
