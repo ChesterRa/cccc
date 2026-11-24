@@ -51,7 +51,6 @@ async function render(names: string[]) {
 
 const audio = () => host.querySelector<HTMLAudioElement>("audio[data-message-media]")!;
 const button = (label: string) => host.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`)!;
-const player = () => host.querySelector<HTMLElement>("[data-message-audio-player]")!;
 
 it("keeps each download and loads nothing until a file is chosen", async () => {
   await render(["voice-F1.mp3", "voice-F2.mp3"]);
@@ -59,7 +58,9 @@ it("keeps each download and loads nothing until a file is chosen", async () => {
   expect(host.querySelectorAll("audio")).toHaveLength(1);
   expect(audio().getAttribute("src")).toBeNull();
   expect(audio().getAttribute("preload")).toBe("none");
-  expect(player().hidden).toBe(true);
+  // There is no visible player: the chips alone control playback.
+  expect(audio().hidden).toBe(true);
+  expect(audio().hasAttribute("controls")).toBe(false);
   const links = host.querySelectorAll("a[download]");
   expect([...links].map((link) => link.getAttribute("download"))).toEqual([
     "voice-F1.mp3",
@@ -68,6 +69,43 @@ it("keeps each download and loads nothing until a file is chosen", async () => {
   // A button inside a link would make every play click a download as well.
   expect(host.querySelector("a button")).toBeNull();
   expect(links[0].getAttribute("href")).toContain("download=true");
+});
+
+it("plays from the whole file chip and downloads from its own key", async () => {
+  await render(["voice-F1.mp3"]);
+  const toggle = host.querySelector<HTMLButtonElement>("[data-message-audio-toggle]")!;
+  // The name is part of the play key, so clicking the file plays it.
+  expect(toggle.textContent).toBe("voice-F1.mp3");
+  expect(toggle.getAttribute("aria-label")).toBe("playAudio voice-F1.mp3");
+  const download = host.querySelector<HTMLAnchorElement>("a[download]")!;
+  expect(download.textContent).toBe("");
+  expect(download.getAttribute("aria-label")).toBe("Download voice-F1.mp3");
+  expect(toggle.contains(download)).toBe(false);
+});
+
+it("shows how far the playing clip has got along its own chip", async () => {
+  await render(["voice-F1.mp3", "voice-F2.mp3"]);
+  vi.spyOn(audio(), "play").mockResolvedValue(undefined);
+  act(() => button("playAudio voice-F1.mp3").click());
+  const bars = () => host.querySelectorAll<HTMLElement>("[data-message-audio-progress]");
+  expect(bars()).toHaveLength(1);
+  expect(bars()[0].closest("[data-message-audio]")?.textContent).toContain("voice-F1.mp3");
+  Object.defineProperty(audio(), "duration", { value: 8, configurable: true });
+  Object.defineProperty(audio(), "currentTime", { value: 2, configurable: true });
+  act(() => audio().dispatchEvent(new Event("timeupdate")));
+  expect(bars()[0].style.width).toBe("25%");
+  // A stream with no known length shows no progress rather than a wrong one.
+  Object.defineProperty(audio(), "duration", {
+    value: Number.POSITIVE_INFINITY,
+    configurable: true,
+  });
+  act(() => audio().dispatchEvent(new Event("timeupdate")));
+  expect(bars()[0].style.width).toBe("0%");
+  // Switching clips starts the new one's bar from the beginning.
+  act(() => button("playAudio voice-F2.mp3").click());
+  expect(bars()).toHaveLength(1);
+  expect(bars()[0].closest("[data-message-audio]")?.textContent).toContain("voice-F2.mp3");
+  expect(bars()[0].style.width).toBe("0%");
 });
 
 it("sets the source and starts playback inside the click", async () => {
@@ -83,8 +121,9 @@ it("sets the source and starts playback inside the click", async () => {
   expect(play).toHaveBeenCalledTimes(1);
   expect(sourceWhenStarted).toContain("voice-F1.mp3");
   expect(sourceWhenStarted).not.toContain("download=true");
-  expect(player().hidden).toBe(false);
-  expect(player().textContent).toContain("voice-F1.mp3");
+  expect(audio().hidden).toBe(true);
+  // The highlighted chip names the clip; the player names it for assistive technology.
+  expect(audio().getAttribute("aria-label")).toBe("voice-F1.mp3");
 });
 
 it("switches to another file with one click and shows pause from the media state", async () => {
@@ -99,7 +138,8 @@ it("switches to another file with one click and shows pause from the media state
 
   expect(audio().getAttribute("src")).toContain("voice-F2.mp3");
   expect(play).toHaveBeenCalledTimes(2);
-  expect(player().textContent).toContain("voice-F2.mp3");
+  // The highlighted chip names the clip; the player names it for assistive technology.
+  expect(audio().getAttribute("aria-label")).toBe("voice-F2.mp3");
   // Pause shows only once the media reports it started; a refused start stays on play.
   expect(button("playAudio voice-F2.mp3")).not.toBeNull();
   act(() => {
@@ -157,7 +197,8 @@ it("ignores a start the browser refused or a switch interrupted", async () => {
   await act(async () => button("playAudio voice-F2.mp3").click());
 
   expect(host.textContent).not.toContain("audioPlaybackUnavailable");
-  expect(player().textContent).toContain("voice-F2.mp3");
+  // The highlighted chip names the clip; the player names it for assistive technology.
+  expect(audio().getAttribute("aria-label")).toBe("voice-F2.mp3");
 });
 
 it("names the file that failed, keeps its download, and lets it be tried again", async () => {
@@ -170,7 +211,9 @@ it("names the file that failed, keeps its download, and lets it be tried again",
   });
 
   expect(host.textContent).toContain("audioPlaybackUnavailable broken.mp3");
-  expect(player().hidden).toBe(true);
+  // There is no visible player: the chips alone control playback.
+  expect(audio().hidden).toBe(true);
+  expect(audio().hasAttribute("controls")).toBe(false);
   expect(host.querySelector('a[download="broken.mp3"]')).not.toBeNull();
 
   // A dropped connection reports the same event, so the file can be tried again.
@@ -179,7 +222,7 @@ it("names the file that failed, keeps its download, and lets it be tried again",
 
   expect(host.textContent).not.toContain("audioPlaybackUnavailable");
   expect(play).toHaveBeenCalledTimes(2);
-  expect(player().hidden).toBe(false);
+  expect(audio().hidden).toBe(true);
 });
 
 it("does not blame the current file for an error event with no media error", async () => {
@@ -192,7 +235,7 @@ it("does not blame the current file for an error event with no media error", asy
   });
 
   expect(host.textContent).not.toContain("audioPlaybackUnavailable");
-  expect(player().hidden).toBe(false);
+  expect(audio().hidden).toBe(true);
 });
 
 it("pauses other message media when it starts, and leaves a voice call alone", async () => {
