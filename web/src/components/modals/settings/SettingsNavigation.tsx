@@ -109,16 +109,6 @@ export function SettingsNavigation({
               </button>
             ))}
           </div>
-          <div className="flex items-center gap-1 px-2 text-xs text-[var(--color-text-muted)]">
-            <span className="min-w-0 truncate" data-settings-applies-to>
-              {scope === "group"
-                ? t("navigation.appliesToGroup", {
-                    name: groupTitle || scopeRootUrl || groupId || "—",
-                  })
-                : t("navigation.appliesToGlobal")}
-            </span>
-            {scopeHelp}
-          </div>
         </div>
 
         <nav className="flex-1 overflow-y-auto scrollbar-hide px-3 pb-4 pt-2">

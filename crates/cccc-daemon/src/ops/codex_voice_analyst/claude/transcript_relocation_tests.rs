@@ -104,8 +104,10 @@ async fn stale_main_project_pointer_recovers_worktree_history_and_fences_old_mes
 
 #[tokio::test]
 async fn missing_active_history_waits_then_fails_without_switching_session() {
+    tokio::time::pause();
     let fixture = Fixture::new();
     let mut follower = fixture.follower();
+    follower.set_continuity_timeout(super::super::transcript_continuity::RELOCATION_TIMEOUT);
     follower
         .initialize()
         .await
@@ -120,7 +122,7 @@ async fn missing_active_history_waits_then_fails_without_switching_session() {
     )
     .expect("complete rename in fixture");
     assert!(follower.poll().await.expect("migration grace").is_empty());
-    tokio::time::sleep(super::super::transcript_continuity::RELOCATION_TIMEOUT).await;
+    tokio::time::advance(super::super::transcript_continuity::RELOCATION_TIMEOUT).await;
     assert_eq!(
         follower
             .poll()

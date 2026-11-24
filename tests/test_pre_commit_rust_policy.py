@@ -15,14 +15,48 @@ def test_production_roots_enforce_audited_process_constructors() -> None:
         assert "#![cfg_attr(not(test), deny(clippy::disallowed_methods))]" in root.read_text(), root
 
 
-def _rust_precommit_plan(*changed_files: str) -> dict[str, str]:
+def _stand_in_cargo(directory: Path, *, nextest: bool, failing: str = "") -> Path:
+    """Put a cargo on PATH that records each call and answers whether nextest
+    is installed; a call whose arguments start with `failing` exits 1."""
+    import sys
+    import textwrap
+
+    directory.mkdir(parents=True, exist_ok=True)
+    cargo = directory / "cargo"
+    cargo.write_text(
+        f"#!{sys.executable}\n" + textwrap.dedent(f"""\
+        import os
+        import sys
+        args = " ".join(sys.argv[1:])
+        if args == "nextest --version":
+            sys.exit(0 if {nextest!r} else 101)
+        with open(os.environ["CARGO_CALLS"], "a", encoding="utf-8") as calls:
+            calls.write(args + "\\n")
+        sys.exit(1 if {failing!r} and args.startswith({failing!r}) else 0)
+        """),
+        encoding="utf-8",
+    )
+    cargo.chmod(0o755)
+    return directory
+
+
+def _hook_env(binaries: Path, calls: Path) -> dict[str, str]:
     env = os.environ.copy()
-    env.pop("CCCC_GROUP_ID", None)
-    env.pop("CCCC_ACTOR_ID", None)
+    for key in [key for key in env if key.startswith("CCCC_")]:
+        env.pop(key)
+    env["PATH"] = str(binaries) + os.pathsep + env["PATH"]
+    env["CARGO_CALLS"] = str(calls)
+    return env
+
+
+def _rust_precommit_plan(
+    tmp_path: Path, *changed_files: str, nextest: bool = False
+) -> dict[str, str]:
+    binaries = _stand_in_cargo(tmp_path / "bin", nextest=nextest)
     result = subprocess.run(
         ["scripts/pre_commit_rust.sh", "--dry-run", "--", *changed_files],
         cwd=ROOT,
-        env=env,
+        env=_hook_env(binaries, tmp_path / "calls"),
         check=True,
         capture_output=True,
         text=True,
@@ -32,13 +66,17 @@ def _rust_precommit_plan(*changed_files: str) -> dict[str, str]:
     )
 
 
-def test_process_global_runtime_tests_are_isolated_from_workspace_parallelism() -> None:
-    workspace = _rust_precommit_plan("Cargo.toml")
+def test_process_global_runtime_tests_are_isolated_from_workspace_parallelism(
+    tmp_path: Path,
+) -> None:
+    workspace = _rust_precommit_plan(tmp_path, "Cargo.toml")
     daemon = _rust_precommit_plan(
+        tmp_path,
         "crates/cccc-daemon/src/lib.rs",
         "crates/cccc-daemon/tests/message_delivery.rs",
     )
     runtime = _rust_precommit_plan(
+        tmp_path,
         "crates/cccc-runtime/src/lib.rs",
         "crates/cccc-runtime/tests/terminal_replay.rs",
     )
@@ -72,6 +110,66 @@ def test_process_global_runtime_tests_are_isolated_from_workspace_parallelism() 
         in changed_runtime_test
     )
     assert "-- --test-threads=1" in changed_runtime_test
+    # cargo test runs the daemon doctests itself on this path.
+    assert "rust_daemon_doc_test" not in daemon
+
+
+def test_daemon_suite_uses_nextest_like_ci_when_it_is_installed(tmp_path: Path) -> None:
+    fallback = _rust_precommit_plan(tmp_path / "without", "Cargo.toml")
+    plan = _rust_precommit_plan(tmp_path / "with", "Cargo.toml", nextest=True)
+
+    # One process per test, as many at once as CI's 4-core runners.
+    assert plan["rust_daemon_test"].split() == [
+        "cargo", "nextest", "run", "--package", "cccc-pair-daemon", "--locked",
+        "--build-jobs", "2", "--test-threads", "4",
+    ]
+    # nextest does not run doctests, so the hook still does.
+    assert plan["rust_daemon_doc_test"].split() == [
+        "cargo", "test", "--package", "cccc-pair-daemon", "--doc", "--locked", "--jobs", "2",
+    ]
+    # Everything outside the daemon suite is planned exactly as before.
+    for key in ("rust_clippy", "rust_test", "rust_runtime_test"):
+        assert plan[key] == fallback[key]
+
+
+def test_a_failing_nextest_run_fails_the_hook_without_falling_back(tmp_path: Path) -> None:
+    def run(failing: str) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+        case = tmp_path / (failing.replace(" ", "-") or "passing")
+        case.mkdir()
+        binaries = _stand_in_cargo(case / "bin", nextest=True, failing=failing)
+        calls = case / "calls"
+        result = subprocess.run(
+            ["scripts/pre_commit_rust.sh", "--", "crates/cccc-daemon/src/lib.rs"],
+            cwd=ROOT,
+            env=_hook_env(binaries, calls),
+            capture_output=True,
+            text=True,
+        )
+        return result, calls.read_text(encoding="utf-8").splitlines()
+
+    passed, passed_calls = run("")
+    assert passed.returncode == 0, passed.stdout + passed.stderr
+    def daemon_runs(calls: list[str]) -> list[str]:
+        return [
+            call for call in calls
+            if call.startswith(("nextest run --package cccc-pair-daemon",
+                                "test --package cccc-pair-daemon"))
+        ]
+
+    assert daemon_runs(passed_calls) == [
+        "nextest run --package cccc-pair-daemon --locked --build-jobs 2 --test-threads 4",
+        "test --package cccc-pair-daemon --doc --locked --jobs 2",
+    ]
+
+    failed, failed_calls = run("nextest run")
+    assert failed.returncode != 0
+    # Nothing ran after the failure: no cargo test retry, no doctests.
+    assert daemon_runs(failed_calls) == [
+        "nextest run --package cccc-pair-daemon --locked --build-jobs 2 --test-threads 4"
+    ]
+
+    failed_docs, _ = run("test --package cccc-pair-daemon --doc")
+    assert failed_docs.returncode != 0
 
 
 def test_rust_checks_isolate_fixture_git_commands_from_hook_repository(tmp_path: Path) -> None:

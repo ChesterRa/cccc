@@ -116,8 +116,9 @@ impl Replay {
                 read.data["event_id"]
             );
         }
-        // The real actor.start still begins its normal one-second Mail window.
-        std::thread::sleep(Duration::from_millis(1200));
+        // The captured lifecycle timestamp already places the initial notice
+        // beyond the one-second window. No wall-clock wait is needed here.
+        append_old_actor_lifecycle(&home, &group_id, "actor.start");
         Self {
             _temp: temp,
             home,
@@ -143,6 +144,50 @@ impl Replay {
         // The same eligibility, projection, notice append and dispatch path
         // used by the daemon's scheduled unread pass; not the reference reducer.
         tick_group(&self.home, &self.group_id, true, &AtomicBool::new(false));
+    }
+
+    fn age_delivery(&self, event_id: &str) {
+        self.rewrite_timestamps(|event| {
+            (event.kind == "system.notify"
+                && event.id == event_id
+                && event.data.get("kind") == Some(&json!("mail_notice")))
+                || (event.kind == "chat.message" && event.id == event_id)
+                || (event.kind == "runtime.delivery"
+                    && event.data.get("source_event_id").and_then(Value::as_str) == Some(event_id))
+        });
+    }
+
+    fn age_actor_lifecycle(&self, kind: &str) {
+        self.rewrite_timestamps(|event| {
+            event.kind == kind
+                && event.data.get("actor_id").and_then(Value::as_str) == Some("recipient")
+        });
+    }
+
+    fn rewrite_timestamps(&self, matches: impl Fn(&Event) -> bool) {
+        let store = GroupStore::new(self.home.clone()).expect("captured notice replay invariant");
+        let path = store
+            .ledger_path(&self.group_id)
+            .expect("captured notice replay invariant");
+        let mut events =
+            cccc_core::ledger::read_all(&path).expect("captured notice replay invariant");
+        let timestamp = (Utc::now() - chrono::Duration::seconds(2)).to_rfc3339();
+        for event in &mut events {
+            if matches(event) {
+                event.ts.clone_from(&timestamp);
+            }
+        }
+        let mut bytes = Vec::new();
+        for event in events {
+            serde_json::to_writer(&mut bytes, &event).expect("captured notice replay invariant");
+            bytes.push(b'\n');
+        }
+        // Replace the active ledger so the production projection observes a
+        // new source identity and reloads the replayed timestamps. Rewriting
+        // the same inode would leave its warm cache with the old event times.
+        let replacement = path.with_extension("aged.jsonl");
+        std::fs::write(&replacement, bytes).expect("captured notice replay invariant");
+        std::fs::rename(replacement, path).expect("captured notice replay invariant");
     }
 
     fn accepted(&self, event_id: &str) {
@@ -236,7 +281,7 @@ impl Replay {
                     json!({"group_id":self.group_id,"actor_id":"recipient","by":"user"}),
                 );
                 add_actor(&self.home, &self.group_id);
-                std::thread::sleep(Duration::from_millis(1200));
+                append_old_actor_lifecycle(&self.home, &self.group_id, "actor.start");
             }
             _ => panic!("unknown resolution"),
         }
@@ -291,6 +336,17 @@ fn add_actor(home: &HomeLayout, group: &str) {
     );
 }
 
+fn append_old_actor_lifecycle(home: &HomeLayout, group_id: &str, kind: &str) {
+    let store = GroupStore::new(home.clone()).expect("captured notice replay invariant");
+    let path = store
+        .ledger_path(group_id)
+        .expect("captured notice replay invariant");
+    let mut event = Event::new(kind, group_id);
+    event.ts = (Utc::now() - chrono::Duration::seconds(2)).to_rfc3339();
+    event.data.insert("actor_id".into(), json!("recipient"));
+    cccc_core::ledger::append(&path, &event).expect("captured notice replay invariant");
+}
+
 #[test]
 fn mail_notice_repeat_daemon_accepts_repeat_with_later_mail() {
     let replay = Replay::captured(3610, Some(3600));
@@ -330,7 +386,6 @@ fn closes_repeat(resolution: &str) {
         "group_settings_update",
         json!({"group_id":replay.group_id,"by":"user","patch":{"mail_notice_repeat_seconds":1}}),
     );
-    std::thread::sleep(Duration::from_millis(1200));
     replay.expect_no_repeat();
     if resolution == "generation" {
         let sent = request(
@@ -338,7 +393,8 @@ fn closes_repeat(resolution: &str) {
             "send",
             json!({"group_id":replay.group_id,"by":"user","to":["recipient"],"text":"New generation Mail","message_mode":"mail"}),
         );
-        std::thread::sleep(Duration::from_millis(1200));
+        replay.age_actor_lifecycle("actor.start");
+        replay.age_delivery(sent["event"]["id"].as_str().expect("new Mail"));
         let before = replay.notices().len();
         replay.tick();
         let notices = replay.notices();
@@ -382,12 +438,13 @@ fn mail_notice_repeat_daemon_continues_while_the_same_mail_is_unread() {
             // Keep a warm cache across removal/re-addition of the same Actor ID.
             replay.repeat();
             replay.resolve("generation");
-            request(
+            let sent = request(
                 &replay.home,
                 "send",
                 json!({"group_id":replay.group_id,"by":"user","to":["recipient"],"text":"New generation Mail","message_mode":"mail"}),
             );
-            std::thread::sleep(Duration::from_millis(1200));
+            replay.age_actor_lifecycle("actor.start");
+            replay.age_delivery(sent["event"]["id"].as_str().expect("new Mail"));
             let before = replay.notices().len();
             replay.tick();
             let notices = replay.notices();
@@ -396,13 +453,24 @@ fn mail_notice_repeat_daemon_continues_while_the_same_mail_is_unread() {
         } else {
             replay.repeat(); // Initial notice for the two-Mail pending batch.
         }
+        let claim = replay
+            .notices()
+            .last()
+            .expect("accepted notice claim")
+            .id
+            .clone();
+        replay.age_delivery(&claim);
         for _ in 0..4 {
-            std::thread::sleep(Duration::from_millis(1200));
+            if replaced {
+                replay.age_actor_lifecycle("actor.start");
+            }
             let before = replay.notices().len();
             replay.tick();
             let notices = replay.notices();
             assert_eq!(notices.len(), before + 1);
-            replay.accepted(&notices.last().expect("repeat while unread").id);
+            let notice = notices.last().expect("repeat while unread");
+            replay.accepted(&notice.id);
+            replay.age_delivery(&notice.id);
         }
     }
 }
@@ -421,6 +489,13 @@ fn mail_notice_repeat_daemon_continues_after_restart_and_new_session() {
             "group_settings_update",
             json!({"group_id":replay.group_id,"by":"user","patch":{"mail_notice_repeat_seconds":1}}),
         );
+        let claim = replay
+            .notices()
+            .last()
+            .expect("accepted notice claim")
+            .id
+            .clone();
+        replay.age_delivery(&claim);
         // Bind the new settings to a warm projection before the lifecycle op,
         // without issuing a notice while its one-second claim may expire.
         request(
@@ -433,13 +508,13 @@ fn mail_notice_repeat_daemon_continues_after_restart_and_new_session() {
             op,
             json!({"group_id":replay.group_id,"actor_id":"recipient","by":"user"}),
         );
+        replay.age_actor_lifecycle(op_to_lifecycle(op));
         assert_eq!(
             store.load(&replay.group_id).expect("group").actors[0].created_at,
             created,
             "runtime lifecycle is not a new Actor generation"
         );
 
-        std::thread::sleep(Duration::from_millis(1200));
         let before = replay.notices().len();
         replay.tick();
         let notices = replay.notices();
@@ -454,7 +529,7 @@ fn mail_notice_repeat_daemon_continues_after_restart_and_new_session() {
             json!(replay.mail_ids)
         );
         replay.accepted(&notice.id);
-        std::thread::sleep(Duration::from_millis(1200));
+        replay.age_delivery(&notice.id);
         let before = replay.notices().len();
         replay.tick();
         let repeated = replay.notices();
@@ -464,6 +539,14 @@ fn mail_notice_repeat_daemon_continues_after_restart_and_new_session() {
             "unread Mail remains eligible after {op}"
         );
         replay.accepted(&repeated.last().expect("subsequent repeat").id);
+    }
+}
+
+fn op_to_lifecycle(op: &str) -> &str {
+    match op {
+        "actor_restart" => "actor.restart",
+        "actor_new_session" => "actor.new_session",
+        _ => unreachable!("runtime lifecycle test operation: {op}"),
     }
 }
 

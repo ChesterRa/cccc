@@ -1,5 +1,35 @@
 use super::*;
 
+#[cfg(test)]
+use std::collections::HashMap;
+#[cfg(test)]
+use std::sync::{Mutex, OnceLock};
+
+#[cfg(test)]
+type ShutdownHookKey = (String, String);
+#[cfg(test)]
+type ShutdownHookFn = Box<dyn FnOnce() + Send>;
+
+#[cfg(test)]
+static SHUTDOWN_HOOKS: OnceLock<Mutex<HashMap<ShutdownHookKey, ShutdownHookFn>>> = OnceLock::new();
+
+#[cfg(test)]
+pub(crate) struct ShutdownHook {
+    key: (String, String),
+}
+
+#[cfg(test)]
+impl Drop for ShutdownHook {
+    fn drop(&mut self) {
+        if let Ok(mut hooks) = SHUTDOWN_HOOKS
+            .get_or_init(|| Mutex::new(HashMap::new()))
+            .lock()
+        {
+            hooks.remove(&self.key);
+        }
+    }
+}
+
 /// Why an Actor's delivery worker stops.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ShutdownReason {
@@ -26,9 +56,40 @@ pub fn shutdown_actor_for(group_id: &str, actor_id: &str, reason: ShutdownReason
         .ok()
         .and_then(|mut workers| workers.remove(&(group_id.to_owned(), actor_id.to_owned())));
     if let Some(worker) = worker {
+        #[cfg(test)]
+        {
+            let mut worker = worker;
+            worker.shutdown_hook = take_shutdown_hook(group_id, actor_id);
+            worker.shutdown_for(reason);
+        }
+        #[cfg(not(test))]
         worker.shutdown_for(reason);
     }
     clear_in_flight(|item| item.0 == group_id && item.1 == actor_id);
+}
+
+#[cfg(test)]
+pub(crate) fn on_shutdown(
+    group_id: &str,
+    actor_id: &str,
+    hook: impl FnOnce() + Send + 'static,
+) -> ShutdownHook {
+    let key = (group_id.to_owned(), actor_id.to_owned());
+    SHUTDOWN_HOOKS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .expect("shutdown hooks")
+        .insert(key.clone(), Box::new(hook));
+    ShutdownHook { key }
+}
+
+#[cfg(test)]
+fn take_shutdown_hook(group_id: &str, actor_id: &str) -> Option<Box<dyn FnOnce() + Send>> {
+    SHUTDOWN_HOOKS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .expect("shutdown hooks")
+        .remove(&(group_id.to_owned(), actor_id.to_owned()))
 }
 
 pub fn shutdown_group(group_id: &str) {

@@ -4,12 +4,45 @@ use std::io;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
-pub(super) const RELOCATION_TIMEOUT: Duration = Duration::from_secs(10);
+const PRODUCTION_RELOCATION_TIMEOUT: Duration = Duration::from_secs(10);
 
-#[derive(Default)]
+#[cfg(test)]
+pub(super) const RELOCATION_TIMEOUT: Duration = PRODUCTION_RELOCATION_TIMEOUT;
+
 pub(super) struct Continuity {
     prefix: Sha256,
     missing_since: Option<tokio::time::Instant>,
+    #[cfg(test)]
+    timeout: Duration,
+}
+
+impl Default for Continuity {
+    fn default() -> Self {
+        Self {
+            prefix: Sha256::new(),
+            missing_since: None,
+            #[cfg(test)]
+            timeout: PRODUCTION_RELOCATION_TIMEOUT,
+        }
+    }
+}
+
+impl Continuity {
+    #[cfg(test)]
+    pub(super) fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
+        self
+    }
+
+    #[cfg(test)]
+    fn timeout(&self) -> Duration {
+        self.timeout
+    }
+
+    #[cfg(not(test))]
+    fn timeout(&self) -> Duration {
+        PRODUCTION_RELOCATION_TIMEOUT
+    }
 }
 
 impl Continuity {
@@ -22,12 +55,12 @@ impl Continuity {
         file: &mut tokio::fs::File,
         offset: u64,
     ) -> io::Result<()> {
-        self.prefix = hash_prefix(file, offset).await?;
+        self.prefix = hash_prefix(file, offset, self.timeout()).await?;
         Ok(())
     }
 
     pub(super) async fn verify(&self, file: &mut tokio::fs::File, offset: u64) -> io::Result<()> {
-        let observed = hash_prefix(file, offset).await?;
+        let observed = hash_prefix(file, offset, self.timeout()).await?;
         if observed.finalize() != self.prefix.clone().finalize() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -51,7 +84,7 @@ impl Continuity {
             {
                 let now = tokio::time::Instant::now();
                 let since = self.missing_since.get_or_insert(now);
-                if now.duration_since(*since) < RELOCATION_TIMEOUT {
+                if now.duration_since(*since) < self.timeout() {
                     Ok(T::default())
                 } else {
                     Err(io::Error::new(
@@ -67,8 +100,12 @@ impl Continuity {
     }
 }
 
-async fn hash_prefix(file: &mut tokio::fs::File, offset: u64) -> io::Result<Sha256> {
-    tokio::time::timeout(RELOCATION_TIMEOUT, async {
+async fn hash_prefix(
+    file: &mut tokio::fs::File,
+    offset: u64,
+    timeout: Duration,
+) -> io::Result<Sha256> {
+    tokio::time::timeout(timeout, async {
         file.seek(std::io::SeekFrom::Start(0)).await?;
         let mut remaining = offset;
         let mut digest = Sha256::new();

@@ -34,15 +34,6 @@
   padding-block: 0.5rem;
 }
 
-/* The scope line answers "what do I change"; it wraps and is never cut short. */
-:root[data-ui-style="lcd"] [data-lcd-scope] [data-settings-applies-to] {
-  overflow: visible;
-  white-space: normal;
-  text-overflow: clip;
-  /* A group name without spaces still breaks inside the sidebar. */
-  overflow-wrap: anywhere;
-}
-
 /* The pages are a list in ink; the open one is set in reverse. */
 :root[data-ui-style="lcd"] [data-lcd-scope] [data-settings-nav] nav button {
   color: var(--lcd-ink);

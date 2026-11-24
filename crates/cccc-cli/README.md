@@ -44,7 +44,7 @@ the selected command in a new terminal with `cccc doctor`.
 
 ## Workspace development
 
-CCCC requires Rust 1.88 or newer. From the repository, run and test this
+CCCC requires Rust 1.91 or newer. From the repository, run and test this
 implementation directly with:
 
 ```bash

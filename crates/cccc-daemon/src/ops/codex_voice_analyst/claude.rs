@@ -601,7 +601,18 @@ async fn rollback_started_job(config_dir: &Path, short: &str) -> io::Result<()> 
 }
 
 async fn kill_and_confirm(endpoint: &control::Endpoint, short: &str) -> io::Result<()> {
-    confirm_job_removal(endpoint, short)
+    confirm_job_removal(endpoint, short, STOP_TIMEOUT)
+        .await
+        .map_err(unconfirmed_stop)
+}
+
+#[cfg(test)]
+async fn kill_and_confirm_with_timeout(
+    endpoint: &control::Endpoint,
+    short: &str,
+    timeout: Duration,
+) -> io::Result<()> {
+    confirm_job_removal(endpoint, short, timeout)
         .await
         .map_err(unconfirmed_stop)
 }
@@ -613,7 +624,11 @@ fn unconfirmed_stop(error: io::Error) -> io::Error {
     )
 }
 
-async fn confirm_job_removal(endpoint: &control::Endpoint, short: &str) -> io::Result<()> {
+async fn confirm_job_removal(
+    endpoint: &control::Endpoint,
+    short: &str,
+    timeout: Duration,
+) -> io::Result<()> {
     let mut kill_error = None;
     match control::list(endpoint).await {
         Ok(jobs)
@@ -630,7 +645,7 @@ async fn confirm_job_removal(endpoint: &control::Endpoint, short: &str) -> io::R
     if let Err(error) = control::kill(endpoint, short).await {
         kill_error = Some(error);
     }
-    let deadline = tokio::time::Instant::now() + STOP_TIMEOUT;
+    let deadline = tokio::time::Instant::now() + timeout;
     let mut last_error: Option<io::Error>;
     // Agent View jobs can outlive their control harness. This adapter owns a
     // job identifier, not a process identity it can verify has exited, so only
@@ -1374,6 +1389,11 @@ impl TranscriptFollower {
         }
     }
 
+    #[cfg(test)]
+    fn set_continuity_timeout(&mut self, timeout: Duration) {
+        self.continuity = std::mem::take(&mut self.continuity).with_timeout(timeout);
+    }
+
     async fn initialize(&mut self) -> io::Result<()> {
         // A fresh Agent View job does not create linkScanPath or its transcript
         // until the first prompt. Validate an already-published path now, but
@@ -1708,6 +1728,30 @@ mod tests {
         let listener = tokio::net::UnixListener::bind(control_dir.join("control.sock"))
             .expect("control socket");
         (config_dir, listener, guard)
+    }
+
+    async fn unconfirmed_after_logical_timeout(
+        endpoint: &control::Endpoint,
+        short: &str,
+    ) -> io::Error {
+        tokio::time::pause();
+        let mut task = std::pin::pin!(kill_and_confirm_with_timeout(endpoint, short, STOP_TIMEOUT));
+        let mut before_deadline = std::pin::pin!(tokio::time::sleep(Duration::from_secs(9)));
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_secs(9)).await;
+        let early = tokio::select! {
+            result = &mut task => Some(result),
+            _ = &mut before_deadline => None,
+        };
+        assert!(
+            early.is_none(),
+            "stop confirmation must keep waiting for the full configured timeout"
+        );
+        tokio::time::advance(Duration::from_secs(1)).await;
+        for _ in 0..4 {
+            tokio::task::yield_now().await;
+        }
+        task.await.expect_err("unconfirmed stop must fail")
     }
 
     #[cfg(unix)]
@@ -2815,17 +2859,9 @@ mod tests {
         let _guard = ControlDirectory(control_dir); // no control.sock is bound
 
         let endpoint = control::Endpoint::resolve(&config_dir).expect("endpoint resolves");
-        let started = std::time::Instant::now();
-        let error = kill_and_confirm(&endpoint, "deadbeef")
-            .await
-            .expect_err("a missing endpoint cannot confirm job removal");
+        let error = unconfirmed_after_logical_timeout(&endpoint, "deadbeef").await;
         assert_eq!(error.kind(), io::ErrorKind::TimedOut);
         assert!(error.to_string().contains("stop unconfirmed"), "{error}");
-        assert!(
-            started.elapsed() >= STOP_TIMEOUT,
-            "a missing endpoint must allow time for authoritative confirmation: {:?}",
-            started.elapsed()
-        );
     }
 
     /// A task that stays listed keeps the full timeout: a stuck Agent View
@@ -2865,9 +2901,7 @@ mod tests {
             }
         });
         let endpoint = control::Endpoint::resolve(&config_dir).expect("endpoint resolves");
-        let error = kill_and_confirm(&endpoint, "deadbeef")
-            .await
-            .expect_err("a stuck task still fails the stop");
+        let error = unconfirmed_after_logical_timeout(&endpoint, "deadbeef").await;
         assert_eq!(error.kind(), io::ErrorKind::TimedOut);
         assert!(error.to_string().contains("stop unconfirmed"), "{error}");
         server.abort();
@@ -2883,13 +2917,9 @@ mod tests {
         // The socket file outlives its listener, so connecting is refused.
         drop(listener);
         let endpoint = control::Endpoint::resolve(&config_dir).expect("endpoint resolves");
-        let started = std::time::Instant::now();
-        let error = kill_and_confirm(&endpoint, "deadbeef")
-            .await
-            .expect_err("a stale socket cannot confirm job removal");
+        let error = unconfirmed_after_logical_timeout(&endpoint, "deadbeef").await;
         assert_eq!(error.kind(), io::ErrorKind::TimedOut);
         assert!(error.to_string().contains("stop unconfirmed"), "{error}");
-        assert!(started.elapsed() >= STOP_TIMEOUT, "{:?}", started.elapsed());
         let socket = _guard.0.join("control.sock");
         assert!(socket.exists(), "unconfirmed stop preserves the socket");
         drop(_guard);
@@ -2922,14 +2952,11 @@ mod tests {
             })
         };
         let endpoint = control::Endpoint::resolve(&config_dir).expect("endpoint resolves");
-        let started = std::time::Instant::now();
-        let stopped = kill_and_confirm(&endpoint, "deadbeef").await;
+        let error = unconfirmed_after_logical_timeout(&endpoint, "deadbeef").await;
         alternating.store(false, Ordering::Release);
         alternate.await.expect("alternating endpoint");
-        let error = stopped.expect_err("endpoint absence cannot confirm job removal");
         assert_eq!(error.kind(), io::ErrorKind::TimedOut);
         assert!(error.to_string().contains("stop unconfirmed"), "{error}");
-        assert!(started.elapsed() >= STOP_TIMEOUT, "{:?}", started.elapsed());
     }
 }
 
