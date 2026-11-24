@@ -179,7 +179,11 @@ fn platform() -> Result<()> {
 async fn invoke(program: &str, args: &[String]) -> Result<cccc_runtime::CapturedOutput> {
     let program =
         cccc_runtime::resolve_executable_in_path(program, std::env::var("PATH").ok().as_deref())
-            .context("Native CLI is unavailable")?;
+            .with_context(|| {
+                format!(
+                    "The {program} command was not found on PATH. Install it, or run this from a terminal where {program} works"
+                )
+            })?;
     cccc_runtime::capture_command(
         cccc_runtime::background_command(program).args(args),
         None,

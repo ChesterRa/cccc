@@ -590,7 +590,7 @@ fn send_with_audience_policy(
     } else {
         let _ = actor_delivery::dispatch(home, &group, &event);
         if kind == "chat.message" && authority_by != "user" {
-            send_advisories = super::mail_advisory::send_advisories(&group, &event);
+            send_advisories = super::mail_advisory::send_advisories(home, &group, &event);
         }
     }
     if kind == "chat.message" {
@@ -606,7 +606,7 @@ fn send_with_audience_policy(
         }
         if !send_advisories.is_empty() {
             result["send_recipient_advisories"] = json!(send_advisories);
-            result["send_advisory"] = json!(super::mail_advisory::SEND_NOTE);
+            result["send_advisory"] = json!(super::mail_advisory::send_note(&send_advisories));
         }
         object(result)
     } else {

@@ -517,6 +517,19 @@ pub(super) fn connected(home: &HomeLayout, source_id: &str) -> bool {
     store::connected(home, source_id)
 }
 
+/// True only when this computer's registration of a native Codex session is
+/// active and its recorded host process has positively exited, as read now. A
+/// Codex registration can still say it receives after its shared background
+/// server is gone, so `connected` cannot tell this apart. Unreadable metadata,
+/// device sources, other runtimes and inconclusive process checks are unknown.
+pub(super) fn host_exited(home: &HomeLayout, source_id: &str) -> bool {
+    !source_id.is_empty()
+        && !cccc_core::session_nodes::is_remote_source(source_id)
+        && cccc_core::local_sessions::read(home, source_id).is_ok_and(|session| {
+            session.runtime == LocalSessionRuntime::Codex && session.host.has_exited()
+        })
+}
+
 fn detach(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     local(request)?;
     store::detach(

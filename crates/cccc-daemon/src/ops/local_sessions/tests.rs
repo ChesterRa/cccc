@@ -527,6 +527,149 @@ fn native_rejection_and_uncertain_delivery_reach_the_original_agent_sender() {
 }
 
 #[test]
+fn an_agent_sender_is_told_only_when_a_local_codex_host_has_positively_exited() {
+    let mut fixture = Fixture::with_runtime(LocalSessionRuntime::Codex);
+    fixture.source.codex_program = Some(fixture._temp.path().join("missing-codex"));
+    fixture.source.codex_home = Some(fixture._temp.path().to_owned());
+    fixture.source.codex_can_receive = true;
+    native::write(&fixture.home, fixture.source.clone()).expect("ready Codex source");
+    let created = fixture.call(
+        "local_session_conversation",
+        json!({"source_ids":[fixture.source.source_id]}),
+    );
+    // From here the registration reports no receive readiness, so no delivery
+    // is attempted; the advisory must follow the host, not that flag.
+    fixture.source.codex_can_receive = false;
+    native::write(&fixture.home, fixture.source.clone()).expect("Codex source not receiving");
+    let group_id = created["group_id"].as_str().expect("Group ID").to_owned();
+    let groups = GroupStore::new(fixture.home.clone()).expect("store");
+    let member = groups.load(&group_id).expect("Group").actors[0].id.clone();
+    fixture.call(
+        "actor_add",
+        json!({
+            "group_id":group_id,"actor_id":"sender","runtime":"custom",
+            "command":["unused-fixture"],"enabled":false,"by":"user"
+        }),
+    );
+    let send = |by: &str| {
+        fixture.call(
+            "message_send",
+            json!({
+                "group_id":group_id,"by":by,"to":[member],"message_mode":"send",
+                "text":"fixture work","insight":"fixture context"
+            }),
+        )
+    };
+    let set_enabled = |enabled: bool| {
+        let mut group = groups.load(&group_id).expect("Group");
+        let actor = group
+            .actors
+            .iter_mut()
+            .find(|actor| actor.id == member)
+            .expect("native member");
+        actor.enabled = enabled;
+        groups.save(&group).expect("save Group");
+    };
+
+    assert_eq!(send("sender").get("send_recipient_advisories"), None);
+
+    let mut exited = fixture.source.clone();
+    exited.host.started.push('0');
+    native::write(&fixture.home, exited).expect("host fingerprint no longer present");
+    let sent = send("sender");
+    assert_eq!(
+        sent["send_recipient_advisories"],
+        json!([{"actor_id":member,"reasons":["native_host_exited"]}])
+    );
+    let note = sent["send_advisory"].as_str().expect("note");
+    assert!(note.contains("native Codex session has exited"), "{note}");
+    assert!(!note.contains("disabled"), "{note}");
+    assert_eq!(send("user").get("send_recipient_advisories"), None);
+    fixture.call(
+        "actor_add",
+        json!({
+            "group_id":group_id,"actor_id":"idle","runtime":"custom",
+            "command":["unused-fixture"],"enabled":false,"by":"user"
+        }),
+    );
+    let mixed = fixture.call(
+        "message_send",
+        json!({
+            "group_id":group_id,"by":"sender","to":[member, "idle"],"message_mode":"send",
+            "text":"fixture work","insight":"fixture context"
+        }),
+    );
+    assert_eq!(
+        mixed["send_recipient_advisories"],
+        json!([
+            {"actor_id":member,"reasons":["native_host_exited"]},
+            {"actor_id":"idle","reasons":["disabled"]}
+        ])
+    );
+    let note = mixed["send_advisory"].as_str().expect("note");
+    assert!(
+        note.contains("For disabled, group_paused and group_stopped:"),
+        "{note}"
+    );
+    assert!(note.contains("For native_host_exited:"), "{note}");
+
+    // A blocking reason takes precedence, with the note it always had.
+    set_enabled(false);
+    let disabled = send("sender");
+    assert_eq!(
+        disabled["send_recipient_advisories"],
+        json!([{"actor_id":member,"reasons":["disabled"]}])
+    );
+    let note = disabled["send_advisory"].as_str().expect("note");
+    assert!(note.contains("does not enable a disabled Actor"), "{note}");
+    assert!(!note.contains("native_host_exited"), "{note}");
+    set_enabled(true);
+
+    // Unreadable registration stays unknown.
+    let record = fixture
+        .home
+        .root()
+        .join("state/local_sessions")
+        .join(format!(
+            "{}.json",
+            fixture.source.source_id.replace(':', "%3A")
+        ));
+    let saved = std::fs::read(&record).expect("registration file");
+    std::fs::write(&record, b"{").expect("corrupt registration");
+    assert_eq!(send("sender").get("send_recipient_advisories"), None);
+    std::fs::write(&record, saved).expect("restore registration");
+    assert!(send("sender").get("send_recipient_advisories").is_some());
+
+    // The same source resumed on a live host clears it.
+    native::write(&fixture.home, fixture.source.clone()).expect("resumed host");
+    assert_eq!(send("sender").get("send_recipient_advisories"), None);
+}
+
+#[test]
+fn an_exited_claude_host_is_left_to_its_receive_lease() {
+    let fixture = Fixture::new();
+    let group = fixture.conversation();
+    fixture.call(
+        "actor_add",
+        json!({
+            "group_id":group.group_id,"actor_id":"sender","runtime":"custom",
+            "command":["unused-fixture"],"enabled":false,"by":"user"
+        }),
+    );
+    let mut exited = fixture.source.clone();
+    exited.host.started.push('0');
+    native::write(&fixture.home, exited).expect("host fingerprint no longer present");
+    let sent = fixture.call(
+        "message_send",
+        json!({
+            "group_id":group.group_id,"by":"sender","to":[group.actors[0].id],
+            "message_mode":"send","text":"fixture work","insight":"fixture context"
+        }),
+    );
+    assert_eq!(sent.get("send_recipient_advisories"), None);
+}
+
+#[test]
 fn claude_compact_notification_recovers_full_message_and_instructions_without_redelivery() {
     let fixture = Fixture::new();
     let group = fixture.conversation();

@@ -6209,9 +6209,9 @@ Result:
   mail_advisory?: string         // fixed note, present with mail_recipient_advisories
   send_recipient_advisories?: {  // new Send or request_reply from an agent; see below
     actor_id: string
-    reasons: ("disabled" | "group_paused" | "group_stopped")[]
+    reasons: ("disabled" | "group_paused" | "group_stopped" | "native_host_exited")[]
   }[]
-  send_advisory?: string         // fixed note, present with send_recipient_advisories
+  send_advisory?: string         // fixed note per kind of reason, present with send_recipient_advisories
 }
 ```
 
@@ -6270,12 +6270,20 @@ is running, cross-Group and Connect Mail, and a replay by `client_id`. A local
 Mail `reply` reports the same way.
 
 A new local Send or `request_reply` from an agent reports the same way in
-`send_recipient_advisories`, with `disabled`, `group_paused` and `group_stopped`
-only: a message from an agent enables no disabled Actor and resumes no paused or
+`send_recipient_advisories`. For `disabled`, `group_paused` and `group_stopped`,
+a message from an agent enables no disabled Actor and resumes no paused or
 stopped Group, so no delivery is attempted and no `runtime.delivery` appears.
-`send_advisory` says so. An enabled Actor that is not running is not listed, because delivery starts
-it. A message from the user gets neither field, and a result without them does
-not mean that every recipient will receive the message.
+When none of those applies, `native_host_exited` names a native Codex member
+whose session is registered on this computer and whose recorded host process
+has positively exited, as read from that registration when the message is
+sent. This reason does not change delivery: the message takes the usual
+delivery path, and `runtime.delivery` reports its outcome. It is not reported for
+other native runtimes or device sources, or when the registration or the
+process check is unreadable or inconclusive. `send_advisory` covers only the
+kinds of reason present. An enabled Actor whose process CCCC manages is not
+listed when it is not running, because delivery starts it. A message from the
+user gets neither field, and a result without them does not mean that every
+recipient will receive the message.
 
 Every daemon-rendered `chat.message` handed to an actor runtime MUST expose the
 current ledger identity before the message body:
