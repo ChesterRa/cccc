@@ -19,6 +19,7 @@ import {
   PlusIcon,
 } from "../Icons";
 import { GroupSidebarSectionHeader } from "./GroupSidebarSectionHeader";
+import { SidebarBrandName } from "./SidebarBrandName";
 import { GroupSidebarItem } from "./GroupSidebarItem";
 import { GroupSidebarSortableList } from "./GroupSidebarSortableList";
 import { SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH } from "../../stores/useUIStore";
@@ -365,12 +366,15 @@ export function GroupSidebar({
                   the logo then stands alone rather than cutting the name short. */}
               {!isCollapsed && (
                 <div className="min-w-0 flex-1 @max-[13rem]/brand:hidden">
-                  <div
-                    className="truncate text-[15px] font-semibold tracking-[-0.035em] text-[var(--color-text-primary)]"
-                    data-brand-name
-                  >
-                    {branding.product_name}
-                  </div>
+                  <SidebarBrandName
+                    productName={branding.product_name}
+                    instanceLabel={
+                      connect?.ownInstance
+                        ? instanceName(connect.ownInstance, connect.instances)
+                        : undefined
+                    }
+                    instanceOrigin={connect?.ownInstance?.public_origin}
+                  />
                 </div>
               )}
             </div>
@@ -455,16 +459,7 @@ export function GroupSidebar({
         )}
 
         {/* Group list */}
-        {!isCollapsed && (
-          <GroupSidebarSectionHeader
-            instanceLabel={
-              connect?.ownInstance
-                ? instanceName(connect.ownInstance, connect.instances)
-                : undefined
-            }
-            instanceOrigin={connect?.ownInstance?.public_origin}
-          />
-        )}
+        {!isCollapsed && <GroupSidebarSectionHeader />}
         <div className={groupSidebarScrollClass(isCollapsed)}>
           {renderGroupList(isCollapsed ? collapsedGroups : workingGroups, "working")}
 

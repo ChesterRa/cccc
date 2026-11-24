@@ -5,7 +5,10 @@ import { expect, it, vi } from "vite-plus/test";
 import { ComposerSendControl } from "./ComposerSendControl";
 import type { ComposerMessageMode } from "../../stores/useComposerStore";
 vi.mock("react-i18next", () => ({
-  useTranslation: () => ({ t: (key: string, args?: { mode?: string }) => args?.mode || key }),
+  useTranslation: () => ({
+    t: (key: string, args?: { mode?: string; shortcut?: string }) =>
+      args?.mode || (args?.shortcut ? `${key}(${args.shortcut})` : key),
+  }),
 }));
 it("switches the single send label without sending and preserves permission gates", async () => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -27,6 +30,9 @@ it("switches the single send label without sending and preserves permission gate
         open={open}
         onOpenChange={setOpen}
         onModeChange={setMode}
+        sendKey="mod_enter"
+        onSendKeyChange={() => {}}
+        modEnterShortcutLabel="⌘+Enter"
         onSend={send}
         busy={busy}
         canSend={canSend}
@@ -95,6 +101,9 @@ it("offers a stop control only while an attachment upload can be stopped", async
       open={false}
       onOpenChange={() => {}}
       onModeChange={() => {}}
+      sendKey="mod_enter"
+      onSendKeyChange={() => {}}
+      modEnterShortcutLabel="⌘+Enter"
       onSend={() => {}}
       onStopUploadWaiting={onStopUploadWaiting}
       busy
@@ -112,6 +121,60 @@ it("offers a stop control only while an attachment upload can be stopped", async
     expect(button.title).toBe("stopUploadWaiting");
     await act(async () => button.click());
     expect(stop).toHaveBeenCalledOnce();
+  } finally {
+    await act(async () => root.unmount());
+    host.remove();
+  }
+});
+
+it("offers the send key beside the modes, marks the current one and reports a change", async () => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host),
+    send = vi.fn(),
+    changeKey = vi.fn();
+  try {
+    await act(async () =>
+      root.render(
+        <ComposerSendControl
+          mode="send"
+          options={[{ key: "send", label: "Send", description: "Send now" }]}
+          open
+          onOpenChange={() => {}}
+          onModeChange={() => {}}
+          sendKey="enter"
+          onSendKeyChange={changeKey}
+          modEnterShortcutLabel="Ctrl+Enter"
+          onSend={send}
+          busy={false}
+          canSend
+          modeDisabled={false}
+          requestReplyReady
+          title="Send (Enter)"
+        />,
+      ),
+    );
+    const group = document.querySelector<HTMLElement>("[data-composer-send-key]")!;
+    expect(group.getAttribute("role")).toBe("group");
+    expect(group.getAttribute("aria-labelledby")).toBeTruthy();
+    const keys = Array.from(group.querySelectorAll<HTMLButtonElement>("button"));
+    expect(keys.map((b) => b.getAttribute("aria-pressed"))).toEqual(["true", "false"]);
+    // The modifier label follows the platform.
+    expect(keys[1].textContent).toContain("Ctrl+Enter");
+    // Each key names its full meaning for assistive technology and the tooltip.
+    expect(keys[0].getAttribute("aria-label")).toBe("sendKeyEnter");
+    expect(keys[1].getAttribute("aria-label")).toBe("sendKeyModEnter(Ctrl+Enter)");
+    // The group is named by its visible caption, and the hint follows the chosen key.
+    const labelId = group.getAttribute("aria-labelledby")!;
+    expect(document.getElementById(labelId)?.textContent).toBe("sendKeyOptions");
+    expect(document.querySelector("[data-composer-send-key-hint]")?.textContent).toBe(
+      "sendKeyEnterHint",
+    );
+    await act(async () => keys[1].click());
+    expect(changeKey).toHaveBeenCalledWith("mod_enter");
+    // Choosing a key never sends.
+    expect(send).not.toHaveBeenCalled();
   } finally {
     await act(async () => root.unmount());
     host.remove();

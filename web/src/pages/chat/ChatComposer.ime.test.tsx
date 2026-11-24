@@ -1,14 +1,21 @@
 // @vitest-environment happy-dom
 import { act, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { useComposerStore } from "../../stores/useComposerStore";
+import { COMPOSER_SEND_KEY_STORAGE_KEY } from "../../stores/composerSendKey";
 import { useGroupStore } from "../../stores";
 import type { LedgerEvent } from "../../types";
 import { ChatComposer } from "./ChatComposer";
 import type { ComposerMentionSuggestion } from "./chatMentionSuggestions";
 
-vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
+vi.mock("react-i18next", () => ({
+  useTranslation: () => ({
+    // Show an interpolated shortcut so a label naming the send key can be checked.
+    t: (key: string, args?: { shortcut?: string }) =>
+      args?.shortcut ? `${key}(${args.shortcut})` : key,
+  }),
+}));
 vi.mock("./LazyVoiceSecretaryComposerControl", () => ({
   LazyVoiceSecretaryComposerControl: () => null,
 }));
@@ -152,13 +159,22 @@ async function type(textarea: HTMLTextAreaElement, value: string) {
 async function press(
   textarea: HTMLTextAreaElement,
   key: string,
-  { isComposing = false, keyCode = 0, ctrlKey = false, metaKey = false } = {},
+  {
+    isComposing = false,
+    keyCode = 0,
+    ctrlKey = false,
+    metaKey = false,
+    shiftKey = false,
+    altKey = false,
+  } = {},
 ) {
   const event = new KeyboardEvent("keydown", {
     key,
     isComposing,
     ctrlKey,
     metaKey,
+    shiftKey,
+    altKey,
     bubbles: true,
     cancelable: true,
   });
@@ -269,3 +285,53 @@ it.each([undefined, "loading", "incomplete"] as const)(
     expect(spies.send).toHaveBeenCalledTimes(2);
   },
 );
+
+describe("with Enter chosen as the send key", () => {
+  beforeEach(() => localStorage.setItem(COMPOSER_SEND_KEY_STORAGE_KEY, "enter"));
+  afterEach(() => localStorage.removeItem(COMPOSER_SEND_KEY_STORAGE_KEY));
+
+  it("sends on a bare Enter and keeps Shift+Enter and Alt+Enter for new lines", async () => {
+    const textarea = await render("hello");
+    expect(await press(textarea, "Enter", { shiftKey: true })).toBe(false);
+    expect(await press(textarea, "Enter", { altKey: true })).toBe(false);
+    expect(spies.send).not.toHaveBeenCalled();
+    expect(await press(textarea, "Enter")).toBe(true);
+    expect(spies.send).toHaveBeenCalledOnce();
+    // The modifier shortcut keeps sending too.
+    expect(await press(textarea, "Enter", { ctrlKey: true })).toBe(true);
+    expect(spies.send).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(COMPOSING)(
+    "leaves the confirming Enter to the input method ($label)",
+    async (composing) => {
+      const textarea = await render("你好");
+      expect(await press(textarea, "Enter", composing)).toBe(false);
+      expect(spies.send).not.toHaveBeenCalled();
+    },
+  );
+
+  it("still lets a mention or slash pick take Enter", async () => {
+    const textarea = await render("@pe", true);
+    await press(textarea, "Enter");
+    expect(spies.send).not.toHaveBeenCalled();
+    expect(composerText()).toBe("@peer1 ");
+  });
+
+  it("names Enter as the shortcut and remembers a change made in the menu", async () => {
+    await render("hello");
+    const primary = host.querySelector<HTMLButtonElement>("[data-composer-send-primary]")!;
+    expect(primary.title).toBe("sendMessageWithShortcut(Enter)");
+    await act(async () =>
+      host.querySelector<HTMLButtonElement>("[data-composer-send-options]")!.click(),
+    );
+    const modEnter = document.querySelectorAll<HTMLButtonElement>(
+      "[data-composer-send-key] button",
+    )[1];
+    await act(async () => modEnter.click());
+    expect(localStorage.getItem(COMPOSER_SEND_KEY_STORAGE_KEY)).toBe("mod_enter");
+    const textarea = host.querySelector("textarea")!;
+    expect(await press(textarea, "Enter")).toBe(false);
+    expect(spies.send).not.toHaveBeenCalled();
+  });
+});
