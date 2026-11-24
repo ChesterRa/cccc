@@ -137,7 +137,7 @@ replies and files. It does not expose terminals, Presentation, full history,
 Context or arbitrary remote tools. Other Groups do not inherit the connection.
 
 1. Both members link their instances to their own accounts and enable a reachable
-   HTTPS route in **Settings → This instance → Account → Remote Access**.
+   HTTPS route in **Settings → This instance → Web Access → Remote Access**.
 2. The recipient opens **Group connections** on the account website and copies
    their **Member ID**.
 3. The sender opens the intended Group in native CCCC Web as an administrator,

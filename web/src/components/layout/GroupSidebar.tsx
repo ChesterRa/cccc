@@ -362,20 +362,16 @@ export function GroupSidebar({
                   className={classNames("object-contain", isCollapsed ? "w-6 h-6" : "h-7 w-7")}
                 />
               </div>
-              {/* A larger text size leaves the fixed-width row too narrow for the name;
-                  the logo then stands alone rather than cutting the name short. */}
               {!isCollapsed && (
-                <div className="min-w-0 flex-1 @max-[13rem]/brand:hidden">
-                  <SidebarBrandName
-                    productName={branding.product_name}
-                    instanceLabel={
-                      connect?.ownInstance
-                        ? instanceName(connect.ownInstance, connect.instances)
-                        : undefined
-                    }
-                    instanceOrigin={connect?.ownInstance?.public_origin}
-                  />
-                </div>
+                <SidebarBrandName
+                  productName={branding.product_name}
+                  instanceLabel={
+                    connect?.ownInstance
+                      ? instanceName(connect.ownInstance, connect.instances)
+                      : undefined
+                  }
+                  instanceOrigin={connect?.ownInstance?.public_origin}
+                />
               )}
             </div>
 

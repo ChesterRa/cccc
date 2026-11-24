@@ -454,7 +454,7 @@
     "publicRelayTitle": "Public cross-network relay",
     "publicRelayToggle": "Allow public relay via Remote Access",
     "publicRelayAddressLabel": "Remote Access public address:",
-    "publicRelayRequiresRemoteAccess": "When UDP direct connection is unavailable and a public relay is needed, enable Remote Access with an HTTPS root URL first.",
+    "publicRelayRequiresRemoteAccess": "When UDP direct connection is unavailable and a public relay is needed, enable Remote Access with an HTTPS root URL in Settings → This instance → Web Access first.",
     "publicRelayOffHint": "Currently using UDP direct connection only. Pairing tickets omit the public relay address, and the Web does not forward /relay traffic.",
     "publicRelayActiveHint": "Active: cross-network connections can use this address and attempt direct P2P upgrade.",
     "publicRelayPendingHint": "Authorized; takes effect once Remote Access is enabled and the host gateway is open (for example after creating a ticket).",

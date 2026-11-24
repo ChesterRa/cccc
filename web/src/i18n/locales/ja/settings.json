@@ -1460,7 +1460,7 @@
     "ccccVersion": "CCCC",
     "daemonVersion": "Daemon",
     "versionMismatchBadge": "不一致",
-    "warningTitle": "警告",
+    "warningTitle": "警告：",
     "warningText": "開発者モードでは追加の診断が有効になります。必要な場合にのみ有効にしてください。",
     "enableDeveloperMode": "開発者モードを有効にする",
     "enableHint": "デバッグスナップショットとログテールツールを有効にします。",

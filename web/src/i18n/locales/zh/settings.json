@@ -1457,7 +1457,7 @@
     "ccccVersion": "CCCC",
     "daemonVersion": "Daemon",
     "versionMismatchBadge": "构建不一致",
-    "warningTitle": "警告",
+    "warningTitle": "警告：",
     "warningText": "开发者模式会启用额外诊断。仅在需要时开启。",
     "enableDeveloperMode": "启用开发者模式",
     "enableHint": "启用调试快照和日志尾部工具。",

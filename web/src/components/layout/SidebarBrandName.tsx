@@ -7,6 +7,11 @@ import { copyTextToClipboard } from "../../utils/copy";
 
 const NAME_CLASS =
   "truncate text-[15px] font-semibold tracking-[-0.035em] text-[var(--color-text-primary)]";
+// A larger text size can leave the fixed-width header row narrower than the name. A
+// plain name then gives way so the logo stands alone; a name that opens the instance
+// details is that card's only entry, so it stays and is cut short instead.
+const PLAIN_WRAP_CLASS = "min-w-0 flex-1 @max-[13rem]/brand:hidden";
+const CARD_WRAP_CLASS = "min-w-0 flex-1";
 
 /** Long enough to cross the gap from the name to the card. */
 export const BRAND_CARD_CLOSE_DELAY_MS = 150;
@@ -59,8 +64,10 @@ export function SidebarBrandName({
 
   if (!instanceLabel) {
     return (
-      <div className={NAME_CLASS} data-brand-name>
-        {productName}
+      <div className={PLAIN_WRAP_CLASS}>
+        <div className={NAME_CLASS} data-brand-name>
+          {productName}
+        </div>
       </div>
     );
   }
@@ -74,48 +81,52 @@ export function SidebarBrandName({
   const copyLabel = copied ? tCommon("copied") : tCommon("copy");
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          data-brand-name
-          aria-label={`${productName} · ${t("sidebarInstanceInfo")}`}
-          className={`${NAME_CLASS} block max-w-full cursor-default text-left focus-visible:outline-2`}
+    <div className={CARD_WRAP_CLASS}>
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            data-brand-name
+            aria-label={`${productName} · ${t("sidebarInstanceInfo")}`}
+            className={`${NAME_CLASS} block max-w-full cursor-default text-left focus-visible:outline-2`}
+            onPointerEnter={hoverOpen}
+            onPointerLeave={hoverClose}
+          >
+            {productName}
+          </button>
+        </PopoverTrigger>
+        <PopoverContent
+          align="start"
+          data-brand-instance-info
+          // Hover opens it; leave focus on the name so the pointer keeps control.
+          onOpenAutoFocus={(event) => event.preventDefault()}
           onPointerEnter={hoverOpen}
           onPointerLeave={hoverClose}
+          className="max-w-[min(20rem,calc(100vw-2rem))] p-3 text-xs"
         >
-          {productName}
-        </button>
-      </PopoverTrigger>
-      <PopoverContent
-        align="start"
-        data-brand-instance-info
-        // Hover opens it; leave focus on the name so the pointer keeps control.
-        onOpenAutoFocus={(event) => event.preventDefault()}
-        onPointerEnter={hoverOpen}
-        onPointerLeave={hoverClose}
-        className="max-w-[min(20rem,calc(100vw-2rem))] p-3 text-xs"
-      >
-        <p className="break-words font-medium text-[var(--color-text-primary)]">{instanceLabel}</p>
-        <div className="mt-1 flex items-start gap-2">
-          <p className="min-w-0 flex-1 break-all text-[var(--color-text-secondary)]">
-            {instanceOrigin || t("connect.noRemoteAccess")}
+          <p className="break-words font-medium text-[var(--color-text-primary)]">
+            {instanceLabel}
           </p>
-          {instanceOrigin ? (
-            <button
-              type="button"
-              data-brand-copy-origin
-              aria-label={copyLabel}
-              title={copyLabel}
-              onClick={() => void copyOrigin()}
-              className="flex shrink-0 items-center gap-1 rounded-md px-1 text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] focus-visible:outline-2"
-            >
-              <CopyIcon size={13} strokeWidth={1.25} />
-              {copied ? <span>{copyLabel}</span> : null}
-            </button>
-          ) : null}
-        </div>
-      </PopoverContent>
-    </Popover>
+          <div className="mt-1 flex items-start gap-2">
+            <p className="min-w-0 flex-1 break-all text-[var(--color-text-secondary)]">
+              {instanceOrigin || t("connect.noRemoteAccess")}
+            </p>
+            {instanceOrigin ? (
+              <button
+                type="button"
+                data-brand-copy-origin
+                aria-label={copyLabel}
+                title={copyLabel}
+                onClick={() => void copyOrigin()}
+                className="flex shrink-0 items-center gap-1 rounded-md px-1 text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] focus-visible:outline-2"
+              >
+                <CopyIcon size={13} strokeWidth={1.25} />
+                {copied ? <span>{copyLabel}</span> : null}
+              </button>
+            ) : null}
+          </div>
+        </PopoverContent>
+      </Popover>
+    </div>
   );
 }

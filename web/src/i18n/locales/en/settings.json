@@ -1460,7 +1460,7 @@
     "ccccVersion": "CCCC",
     "daemonVersion": "Daemon",
     "versionMismatchBadge": "Mismatch",
-    "warningTitle": "Warning",
+    "warningTitle": "Warning:",
     "warningText": "Developer mode enables extra diagnostics. Only enable it when you need it.",
     "enableDeveloperMode": "Enable developer mode",
     "enableHint": "Enables debug snapshot and log tail tools.",

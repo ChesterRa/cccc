@@ -108,6 +108,20 @@ describe("SidebarBrandName", () => {
     expect(host.querySelector("button")).toBeNull();
   });
 
+  // At a larger text size the header row can be narrower than the name. A plain name
+  // may give way to the logo, but the name that opens the instance card is its only
+  // entry, so it must stay (cut short) rather than disappear.
+  it("keeps the name that opens the instance details in a narrow header", async () => {
+    const narrowHide = "@max-[13rem]/brand:hidden";
+    await act(async () => root.render(<SidebarBrandName productName="CCCC" />));
+    expect(host.firstElementChild?.classList.contains(narrowHide)).toBe(true);
+    await act(async () =>
+      root.render(<SidebarBrandName productName="CCCC" instanceLabel={name} />),
+    );
+    expect(host.querySelector("[data-brand-name]")?.tagName).toBe("BUTTON");
+    expect(host.firstElementChild?.classList.contains(narrowHide)).toBe(false);
+  });
+
   it("shows the complete instance details while the pointer is over the name", async () => {
     await act(async () =>
       root.render(

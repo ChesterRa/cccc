@@ -157,6 +157,8 @@ export function DeveloperTab({
     </div>
   );
 
+  const warningTitle = t("developer.warningTitle");
+
   return (
     <SettingsPage
       title={t("developer.title")}
@@ -164,7 +166,8 @@ export function DeveloperTab({
         <>
           {t("developer.description")}{" "}
           <span className="text-amber-700 dark:text-amber-300" data-status-tone="warning">
-            <strong className="font-medium">{t("developer.warningTitle")}</strong>{" "}
+            <strong className="font-medium">{warningTitle}</strong>
+            {warningTitle.endsWith("：") ? "" : " "}
             {t("developer.warningText")}
           </span>
         </>
