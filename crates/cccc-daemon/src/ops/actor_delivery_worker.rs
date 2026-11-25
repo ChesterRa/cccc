@@ -1896,6 +1896,22 @@ mod tests {
         assert_eq!(state.as_deref(), Some("withdrawn"));
     }
 
+    /// An Antigravity HOME whose first-run onboarding is complete, as its launch environment.
+    #[cfg(unix)]
+    fn finished_antigravity_home(
+        root: &std::path::Path,
+    ) -> std::collections::BTreeMap<String, String> {
+        let home = root.join("agy-home");
+        let cache = home.join(".gemini").join("antigravity-cli").join("cache");
+        std::fs::create_dir_all(&cache).expect("onboarding cache");
+        std::fs::write(
+            cache.join("onboarding.json"),
+            r#"{"onboardingComplete":true}"#,
+        )
+        .expect("finished onboarding");
+        [("HOME".to_owned(), home.to_string_lossy().into_owned())].into()
+    }
+
     #[cfg(unix)]
     #[test]
     fn early_mail_notice_is_withheld_when_antigravity_pty_flips_working_during_startup_settle() {
@@ -1930,7 +1946,9 @@ mod tests {
                     ),
                 ],
                 cwd: temp.path().to_path_buf(),
-                env: Default::default(),
+                // The member's own HOME has finished Antigravity's first run, so the
+                // startup gate opens whatever the machine running the test holds.
+                env: finished_antigravity_home(temp.path()),
                 cols: 80,
                 rows: 24,
             },

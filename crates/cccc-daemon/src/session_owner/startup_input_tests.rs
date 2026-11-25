@@ -482,8 +482,39 @@ fn failed_pty_start_releases_owner_registration_for_immediate_retry() {
     controller::finish(&home, ShutdownMode::Stop, "stop".into()).expect("stop");
 }
 
+/// Runs `test` again in a child process that sees a stand-in `cccc` launcher, as an
+/// installed CCCC would provide, and no provider state from the machine's own HOME.
+fn with_fixture_launcher(test: &str) -> bool {
+    const CHILD: &str = "CCCC_TEST_STARTUP_INPUT_LAUNCHER";
+    if std::env::var(CHILD).ok().as_deref() == Some(test) {
+        return false;
+    }
+    use std::os::unix::fs::PermissionsExt;
+    let temp = tempfile::tempdir().expect("isolated process");
+    let launcher = temp.path().join("cccc");
+    std::fs::write(&launcher, "#!/bin/sh\nexit 0\n").expect("fixture launcher");
+    std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(0o700))
+        .expect("launcher permissions");
+    let filter = format!("session_owner::startup_input_tests::{test}");
+    let output = std::process::Command::new(std::env::current_exe().expect("test executable"))
+        .args([filter.as_str(), "--exact", "--nocapture"])
+        .env(CHILD, test)
+        .env("CCCC_LAUNCHER_PATH", launcher)
+        .env("HOME", temp.path().join("provider-home"))
+        .env("USERPROFILE", temp.path().join("provider-home"))
+        .output()
+        .expect("isolated test");
+    crate::ops::isolated_test::assert_one_passed(output, &filter);
+    true
+}
+
 #[test]
 fn antigravity_fresh_home_onboarding_gate_survives_keep_and_releases_after_wizard() {
+    if with_fixture_launcher(
+        "antigravity_fresh_home_onboarding_gate_survives_keep_and_releases_after_wizard",
+    ) {
+        return;
+    }
     let temp = tempfile::tempdir().expect("isolated home");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
     let actor_home = temp.path().join("agy-home");

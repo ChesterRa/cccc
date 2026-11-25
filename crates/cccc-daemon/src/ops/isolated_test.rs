@@ -1,7 +1,7 @@
 //! Validate libtest's executed count as well as the isolated process exit status.
 use std::process::Output;
 
-pub(super) fn assert_one_passed(output: Output, filter: &str) {
+pub(crate) fn assert_one_passed(output: Output, filter: &str) {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let exactly_one = stdout
         .lines()

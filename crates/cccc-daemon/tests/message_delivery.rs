@@ -2727,6 +2727,12 @@ fn antigravity_recovers_failed_startup_with_bounded_automatic_delivery() {
         r#"{"mcpServers":{"cccc":{"command":"cccc","args":["mcp"]}}}"#,
     )
     .expect("isolated, already configured MCP");
+    // First-run onboarding is done in this HOME: the startup gate it would hold is
+    // covered elsewhere, and this test is about recovering from failed starts.
+    let onboarding = provider_home.join(".gemini/antigravity-cli/cache/onboarding.json");
+    std::fs::create_dir_all(onboarding.parent().expect("onboarding directory"))
+        .expect("onboarding cache");
+    std::fs::write(&onboarding, r#"{"onboardingComplete":true}"#).expect("finished onboarding");
     let received = temp.path().join("received");
     let fixture = r#"#!/usr/bin/env python3
 import os,sys,tty,pathlib
