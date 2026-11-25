@@ -281,6 +281,11 @@ it("opens the existing-session page for the fixed Group without mounting a secon
     expect(host.querySelectorAll('[role="dialog"]')).toHaveLength(1);
     expect(fetch.mock.calls.map(([path]) => path)).toContain("/api/v1/groups/g_a/actors");
     expect(button("addAgent")).toBeUndefined();
+    await act(async () =>
+      [...host.querySelectorAll<HTMLButtonElement>('[role="radio"]')]
+        .find((node) => node.textContent?.startsWith("localSessions.otherComputers"))!
+        .click(),
+    );
     await act(async () => button("localSessions.addDevice")!.click());
     expect(button("layout:localSessions.newSessionTab")).toBeUndefined();
     expect(host.querySelectorAll('[role="dialog"]')).toHaveLength(1);

@@ -10,7 +10,7 @@ export async function verifyPairingTicketFlow(open: () => Promise<void>) {
   const labels = enLayout.sessionNodes;
   const t = (key: string) =>
     key.split(".").reduce<unknown>((v, k) => (v as Record<string, unknown>)[k], enLayout) as string;
-  const { click, button } = sessionPickerActions(t);
+  const { click, button, show } = sessionPickerActions(t);
   const ticket = "synthetic-ticket-not-for-a-real-device";
   let complete!: (response: Response) => void;
   const request = vi.fn(async (_url: unknown, init?: RequestInit) => {
@@ -56,6 +56,7 @@ export async function verifyPairingTicketFlow(open: () => Promise<void>) {
   };
   try {
     await open();
+    await show("other");
     await click(button(enLayout.localSessions.addDevice));
     const preparation = document.querySelector(`section[aria-label="${labels.prepareTitle}"]`)!;
     expect(preparation).not.toBeNull();

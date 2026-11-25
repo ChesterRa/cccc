@@ -129,7 +129,7 @@ export function CreateGroupModal({
         </div>
       }
       closeAriaLabel={t("common:close")}
-      panelClassName={`w-full h-full sm:h-auto sm:mt-16 sm:max-h-[calc(100vh-8rem)] ${existingActive ? "sm:w-[min(100vw-2rem,72rem)] sm:max-w-[72rem]" : "sm:max-w-lg"}`}
+      panelClassName={`w-full h-full sm:mt-16 sm:max-h-[calc(100vh-8rem)] ${existingActive ? "sm:h-[calc(100vh-8rem)] sm:w-[min(100vw-2rem,72rem)] sm:max-w-[72rem]" : "sm:h-auto sm:max-w-lg"}`}
       modalRef={modalRef}
       footerActions={
         existingActive ? undefined : (

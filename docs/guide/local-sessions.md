@@ -112,7 +112,7 @@ Update the existing `[features]` table, then use a session connected to the shar
 
 ## Add sessions to a Group
 
-Open a Group, choose **Add Agent**, then switch to **Add existing sessions**. **New session** stays the default tab, and its first screen points to the second tab. The list shows sessions that can join, grouped by computer: **This computer** first, then **Other computers**. The CCCC host is the session source, including when the browser is remote. To start a new Group from running sessions instead, choose **New** → **Create from existing sessions**. Discovery alone creates no Groups or agents and does not change the active Group.
+Open a Group, choose **Add Agent**, then switch to **Add existing sessions**. **New session** stays the default tab, and its first screen points to the second tab. A switch above the list chooses whose sessions it shows: **This computer** (the default) or **Other computers**, where each paired computer has its own section. Sessions you select stay selected when you switch. The CCCC host is the session source, including when the browser is remote. To start a new Group from running sessions instead, choose **New** → **Create from existing sessions**. Discovery alone creates no Groups or agents and does not change the active Group.
 
 The footer names the destination as **Target Group · *name*** and counts the selected sessions per computer. The primary button states what happens: **Add 2 sessions**, or a disabled **Add selected sessions** while nothing is selected. When creating a Group, the button reads **Create Group** and the footer says how many selected sessions it uses. A new Group created this way is always new, even for one session; it does not reopen an older conversation. Native session-to-session direct messaging still creates or reuses its Group automatically. All Groups remain in the sidebar until removed.
 
@@ -335,11 +335,11 @@ Receiver presence is ephemeral and reconnects after a daemon restart. Current na
 
 ## Connect sessions from another computer (LAN or public relay)
 
-The LAN connector supports existing **Codex, Claude Code, Pi and OpenCode** sessions. Both computers need a CCCC build with session-node protocol 1 (Rust 1.91). Pi and OpenCode also need a CCCC version that offers them on both computers. An older hub shares only Codex and Claude Code sessions; when you pair with `--runtime pi` or `--runtime opencode`, the connector says so. Sessions from paired computers appear in the same **Add existing sessions** list as this computer's, under **Other computers**, one section per computer. Selecting sources does not admit them: adding still waits for verified Group membership and rejects unavailable sources. Pairing alone creates no Group membership.
+The LAN connector supports existing **Codex, Claude Code, Pi and OpenCode** sessions. Both computers need a CCCC build with session-node protocol 1 (Rust 1.91). Pi and OpenCode also need a CCCC version that offers them on both computers. An older hub shares only Codex and Claude Code sessions; when you pair with `--runtime pi` or `--runtime opencode`, the connector says so. Sessions from paired computers appear in **Add existing sessions** when you switch to **Other computers**, one section per computer. Selecting sources does not admit them: adding still waits for verified Group membership and rejects unavailable sources. Pairing alone creates no Group membership.
 
 ### Pair a computer from its terminal
 
-1. On the hub, open a Group's **Add Agent → Add existing sessions** and choose **Pair a computer** under **Other computers**; the sessions you already selected stay selected. Select the application: **Codex**, **Claude Code**, **Pi** or **OpenCode**. Copy the command and run it on the other computer in the OS account and `CCCC_HOME` that own its native sessions. For Codex, run:
+1. On the hub, open a Group's **Add Agent → Add existing sessions**, switch to **Other computers** and choose **Pair a computer**; the sessions you already selected stay selected. Select the application: **Codex**, **Claude Code**, **Pi** or **OpenCode**. Copy the command and run it on the other computer in the OS account and `CCCC_HOME` that own its native sessions. For Codex, run:
 
    ```sh
    cccc sessions node connect --runtime codex --ticket-stdin

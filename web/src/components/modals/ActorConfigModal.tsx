@@ -68,6 +68,12 @@ import { useChatObscuringView } from "../../hooks/useChatObscuringView";
 // the viewport by 1rem on each side, so this leaves 3rem clear top and bottom.
 const ACTOR_MODAL_PANEL_CLASS =
   "w-full h-full sm:h-auto sm:w-[min(100vw-2rem,72rem)] sm:max-w-[72rem] sm:max-h-[calc(100dvh-6rem)]";
+// The existing-session list keeps one height, so switching between this computer and other
+// computers does not resize and re-centre the dialog under the pointer.
+const ACTOR_MODAL_EXISTING_PANEL_CLASS = ACTOR_MODAL_PANEL_CLASS.replace(
+  "sm:h-auto",
+  "sm:h-[calc(100dvh-6rem)]",
+);
 
 import { AcpRuntimeMode } from "./AcpRuntimeMode";
 import { RuntimeSelector } from "./RuntimeSelector";
@@ -488,7 +494,7 @@ function CreateActorConfigModal({
         </div>
       }
       closeAriaLabel={t("common:close")}
-      panelClassName={ACTOR_MODAL_PANEL_CLASS}
+      panelClassName={existingActive ? ACTOR_MODAL_EXISTING_PANEL_CLASS : ACTOR_MODAL_PANEL_CLASS}
       modalRef={modalRef}
       footerActions={
         existingActive ? undefined : (

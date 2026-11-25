@@ -50,7 +50,7 @@ vi.mock("../../components/ActorAvatar", () => ({ ActorAvatar: () => <span /> }))
 
 const i18n = createInstance();
 const t = (key: string, options?: Record<string, unknown>) => i18n.t(key, options);
-const { click, button, row, checkbox, foreman, chooseForeman } = sessionPickerActions(t);
+const { click, button, row, checkbox, foreman, chooseForeman, show } = sessionPickerActions(t);
 const joinLabel = (count = 1) => t("localSessions.attachSessions", { count });
 const main = (count = 1) => button(joinLabel(count));
 const create = () => button(t("modals:createGroup.createGroup"));
@@ -253,6 +253,7 @@ it.each([true, false])(
     expect(mocks.members).not.toHaveBeenCalled();
     expect(host.textContent).toContain(t("modals:createGroup.subtitleExisting"));
     expect(host.textContent).not.toContain(t("modals:createGroup.subtitle"));
+    await show("other");
     await click(checkbox(second.title));
     expect(create().disabled).toBe(false);
     await click(create());
@@ -265,8 +266,11 @@ it.each([true, false])(
 
 it("keeps a mixed choice and restores the focus when leaving inline pairing", async () => {
   await mount();
+  await show("other");
   await click(checkbox(second.title));
+  await show("local");
   await click(checkbox(source.title));
+  await show("other");
   const trigger = button(t("localSessions.addDevice"));
   await click(trigger);
   const counts = [
@@ -313,9 +317,11 @@ it("previews only local cwd, uses an explicit title, and submits the chosen Fore
   mocks.local.mockResolvedValue(okSources([source, third]));
   await mount(null);
   expect(host.textContent).toContain(t("localSessions.chooseDirectorySource"));
+  await show("other");
   await click(checkbox(second.title));
   expect(host.textContent).toContain(t("modals:createGroup.noLocalProjectDirectory"));
   expect(foreman()).toBeNull();
+  await show("local");
   await click(checkbox(source.title));
   await click(checkbox(third.title));
   expect(host.textContent).toContain(t("localSessions.foremanDirectoryHint"));
@@ -355,7 +361,9 @@ it.each(["missing", "offline"])(
   "keeps a %s remote choice cancellable until it returns",
   async (state) => {
     await mount(null);
+    await show("other");
     await click(checkbox(second.title));
+    await show("local");
     await click(checkbox(source.title));
     if (state === "offline")
       mocks.deviceStatus.mockResolvedValue(ready([{ ...currentComputer, connected: false }]));
@@ -381,7 +389,9 @@ it.each(["missing", "offline"])(
 
 it("allows dismissing a revoked remote selection and submits only the remaining local source", async () => {
   await mount(null);
+  await show("other");
   await click(checkbox(second.title));
+  await show("local");
   await click(checkbox(source.title));
   mocks.deviceStatus.mockResolvedValue(
     ready([{ ...currentComputer, enabled: false, connected: false }]),
@@ -389,6 +399,13 @@ it("allows dismissing a revoked remote selection and submits only the remaining 
   mocks.deviceSources.mockResolvedValue(okSources([]));
   await act(async () => vi.advanceTimersByTimeAsync(5000));
   expect(create().disabled).toBe(true);
+  // The warning shows on this computer's list; the choice is cancelled on the other one.
+  const warning = Array.from(host.querySelectorAll('[role="alert"]')).find((alert) =>
+    alert.textContent?.includes(t("localSessions.selectionUnavailable", { count: 1 })),
+  );
+  expect(warning).toBeDefined();
+  expect(warning?.closest("[hidden]")).toBeNull();
+  await show("other");
   await click(checkbox(second.title));
   expect(create().disabled).toBe(false);
   await click(create());
@@ -448,12 +465,14 @@ it("blocks known existing members and resumes only a paused member on an explici
 it("shows a membership error while blocking writes and preserves pause when resume fails", async () => {
   mocks.members.mockResolvedValue({ ok: false, error: { message: "Roster failed" } });
   await mount();
+  await show("other");
   await click(checkbox(second.title));
   expect(main().disabled).toBe(true);
   expect(host.textContent).toContain(enLayout.localSessions.membersFailed);
   mocks.members.mockResolvedValue({ ok: true, result: { actors: [paused] } });
   await waitPoll();
   mocks.resume.mockResolvedValue({ ok: false, error: { message: "Member changed" } });
+  await show("local");
   await click(button(t("localSessions.resumeGroupAccess")));
   expect(mocks.error).toHaveBeenCalledWith("Member changed");
   expect(row(source.title).textContent).toContain(enLayout.localSessions.memberPaused);
@@ -483,6 +502,7 @@ it("isolates a local read failure from remote-only admission and recovers by pol
   await mount();
   expect(host.textContent).toContain("Local read failed");
   expect(host.textContent).not.toContain(enLayout.localSessions.empty);
+  await show("other");
   await click(checkbox(second.title));
   expect(main().disabled).toBe(false);
   await click(main());
@@ -542,6 +562,44 @@ it("lets the local directory settle and poll independently before the device dir
   expect(checkbox(second.title).disabled).toBe(false);
   await click(main());
   expect(mocks.join).toHaveBeenCalledExactlyOnceWith(group, [source.source_id]);
+});
+
+it("shows one computer's sessions at a time and keeps choices and setup help across the switch", async () => {
+  await mount();
+  const section = (label: string) =>
+    host.querySelector<HTMLElement>(`section[aria-label="${t(label)}"]`)!;
+  const radio = (label: string) =>
+    Array.from(host.querySelectorAll<HTMLButtonElement>('[role="radio"]')).find((option) =>
+      option.textContent?.startsWith(t(label)),
+    )!;
+  expect(radio("localSessions.thisDevice").getAttribute("aria-checked")).toBe("true");
+  expect(section("localSessions.thisDevice").hidden).toBe(false);
+  expect(section("localSessions.otherComputers").hidden).toBe(true);
+  expect(row(second.title).closest("[hidden]")).not.toBeNull();
+  const setup = Array.from(host.querySelectorAll("details")).find(
+    (details) => details.querySelector("summary")?.textContent === enLayout.localSessions.setup,
+  )!;
+  await click(setup.querySelector("summary"));
+  expect(setup.open).toBe(true);
+  await click(checkbox(source.title));
+  await show("other");
+  expect(radio("localSessions.otherComputers").getAttribute("aria-checked")).toBe("true");
+  expect(section("localSessions.thisDevice").hidden).toBe(true);
+  expect(section("localSessions.otherComputers").hidden).toBe(false);
+  expect(row(source.title).closest("[hidden]")).not.toBeNull();
+  await click(checkbox(second.title));
+  await show("local");
+  expect(checkbox(source.title).checked).toBe(true);
+  expect(checkbox(second.title).checked).toBe(true);
+  const setupNow = Array.from(section("localSessions.thisDevice").querySelectorAll("details")).find(
+    (details) => details.querySelector("summary")?.textContent === enLayout.localSessions.setup,
+  );
+  expect(setupNow?.open).toBe(true);
+  expect(host.textContent).toContain(
+    t("localSessions.selectedCountByComputer", { count: 2, localCount: 1, remoteCount: 1 }),
+  );
+  await click(main(2));
+  expect(mocks.join).toHaveBeenCalledExactlyOnceWith(group, [source.source_id, second.source_id]);
 });
 
 it("keeps same-name and local-looking computer sections distinct", async () => {
@@ -649,7 +707,9 @@ it("reports a recheck result without joining the source", async () => {
   const request = vi.fn((_url: string) => pending.response);
   vi.stubGlobal("fetch", request);
   await mount();
+  await show("other");
   await click(checkbox(second.title));
+  await show("local");
   await click(button(t("sourceControls.recheck")));
   expect(main().disabled).toBe(true);
   expect(main().getAttribute("aria-busy")).toBeNull();
@@ -734,7 +794,9 @@ it.each([null, group])(
     const mutate = target ? mocks.join : mocks.create;
     mutate.mockResolvedValueOnce({ ok: false, error: { message: "Fixture mutation failure" } });
     await mount(target);
+    await show("other");
     await click(checkbox(second.title));
+    await show("local");
     await click(checkbox(source.title));
     const action = target ? () => main(2) : create;
     await click(action());
@@ -781,6 +843,7 @@ it.each(["en", "zh", "ja"])(
     await mount();
     expect(button(t("localSessions.attachSelectedSessions")).disabled).toBe(true);
     await click(checkbox(source.title));
+    await show("other");
     await click(checkbox(second.title));
     expect(main(2).disabled).toBe(false);
     expect(main(2).textContent).not.toContain("attachSessions");

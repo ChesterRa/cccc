@@ -38,5 +38,16 @@ export function sessionPickerActions(translate: (key: string) => string) {
       )!,
     );
   }
-  return { click, button, row, checkbox, foreman, chooseForeman };
+  /** Switches the list between this computer's sessions and other computers'. */
+  async function show(view: "local" | "other") {
+    const label = translate(
+      view === "local" ? "localSessions.thisDevice" : "localSessions.otherComputers",
+    );
+    await click(
+      Array.from(document.querySelectorAll<HTMLButtonElement>('[role="radio"]')).find((option) =>
+        option.textContent?.startsWith(label),
+      )!,
+    );
+  }
+  return { click, button, row, checkbox, foreman, chooseForeman, show };
 }

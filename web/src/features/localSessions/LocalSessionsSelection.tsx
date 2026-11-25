@@ -1,6 +1,7 @@
-import { useRef, type RefObject } from "react";
+import { useState, type RefObject } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "../../components/ui/button";
+import { SegmentedChoice } from "../../components/ui/segmented-choice";
 import { LocalSessionsHelp } from "./LocalSessionsHelp";
 import { LocalSessionsList } from "./LocalSessionsList";
 import { isDeviceSessionSource } from "./remoteSessionPolicy";
@@ -23,7 +24,9 @@ export function LocalSessionsSelection({
   otherHeading: RefObject<HTMLHeadingElement | null>;
 }) {
   const { t } = useTranslation("layout");
-  const ownHeading = useRef<HTMLHeadingElement>(null);
+  // Picks which computer's sessions are shown. The other section is only hidden, so its
+  // selections and its setup help's open state and chosen runtime stay as they were.
+  const [view, setView] = useState<"local" | "other">("local");
   const { directory, selected, members } = connection;
   const localSources = directory.sources.filter((source) => !isDeviceSessionSource(source));
   const localSelected = selected.filter((source) => !isDeviceSessionSource(source));
@@ -59,28 +62,25 @@ export function LocalSessionsSelection({
   const allInGroup =
     localRows.length > 0 && localRows.every((source) => members.has(source.source_id));
   const unpaired = remoteReadable && devices.length === 0;
-  const jump = (ref: RefObject<HTMLHeadingElement | null>) => {
-    ref.current?.focus({ preventScroll: true });
-    ref.current?.scrollIntoView?.({ block: "start" });
-  };
 
   return (
     <section className="space-y-4" aria-label={t("localSessions.sessionsHeading")}>
       <p className="text-sm text-[var(--color-text-secondary)]">
         {t(connection.target ? "localSessions.joinHint" : "localSessions.hint")}
       </p>
-      <div className="flex flex-wrap gap-2">
-        <Button variant="outline" size="sm" onClick={() => jump(ownHeading)}>
-          {t("localSessions.thisDevice")}
-        </Button>
-        <Button variant="outline" size="sm" onClick={() => jump(otherHeading)}>
-          {t("localSessions.otherComputers")}
-          {unpaired ? ` · ${t("sessionNodes.unpaired")}` : ""}
-          <span className="sm:hidden" aria-hidden="true">
-            ↓
-          </span>
-        </Button>
-      </div>
+      <SegmentedChoice
+        value={view}
+        onChange={setView}
+        fill={false}
+        ariaLabel={t("localSessions.sessionsHeading")}
+        options={[
+          { value: "local", label: t("localSessions.thisDevice") },
+          {
+            value: "other",
+            label: `${t("localSessions.otherComputers")}${unpaired ? ` · ${t("sessionNodes.unpaired")}` : ""}`,
+          },
+        ]}
+      />
       {connection.notice && <p role="status">{connection.notice}</p>}
       {connection.membersFailed && <p role="alert">{t("localSessions.membersFailed")}</p>}
       {connection.target && !connection.membersReady && !connection.membersFailed && (
@@ -99,13 +99,10 @@ export function LocalSessionsSelection({
       )}
       <section
         aria-label={t("localSessions.thisDevice")}
+        hidden={view !== "local"}
         className="min-w-0 rounded-xl border border-[var(--glass-border)]"
       >
-        <h3
-          ref={ownHeading}
-          tabIndex={-1}
-          className="border-b border-[var(--glass-border)] px-3 py-2 text-sm font-semibold"
-        >
+        <h3 className="border-b border-[var(--glass-border)] px-3 py-2 text-sm font-semibold">
           {t("localSessions.thisDevice")}
         </h3>
         {connection.management.error && (
@@ -157,6 +154,7 @@ export function LocalSessionsSelection({
 
       <section
         aria-label={t("localSessions.otherComputers")}
+        hidden={view !== "other"}
         className="min-w-0 rounded-xl border border-[var(--glass-border)]"
       >
         <header className="flex items-center justify-between gap-2 border-b border-[var(--glass-border)] px-3 py-2">
