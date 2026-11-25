@@ -294,26 +294,6 @@ fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<SessionSt
         "CCCC_ACTOR_GENERATION".into(),
         cccc_core::actors::generation_identity(&actor),
     );
-    let antigravity_launch_id = if actor.runtime == ActorRuntime::Antigravity {
-        let launch_id = uuid::Uuid::new_v4().simple().to_string();
-        let state_file = cccc_core::antigravity_hook::state_file_path(
-            home,
-            &group.group_id,
-            &actor.id,
-            &launch_id,
-        );
-        env.insert(
-            cccc_core::antigravity_hook::ENV_STATE_FILE.into(),
-            state_file.to_string_lossy().into_owned(),
-        );
-        env.insert(
-            cccc_core::antigravity_hook::ENV_LAUNCH_ID.into(),
-            launch_id.clone(),
-        );
-        Some(launch_id)
-    } else {
-        None
-    };
     let _start_permit = crate::runtime_start_gate::permit(home)
         .map_err(|message| OpError::new("runtime_shutting_down", message))?;
     let command = cccc_runtime::resolve_command_executable(&command, &env);
@@ -346,23 +326,6 @@ fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<SessionSt
     #[cfg(not(unix))]
     let status =
         cccc_runtime::start_actor_with_history(spec, history, launch).map_err(runtime_error)?;
-    if let Some(launch_id) = antigravity_launch_id
-        && let Err(error) = cccc_core::antigravity_hook::record_launch(
-            home,
-            &group.group_id,
-            &actor.id,
-            &launch_id,
-            status.pid,
-            &status.started_at,
-        )
-    {
-        tracing::warn!(
-            %error,
-            group_id = %group.group_id,
-            actor_id = %actor.id,
-            "failed to record Antigravity hook launch binding"
-        );
-    }
     if let Some(snapshot) = instructions {
         super::instruction_files::record(
             home,

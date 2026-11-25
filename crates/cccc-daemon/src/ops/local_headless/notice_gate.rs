@@ -1,18 +1,16 @@
 //! Backpressure for early Mail notices. Mail is meant not to interrupt work.
-//! A notice the unread tick sent early, because the Actor looked idle, carries
-//! `deliver_by`: the time the busy delay would have sent it anyway. Until then a
-//! batch made only of such notices is admitted to a managed Actor only while it
-//! is idle; otherwise it is withheld: the delivery is withdrawn without sending
-//! anything, and the unread tick issues a fresh notice once the Actor is idle,
-//! provided the Mail is still unread, so Mail read in the meantime is never
-//! announced. A held notice does not wait in the delivery queue; if recording
-//! the withdrawal fails, only the record is retried. As for any delivery, a
-//! daemon that dies between claiming a notice and recording its outcome leaves
-//! it ambiguous, and that notice is not re-issued.
+//! An early notice from a Mail write or the unread tick carries `deliver_by`,
+//! the ordinary notice deadline. Before that deadline, managed and PTY handoff
+//! recheck idle evidence for batches consisting entirely of early notices.
+//! Without that evidence the delivery is withdrawn. The unread tick can issue
+//! a fresh notice once the Actor is idle if the Mail is still unread.
+//! If recording the withdrawal fails, only the record is retried. A daemon
+//! that dies between claiming a notice and recording its outcome leaves it
+//! ambiguous, and that notice is not re-issued.
 //!
-//! Idle is what the Runtime reports: no turn running and not waiting for
-//! approval. An early notice is held while the Runtime reports work when it is
-//! admitted. Admission and the terminal write are not atomic, and a delivery
+//! Managed idle comes from the Runtime's turn and approval state. A PTY can
+//! report idle through an existing, matching Antigravity hook binding.
+//! Admission and the terminal write are not atomic, and a delivery
 //! written moments before the Runtime starts on it can share its turn with a
 //! notice; that window is accepted for simplicity.
 

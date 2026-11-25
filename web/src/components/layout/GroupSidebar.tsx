@@ -347,7 +347,10 @@ export function GroupSidebar({
             )}
           >
             <div
-              className={classNames("flex min-w-0 flex-1 items-center", isCollapsed ? "" : "gap-3")}
+              className={classNames(
+                "flex min-w-0 flex-1 items-center",
+                isCollapsed ? "" : "gap-3 @max-[13rem]/brand:gap-2",
+              )}
             >
               <div
                 className={classNames(
@@ -386,7 +389,9 @@ export function GroupSidebar({
                 aria-label={t("createNewGroup")}
               >
                 <PlusIcon size={14} aria-hidden="true" />
-                {t("newGroup")}
+                {/* Fold the text label on narrow headers so the full brand name fits at 200 px;
+                    title and aria-label keep the button named, matching the collapsed rail. */}
+                <span className="@max-[13rem]/brand:hidden">{t("newGroup")}</span>
               </Button>
             )}
 

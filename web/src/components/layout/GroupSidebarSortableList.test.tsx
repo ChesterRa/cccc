@@ -183,7 +183,13 @@ describe("GroupSidebarSortableList mobile controls", () => {
     expect(host.querySelector('[aria-label^="groupConnections."]')).toBeNull();
     const rows = [...host.querySelectorAll('[aria-current], button[role="button"]')];
     expect(rows.map((row) => row.textContent)).toEqual(["Alpha", "Beta", "Gamma"]);
-    rows.forEach((row) => expect(row.parentElement?.children).toHaveLength(3));
+    rows.forEach((row) => {
+      expect(row.parentElement?.children).toHaveLength(3);
+      const pendingSlot = row.parentElement?.children[1];
+      expect(pendingSlot?.className).toContain("md:w-10");
+      expect(pendingSlot?.className).toContain("pointer-coarse:w-11");
+      expect(pendingSlot?.className).not.toContain("empty:hidden");
+    });
     expect(host.querySelector('button[aria-label="Actions · Alpha"]')!.className).toContain(
       "pointer-coarse:min-w-[44px]",
     );

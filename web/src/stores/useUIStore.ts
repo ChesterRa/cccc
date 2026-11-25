@@ -9,11 +9,8 @@ import {
 import { clampSidePanelWidth, SIDE_PANEL_DEFAULT_WIDTH } from "../utils/sidePanelLayout";
 
 export const SIDEBAR_COLLAPSED_WIDTH = 60;
-export const SIDEBAR_DEFAULT_WIDTH = 200;
+export const SIDEBAR_DEFAULT_WIDTH = 248;
 export const SIDEBAR_MIN_WIDTH = 200;
-/** The width every sidebar had before it could be narrower: both the old default and
- *  the old minimum, so a saved value of exactly this was never chosen by dragging. */
-const SIDEBAR_LEGACY_DEFAULT_WIDTH = 248;
 export const SIDEBAR_MAX_WIDTH = 360;
 export const SIDEBAR_MAX_VIEWPORT_PERCENT = 34;
 
@@ -269,9 +266,9 @@ function savePendingPrompts(show: boolean): void {
 
 export function loadSidebarWidth(): number {
   try {
-    const saved = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY));
-    if (saved === SIDEBAR_LEGACY_DEFAULT_WIDTH) return SIDEBAR_DEFAULT_WIDTH;
-    return clampSidebarWidth(saved);
+    const raw = localStorage.getItem(SIDEBAR_WIDTH_KEY);
+    if (raw === null || raw.trim() === "") return SIDEBAR_DEFAULT_WIDTH;
+    return clampSidebarWidth(Number(raw));
   } catch (e) {
     console.warn("Failed to read sidebar width from localStorage:", e);
     return SIDEBAR_DEFAULT_WIDTH;

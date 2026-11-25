@@ -139,10 +139,8 @@ fn ready_configuration_does_not_require_a_writable_provider_directory() {
     let settings = temp.path().join(".gemini/antigravity-cli/settings.json");
     write(&settings, &json!({"showFeedbackSurvey":false}));
     let hooks = temp.path().join(".gemini/config/hooks.json");
-    write(
-        &hooks,
-        &json!({crate::antigravity_hook::HOOK_ENTRY_NAME: crate::antigravity_hook::hook_entry()}),
-    );
+    let malformed = b"{broken";
+    std::fs::write(&hooks, malformed).expect("existing hook configuration");
     ensure(
         &temp.path().join("project"),
         &environment(temp.path()),
@@ -152,114 +150,10 @@ fn ready_configuration_does_not_require_a_writable_provider_directory() {
     assert!(!path.with_extension("cccc.lock").exists());
     assert!(!settings.with_extension("cccc.lock").exists());
     assert!(!hooks.with_extension("cccc.lock").exists());
-}
-
-#[test]
-fn setup_registers_lifecycle_hooks_and_preserves_user_hooks() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let hooks = temp.path().join(".gemini/config/hooks.json");
-    let user_hook = json!({
-        "PostToolUse": [{"matcher": "run_command", "hooks": [{"type": "command", "command": "./lint.sh"}]}]
-    });
-    let user_stop = json!({"type": "command", "command": "./after-stop.sh"});
-    let same_group_post_tool =
-        json!([{"matcher": "*", "hooks": [{"type": "command", "command": "./audit.sh"}]}]);
-    write(
-        &hooks,
-        &json!({
-            "user-lint": user_hook,
-            crate::antigravity_hook::HOOK_ENTRY_NAME: {
-                "PostToolUse": same_group_post_tool,
-                "Stop": [user_stop]
-            }
-        }),
-    );
-    ensure_hooks(&hooks).expect("register hooks");
-    let actual = read_hooks(&hooks).expect("read hooks");
-    assert_eq!(actual["user-lint"], user_hook);
-    let group = &actual[crate::antigravity_hook::HOOK_ENTRY_NAME];
-    assert_eq!(group["PostToolUse"], same_group_post_tool);
     assert_eq!(
-        group["Stop"],
-        json!([user_stop, crate::antigravity_hook::hook_handler()])
+        std::fs::read(&hooks).expect("read hook configuration"),
+        malformed
     );
-    assert_eq!(
-        group["SessionStart"],
-        json!([crate::antigravity_hook::hook_handler()])
-    );
-    assert_eq!(
-        group["PreInvocation"],
-        json!([crate::antigravity_hook::hook_handler()])
-    );
-    let before = std::fs::read(&hooks).expect("read");
-    ensure_hooks(&hooks).expect("idempotent");
-    assert_eq!(std::fs::read(&hooks).expect("read"), before);
-}
-
-#[test]
-fn disabled_or_incompatible_same_name_hook_group_is_not_overwritten() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let path = temp.path().join("hooks.json");
-    let disabled = json!({
-        crate::antigravity_hook::HOOK_ENTRY_NAME: {
-            "enabled": false,
-            "Stop": []
-        }
-    });
-    write(&path, &disabled);
-    let before = std::fs::read_to_string(&path).expect("read");
-    let error = ensure_hooks(&path).expect_err("disabled hook group conflicts");
-    assert!(error.to_string().contains("disabled"));
-    assert_eq!(std::fs::read_to_string(&path).expect("read"), before);
-
-    for incompatible in [
-        json!({crate::antigravity_hook::HOOK_ENTRY_NAME: "not-an-object"}),
-        json!({crate::antigravity_hook::HOOK_ENTRY_NAME: {"Stop": "not-an-array"}}),
-    ] {
-        write(&path, &incompatible);
-        let before = std::fs::read_to_string(&path).expect("read");
-        assert_eq!(
-            ensure_hooks(&path).expect_err("incompatible group").kind(),
-            io::ErrorKind::InvalidData
-        );
-        assert_eq!(std::fs::read_to_string(&path).expect("read"), before);
-    }
-}
-
-#[test]
-fn invalid_hooks_configuration_is_not_replaced() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let path = temp.path().join("hooks.json");
-    for bytes in ["{broken", "[]", "null"] {
-        std::fs::write(&path, bytes).expect("write");
-        assert_eq!(
-            ensure_hooks(&path).expect_err("invalid hooks").kind(),
-            io::ErrorKind::InvalidData
-        );
-        assert_eq!(std::fs::read_to_string(&path).expect("read"), bytes);
-    }
-}
-
-#[cfg(unix)]
-#[test]
-fn hooks_symlink_is_preserved() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let target = temp.path().join("shared-hooks.json");
-    let path = temp.path().join("hooks.json");
-    write(&target, &json!({"custom": {"Stop": []}}));
-    std::os::unix::fs::symlink(&target, &path).expect("symlink");
-    ensure_hooks(&path).expect("update target");
-    assert!(path.is_symlink());
-    let actual = read_hooks(&target).expect("hooks");
-    assert_eq!(actual["custom"], json!({"Stop": []}));
-    assert_eq!(
-        actual[crate::antigravity_hook::HOOK_ENTRY_NAME],
-        crate::antigravity_hook::hook_entry()
-    );
-    let broken = temp.path().join("broken-hooks.json");
-    std::os::unix::fs::symlink(temp.path().join("missing.json"), &broken).expect("broken link");
-    assert!(ensure_hooks(&broken).is_err());
-    assert!(broken.is_symlink());
 }
 
 #[test]

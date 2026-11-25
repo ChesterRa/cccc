@@ -202,6 +202,7 @@ impl Context {
         if session_action == Some("list") {
             let mut sources =
                 daemon(client, "local_session_list", json!({"source_id":source_id})).await?;
+            project_session_list(&mut sources);
             sources["self_source_id"] = json!(source_id);
             if sources.get("self_memberships").is_none() {
                 sources["self_memberships"] = json!([]);
@@ -492,6 +493,23 @@ async fn daemon(
     Ok(Value::Object(response.result))
 }
 
+fn project_session_list(payload: &mut Value) {
+    let listed: BTreeSet<String> = payload
+        .get("sources")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|source| source.get("source_id").and_then(Value::as_str))
+        .map(str::to_owned)
+        .collect();
+    if let Some(states) = payload
+        .get_mut("source_states")
+        .and_then(Value::as_object_mut)
+    {
+        states.retain(|source_id, _| listed.contains(source_id));
+    }
+}
+
 fn result(payload: Value) -> Value {
     json!({"content":[{"type":"text","text":serde_json::to_string(&payload).unwrap_or_default()}],"structuredContent":payload,"isError":false})
 }
@@ -536,6 +554,37 @@ mod action_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn session_list_projection_keeps_only_listed_source_states() {
+        let online_state = json!({"diagnostic": {"state": "ready"}});
+        let mut payload = json!({
+            "sources": [{"source_id": "claude:online", "connected": true}],
+            "source_states": {
+                "claude:online": online_state,
+                "claude:offline": {"diagnostic": {"state": "unknown"}},
+                "claude:removed": {"control": {"access_blocked": true}}
+            },
+            "capabilities": {"source_control": true},
+            "removed_sources": [{"source_id": "claude:removed", "connected": false}]
+        });
+        let mut expected = payload.clone();
+        expected["source_states"] = json!({"claude:online": online_state});
+        project_session_list(&mut payload);
+        assert_eq!(payload, expected);
+
+        for mut unlisted in [
+            json!({"sources": [], "source_states": {"claude:offline": {}}}),
+            json!({"source_states": {"claude:offline": {}}}),
+        ] {
+            project_session_list(&mut unlisted);
+            assert_eq!(unlisted["source_states"], json!({}));
+        }
+
+        let mut no_states = json!({"sources": [{"source_id": "claude:online"}]});
+        project_session_list(&mut no_states);
+        assert!(no_states.get("source_states").is_none());
+    }
 
     /// Every call cccc_bootstrap suggests, with the key it is returned under.
     #[cfg(target_os = "linux")]
@@ -1342,6 +1391,14 @@ mod tests {
         })
         .await
         .expect("daemon ready");
+        let directory = daemon(
+            &client,
+            "local_session_list",
+            json!({"source_id":source_id}),
+        )
+        .await
+        .expect("daemon session list");
+        assert!(directory["source_states"].get(&source_id).is_some());
         let mut context = Context::new("claude", Some(std::process::id())).expect("native context");
         let listed = context
             .handle(
@@ -1358,6 +1415,14 @@ mod tests {
             json!([]),
             "receive readiness stays separate"
         );
+        assert_eq!(discovery["source_states"], json!({}));
+        let text: Value = serde_json::from_str(
+            listed["result"]["content"][0]["text"]
+                .as_str()
+                .expect("text"),
+        )
+        .expect("JSON discovery text");
+        assert_eq!(&text, discovery);
         assert_eq!(discovery["self_source_id"], source_id);
         let memberships = discovery["self_memberships"]
             .as_array()

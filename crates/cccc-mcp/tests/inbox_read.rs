@@ -1205,13 +1205,24 @@ async fn scope_follow_group_changes_only_after_the_owner_exits() {
         )
         .await;
     assert_ne!(exited["result"]["isError"], true, "{exited}");
+    // The PTY runs in a separate session owner, which this process's runtime
+    // registry cannot see, so wait for the daemon's projection itself to move
+    // to the Group's active workspace.
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        while cccc_runtime::status(&fixture.group_id, "follow").is_ok_and(|status| status.running) {
+        loop {
+            let bootstrap = fixture
+                .stdio_tool("follow", "cccc_bootstrap", json!({}))
+                .await;
+            if bootstrap["result"]["structuredContent"]["session"]["effective_scope"]["source"]
+                == "group_active"
+            {
+                break;
+            }
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         }
     })
     .await
-    .expect("fixture exits normally");
+    .expect("the launch-time workspace is released after the owner exits");
     fixture.assert_workspace("follow", 1).await;
     let bootstrap = fixture
         .stdio_tool("follow", "cccc_bootstrap", json!({}))

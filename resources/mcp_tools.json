@@ -2657,7 +2657,7 @@
   },
   {
     "name": "cccc_backlog",
-    "description": "The project's backlog file: long-lived topics and ideas; tasks made from an entry track the work on it. action=get|add|edit|move|close|promote|use|create|exclude. get lists the sections and entry titles with their linked tasks; pass entry to read one entry in full. The other actions need scope_key, scope_url and path from your last get (use and create take the path of the file to choose); edit, move, close and promote also need its sha256 as if_file_sha256, and a stale one returns backlog_file_conflict, so get again. promote starts a task from an entry, or returns the entry's unfinished task. close moves an entry to Closed with a one-line outcome. use and create choose the file, and exclude adds a local Git exclude rule for it (a file Git already tracks is refused); these three are for the foreman or the user.",
+    "description": "The project's backlog file: long-lived topics and ideas; tasks made from an entry track the work on it. action=get|add|edit|move|close|promote|use|create|exclude. get lists open entry titles and linked tasks and gives an entry_count for each Closed section. Pass entry to read any entry in full. The other actions need scope_key, scope_url and path from your last get (use and create take the path of the file to choose); edit, move, close and promote also need its sha256 as if_file_sha256, and a stale one returns backlog_file_conflict, so get again. promote starts a task from an entry, or returns the entry's unfinished task. close moves an entry to Closed with a one-line outcome. use and create choose the file, and exclude adds a local Git exclude rule for it (a file Git already tracks is refused); these three are for the foreman or the user.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -2702,7 +2702,7 @@
         },
         "entry": {
           "type": "object",
-          "description": "The entry to read or change: {\"id\": ...} for an entry with an id, or {\"line\": ...}, its heading line from get, for one without.",
+          "description": "The entry to read or change: {\"id\": ...} for an entry with an id, or {\"line\": ...}, its heading line, for one without.",
           "properties": {
             "id": {
               "type": "string"

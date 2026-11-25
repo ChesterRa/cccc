@@ -4,6 +4,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { GroupMeta } from "../../types";
+import { GroupSidebar } from "./GroupSidebar";
 import { GroupSidebarSectionHeader } from "./GroupSidebarSectionHeader";
 import { GroupSidebarItem } from "./GroupSidebarItem";
 import { BRAND_CARD_CLOSE_DELAY_MS, SidebarBrandName } from "./SidebarBrandName";
@@ -108,11 +109,12 @@ describe("SidebarBrandName", () => {
     expect(host.querySelector("button")).toBeNull();
   });
 
-  // At a larger text size the header row can be narrower than the name. A plain name
-  // may give way to the logo, but the name that opens the instance card is its only
-  // entry, so it must stay (cut short) rather than disappear.
+  // Narrow headers fold the "New" label first (at 13rem) so the plain brand name stays
+  // visible down to 10.5rem (covering the 200 px sidebar at 100% text). Below 10.5rem a
+  // plain name gives way to the logo, while a name that opens the instance card stays
+  // reachable as its only entry.
   it("keeps the name that opens the instance details in a narrow header", async () => {
-    const narrowHide = "@max-[13rem]/brand:hidden";
+    const narrowHide = "@max-[10.5rem]/brand:hidden";
     await act(async () => root.render(<SidebarBrandName productName="CCCC" />));
     expect(host.firstElementChild?.classList.contains(narrowHide)).toBe(true);
     await act(async () =>
@@ -120,6 +122,44 @@ describe("SidebarBrandName", () => {
     );
     expect(host.querySelector("[data-brand-name]")?.tagName).toBe("BUTTON");
     expect(host.firstElementChild?.classList.contains(narrowHide)).toBe(false);
+  });
+
+  it("folds the New button label at 13rem before hiding a plain brand name at 10.5rem", async () => {
+    const noop = () => {};
+    await act(async () =>
+      root.render(
+        <GroupSidebar
+          orderedGroups={[{ group_id: "g_1", title: "Alpha" } as GroupMeta]}
+          archivedGroupIds={[]}
+          selectedGroupId="g_1"
+          isOpen
+          isCollapsed={false}
+          sidebarWidth={200}
+          isDark={false}
+          onSelectGroup={noop}
+          onCreateGroup={noop}
+          onClose={noop}
+          onToggleCollapse={noop}
+          onResizeWidth={noop}
+          onReorderSection={noop}
+          onArchiveGroup={noop}
+          onRestoreGroup={noop}
+        />,
+      ),
+    );
+    const brandContainer = host.querySelector('[class*="@container/brand"]');
+    expect(brandContainer).not.toBeNull();
+    const brandName = host.querySelector<HTMLElement>("[data-brand-name]");
+    expect(brandName?.parentElement?.classList.contains("@max-[10.5rem]/brand:hidden")).toBe(true);
+    expect(brandName?.parentElement?.parentElement?.className).toContain(
+      "@max-[13rem]/brand:gap-2",
+    );
+    const newButton = host.querySelector<HTMLButtonElement>('button[aria-label="createNewGroup"]');
+    expect(newButton).not.toBeNull();
+    expect(newButton?.getAttribute("title")).toBe("createNewGroup");
+    const newLabel = newButton?.querySelector("span");
+    expect(newLabel?.textContent).toBe("newGroup");
+    expect(newLabel?.classList.contains("@max-[13rem]/brand:hidden")).toBe(true);
   });
 
   it("shows the complete instance details while the pointer is over the name", async () => {

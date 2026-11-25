@@ -7,10 +7,11 @@ import { copyTextToClipboard } from "../../utils/copy";
 
 const NAME_CLASS =
   "truncate text-[15px] font-semibold tracking-[-0.035em] text-[var(--color-text-primary)]";
-// A larger text size can leave the fixed-width header row narrower than the name. A
-// plain name then gives way so the logo stands alone; a name that opens the instance
-// details is that card's only entry, so it stays and is cut short instead.
-const PLAIN_WRAP_CLASS = "min-w-0 flex-1 @max-[13rem]/brand:hidden";
+// Narrow headers fold the "New" label first (at 13rem) so the brand name still fits
+// at the 200 px minimum width. Only below 10.5rem (for example at 125% text size on a
+// 200 px sidebar) does a plain name give way to the logo; a name that opens the
+// instance card is its only entry, so it stays and is cut short instead.
+const PLAIN_WRAP_CLASS = "min-w-0 flex-1 @max-[10.5rem]/brand:hidden";
 const CARD_WRAP_CLASS = "min-w-0 flex-1";
 
 /** Long enough to cross the gap from the name to the card. */

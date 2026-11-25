@@ -115,6 +115,49 @@ impl Fixture {
 }
 
 #[tokio::test]
+async fn session_list_returns_state_for_the_online_source_only() {
+    if crate::lib_tests::isolate_embedded_daemon_test(concat!(
+        module_path!(),
+        "::",
+        "session_list_returns_state_for_the_online_source_only"
+    )) {
+        return;
+    }
+    let mut fixture = Fixture::new().await;
+    let online_id = fixture.source_id.clone();
+    let mut offline = native::read(&fixture.home, &online_id).expect("online source");
+    offline.source_id = "claude:stale-offline".into();
+    offline.native_session_id = "previous-conversation".into();
+    offline.revision = "previous-revision".into();
+    let offline_id = offline.source_id.clone();
+    native::write(&fixture.home, offline).expect("offline source");
+
+    let directory = daemon(&fixture.client, "local_session_list", json!({}))
+        .await
+        .expect("daemon session list");
+    let listed = fixture.call("cccc_session", json!({"action":"list"})).await;
+    fixture.stop().await;
+
+    assert!(directory["source_states"].get(&offline_id).is_some());
+    let online_state = directory["source_states"]
+        .get(&online_id)
+        .expect("online state");
+    let discovery = &listed["result"]["structuredContent"];
+    assert_eq!(discovery["sources"], directory["sources"]);
+    assert_eq!(
+        discovery["source_states"],
+        json!({(online_id): online_state})
+    );
+    let text: Value = serde_json::from_str(
+        listed["result"]["content"][0]["text"]
+            .as_str()
+            .expect("text"),
+    )
+    .expect("JSON discovery text");
+    assert_eq!(&text, discovery);
+}
+
+#[tokio::test]
 async fn conversation_creation_send_and_leave_keep_their_distinct_effects() {
     if crate::lib_tests::isolate_embedded_daemon_test(concat!(
         module_path!(),

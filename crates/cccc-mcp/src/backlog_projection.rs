@@ -1,8 +1,8 @@
 use serde_json::{Map, Value};
 
-/// An agent reads the backlog in two steps: the outline of every section and
-/// entry, then one entry in full. A write answers with what it changed and the
-/// file's new hash, not with the whole file again.
+/// The outline lists open entries and a count for each Closed section.
+/// A specific entry can be read in full. Writes return what changed and
+/// the file's new hash.
 pub(crate) fn apply(
     result: &mut Map<String, Value>,
     arguments: &Map<String, Value>,
@@ -17,24 +17,39 @@ pub(crate) fn apply(
     }
     match arguments.get("entry").filter(|value| !value.is_null()) {
         None => {
-            for entry in entries_mut(result) {
-                entry.remove("body");
-            }
+            project_outline(result);
             Ok(())
         }
         Some(selector) => keep_one_entry(result, selector),
     }
 }
 
-fn entries_mut(result: &mut Map<String, Value>) -> impl Iterator<Item = &mut Map<String, Value>> {
-    result
+fn project_outline(result: &mut Map<String, Value>) {
+    for section in result
         .get_mut("sections")
         .and_then(Value::as_array_mut)
         .into_iter()
         .flatten()
-        .filter_map(|section| section.get_mut("entries").and_then(Value::as_array_mut))
-        .flatten()
         .filter_map(Value::as_object_mut)
+    {
+        if section.get("closed").and_then(Value::as_bool) == Some(true) {
+            let entry_count = section
+                .remove("entries")
+                .and_then(|entries| entries.as_array().map(Vec::len))
+                .unwrap_or_default();
+            section.insert("entry_count".into(), Value::from(entry_count));
+            continue;
+        }
+        for entry in section
+            .get_mut("entries")
+            .and_then(Value::as_array_mut)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_object_mut)
+        {
+            entry.remove("body");
+        }
+    }
 }
 
 /// The same selector rule as the daemon's writes, so an entry read here can be written with
@@ -120,7 +135,10 @@ mod tests {
             "sha256": "a".repeat(64),
             "problems": [],
             "sections": [
-                {"name": "", "line": 1, "closed": false, "entries": []},
+                {"name": "", "line": 0, "closed": false, "entries": [
+                    {"id": "111111111111", "title": "Before the sections", "line": 1,
+                     "body": "A preamble entry.\n", "problems": [], "tasks": []}
+                ]},
                 {"name": "Open", "line": 3, "closed": false, "entries": [
                     {"id": "0123456789ab", "title": "Faster startup", "line": 5,
                      "body": "Measure first.\n", "problems": [], "tasks": []},
@@ -143,12 +161,17 @@ mod tests {
     }
 
     #[test]
-    fn the_outline_keeps_every_entry_without_its_body() {
+    fn the_outline_keeps_open_entries_and_counts_closed_entries() {
         let mut result = snapshot();
+        let problems =
+            json!([{"code": "missing_id", "line": 14, "message": "Entry has no stable ID"}]);
+        result["sections"][2]["entries"][0]["id"] = Value::Null;
+        result.insert("problems".into(), problems.clone());
         apply(&mut result, &arguments(json!({}))).expect("outline");
         let sections = result["sections"].as_array().expect("sections");
         assert_eq!(sections.len(), 3);
-        let titles: Vec<&str> = sections
+        assert_eq!(sections[0]["name"], "");
+        let titles: Vec<&str> = sections[..2]
             .iter()
             .flat_map(|section| section["entries"].as_array().expect("entries"))
             .map(|entry| {
@@ -156,8 +179,34 @@ mod tests {
                 entry["title"].as_str().expect("title")
             })
             .collect();
-        assert_eq!(titles, ["Faster startup", "Old idea", "Done topic"]);
+        assert_eq!(
+            titles,
+            ["Before the sections", "Faster startup", "Old idea"]
+        );
+        assert_eq!(
+            sections[2],
+            json!({"name": "Closed", "line": 12, "closed": true, "entry_count": 1})
+        );
+        assert_eq!(result["problems"], problems);
         assert_eq!(result["sha256"], "a".repeat(64));
+    }
+
+    #[test]
+    fn the_outline_counts_each_closed_section_including_an_empty_one() {
+        let mut result = snapshot();
+        result["sections"]
+            .as_array_mut()
+            .expect("sections")
+            .push(json!({"name": "Closed", "line": 17, "closed": true, "entries": []}));
+        apply(&mut result, &arguments(json!({}))).expect("outline");
+        assert_eq!(
+            result["sections"][2],
+            json!({"name": "Closed", "line": 12, "closed": true, "entry_count": 1})
+        );
+        assert_eq!(
+            result["sections"][3],
+            json!({"name": "Closed", "line": 17, "closed": true, "entry_count": 0})
+        );
     }
 
     #[test]
@@ -177,6 +226,19 @@ mod tests {
         apply(&mut by_line, &arguments(json!({"entry": {"line": 9}}))).expect("by line");
         assert_eq!(by_line["entry"]["title"], "Old idea");
         assert_eq!(by_line["entry"]["section"], "Open");
+
+        let mut closed_by_line = snapshot();
+        closed_by_line["sections"][2]["entries"][0]["id"] = Value::Null;
+        apply(
+            &mut closed_by_line,
+            &arguments(json!({"entry": {"line": 14}})),
+        )
+        .expect("closed entry by line");
+        assert_eq!(closed_by_line["entry"]["section"], "Closed");
+        assert_eq!(
+            closed_by_line["entry"]["body"],
+            "Outcome (2026-11-11): shipped.\n"
+        );
     }
 
     #[test]
