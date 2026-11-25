@@ -36,7 +36,7 @@ fn held_notice(event: &Event, now: DateTime<Utc>) -> bool {
 }
 
 /// Batches with any other event carry work the sender wants delivered now.
-pub(super) fn held_batch(events: &[Event], now: DateTime<Utc>) -> bool {
+pub(crate) fn held_batch(events: &[Event], now: DateTime<Utc>) -> bool {
     !events.is_empty() && events.iter().all(|event| held_notice(event, now))
 }
 

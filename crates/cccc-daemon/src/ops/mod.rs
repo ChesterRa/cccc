@@ -96,7 +96,7 @@ mod terminal_text;
 mod voice_notifications;
 pub(crate) mod voice_secretary;
 mod web_model_connectors;
-mod working_state;
+pub(crate) mod working_state;
 #[cfg(test)]
 mod working_state_tests;
 

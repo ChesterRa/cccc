@@ -4,6 +4,7 @@ pub mod active;
 pub mod actors;
 #[cfg(test)]
 mod actors_tests;
+pub mod antigravity_hook;
 pub mod assistant_state;
 pub mod attended_update;
 pub mod automation;

@@ -220,3 +220,255 @@ time.sleep(30)
     );
     controller::finish(&home, ShutdownMode::Stop, "stop".into()).expect("stop");
 }
+
+#[test]
+fn antigravity_owner_binding_withholds_during_settle_and_survives_preserve_restart() {
+    let temp = tempfile::tempdir().expect("isolated home");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    home.initialize().expect("init home");
+    let store = GroupStore::new(home.clone()).expect("store");
+    let mut group = store
+        .create("Antigravity owner fixture", "")
+        .expect("group");
+    let mut actor = Actor::new("agy-member");
+    actor.runtime = ActorRuntime::Antigravity;
+    actor.runner = RunnerKind::Pty;
+    group.actors.push(actor.clone());
+    store.save(&group).expect("save actor");
+    let _lock = cccc_core::fs::try_exclusive_lock(&home.daemon_dir().join("ccccd.lock"))
+        .expect("home lock")
+        .expect("private home is unlocked");
+    controller::initialize(&home).expect("controller");
+
+    let launch_id = "owner-agy-launch-1";
+    let state_file =
+        cccc_core::antigravity_hook::state_file_path(&home, &group.group_id, &actor.id, launch_id);
+    let received = temp.path().join("received");
+    let mut env = std::collections::BTreeMap::new();
+    env.insert(
+        cccc_core::antigravity_hook::ENV_STATE_FILE.into(),
+        state_file.to_string_lossy().into_owned(),
+    );
+    env.insert(
+        cccc_core::antigravity_hook::ENV_LAUNCH_ID.into(),
+        launch_id.into(),
+    );
+    let actor_ref = ActorRef {
+        group_id: group.group_id.clone(),
+        actor_id: actor.id.clone(),
+        actor_created_at: actor.created_at.clone(),
+        generation: None,
+    };
+    let terminal = controller::start(
+        &home,
+        actor_ref,
+        PreparedLaunch::Pty {
+            spec: cccc_runtime::LaunchSpec {
+                group_id: group.group_id.clone(),
+                actor_id: actor.id.clone(),
+                runner: RunnerKind::Pty,
+                command: vec![
+                    "/bin/sh".into(),
+                    "-c".into(),
+                    format!(
+                        "stty raw -echo; printf '\\033[?2004h'; exec cat > {}",
+                        received.display()
+                    ),
+                ],
+                cwd: temp.path().into(),
+                env,
+                cols: 80,
+                rows: 24,
+            },
+            history: cccc_runtime::HistoryConfig {
+                path: temp.path().join("terminal.pty"),
+                max_bytes: 65536,
+                hot_bytes: 8192,
+                persist: false,
+            },
+            launch: cccc_runtime::ActorLaunch {
+                runtime: ActorRuntime::Antigravity,
+                submit: ActorSubmit::Enter,
+            },
+            preamble: "startup context".into(),
+        },
+    )
+    .expect("start Antigravity terminal")
+    .terminal
+    .expect("terminal");
+
+    // Owner recorded the launch binding directly; SessionStart makes it idle.
+    cccc_core::antigravity_hook::apply_hook_payload(
+        &state_file,
+        launch_id,
+        &group.group_id,
+        &actor.id,
+        &serde_json::json!({"hookEventName":"SessionStart","conversationId":"c1"}),
+    )
+    .expect("session start");
+    assert!(crate::ops::working_state::ready_for_mail_notice(
+        &home,
+        &group.group_id,
+        &actor.id,
+    ));
+
+    let deliver_by = (chrono::Utc::now() + chrono::Duration::minutes(30)).to_rfc3339();
+    let mut notice = Event::new("system.notify", &group.group_id);
+    notice.by = "system".into();
+    notice.data = serde_json::json!({
+        "kind":"mail_notice","target_actor_id":actor.id,
+        "context":{"actor_id":actor.id,"source_event_ids":["mail-1"],"deliver_by":deliver_by}
+    })
+    .as_object()
+    .cloned()
+    .expect("notice");
+    cccc_core::ledger::append(
+        &store.ledger_path(&group.group_id).expect("ledger"),
+        &notice,
+    )
+    .expect("append notice");
+
+    // Flip to working during the owner's 1.5s Antigravity startup settle wait.
+    let flip_file = state_file.clone();
+    let flip_group = group.group_id.clone();
+    let flip_actor = actor.id.clone();
+    let flipper = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(300));
+        cccc_core::antigravity_hook::apply_hook_payload(
+            &flip_file,
+            launch_id,
+            &flip_group,
+            &flip_actor,
+            &serde_json::json!({"hookEventName":"PreInvocation","conversationId":"c1"}),
+        )
+        .expect("flip working during owner settle");
+    });
+    let outcome = controller::submit(
+        &home,
+        &group,
+        &actor,
+        std::slice::from_ref(&notice),
+        "mail waiting",
+        &AtomicBool::new(false),
+        &AtomicBool::new(false),
+        None,
+    )
+    .expect("submit early notice");
+    flipper.join().expect("flipper");
+    assert_eq!(outcome["outcome"], "withheld");
+    assert!(
+        std::fs::read(&received).unwrap_or_default().is_empty(),
+        "owner must not write a withheld early notice to the PTY"
+    );
+    assert!(matches!(
+        super::observe_attempt(
+            &home,
+            &group.group_id,
+            &actor.id,
+            &actor.created_at,
+            &notice.id,
+            true,
+        )
+        .expect("observe withheld"),
+        super::RetainedDelivery::Withdrawn
+    ));
+
+    // Preserve agents across a maintenance restart and verify hook state survives.
+    controller::finish(&home, ShutdownMode::PreserveAgents, "keep".into()).expect("keep");
+    controller::initialize(&home).expect("reattach owner");
+    let kept = super::runtime::status(&group.group_id, &actor.id).expect("kept status");
+    assert_eq!(kept.pid, terminal.pid);
+    assert_eq!(kept.started_at, terminal.started_at);
+    assert!(!crate::ops::working_state::ready_for_mail_notice(
+        &home,
+        &group.group_id,
+        &actor.id,
+    ));
+
+    cccc_core::antigravity_hook::apply_hook_payload(
+        &state_file,
+        launch_id,
+        &group.group_id,
+        &actor.id,
+        &serde_json::json!({"hookEventName":"Stop","conversationId":"c1","fullyIdle":true}),
+    )
+    .expect("stop after keep");
+    assert!(crate::ops::working_state::ready_for_mail_notice(
+        &home,
+        &group.group_id,
+        &actor.id,
+    ));
+    let projected =
+        crate::ops::working_state::runtime_actor_fields(&home, &actor, &group.group_id, true);
+    assert_eq!(projected["effective_working_state"], "idle");
+    assert_eq!(projected["effective_working_reason"], "antigravity_hook");
+
+    controller::finish(&home, ShutdownMode::Stop, "stop".into()).expect("stop");
+}
+
+#[test]
+fn failed_pty_start_releases_owner_registration_for_immediate_retry() {
+    let temp = tempfile::tempdir().expect("isolated home");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    home.initialize().expect("init home");
+    let store = GroupStore::new(home.clone()).expect("store");
+    let mut group = store.create("PTY retry fixture", "").expect("group");
+    let mut actor = Actor::new("agy-retry");
+    actor.runtime = ActorRuntime::Antigravity;
+    actor.runner = RunnerKind::Pty;
+    group.actors.push(actor.clone());
+    store.save(&group).expect("save actor");
+    let _lock = cccc_core::fs::try_exclusive_lock(&home.daemon_dir().join("ccccd.lock"))
+        .expect("home lock")
+        .expect("private home is unlocked");
+    controller::initialize(&home).expect("controller");
+
+    let actor_ref = ActorRef {
+        group_id: group.group_id.clone(),
+        actor_id: actor.id.clone(),
+        actor_created_at: actor.created_at.clone(),
+        generation: None,
+    };
+    let make_launch = |cwd: std::path::PathBuf| PreparedLaunch::Pty {
+        spec: cccc_runtime::LaunchSpec {
+            group_id: group.group_id.clone(),
+            actor_id: actor.id.clone(),
+            runner: RunnerKind::Pty,
+            command: vec!["/bin/sh".into(), "-c".into(), "exec sleep 30".into()],
+            cwd,
+            env: Default::default(),
+            cols: 80,
+            rows: 24,
+        },
+        history: cccc_runtime::HistoryConfig {
+            path: temp.path().join("terminal.pty"),
+            max_bytes: 65536,
+            hot_bytes: 8192,
+            persist: false,
+        },
+        launch: cccc_runtime::ActorLaunch {
+            runtime: ActorRuntime::Antigravity,
+            submit: ActorSubmit::Enter,
+        },
+        preamble: String::new(),
+    };
+
+    // Start fails with missing cwd; owner must release its reservation without Stop.
+    let Err(err) = controller::start(
+        &home,
+        actor_ref.clone(),
+        make_launch(temp.path().join("missing-cwd")),
+    ) else {
+        panic!("missing cwd must fail start");
+    };
+    assert!(!err.to_string().is_empty());
+
+    // Immediately retrying the same actor with a valid cwd must succeed directly.
+    let started = controller::start(&home, actor_ref, make_launch(temp.path().into()))
+        .expect("retry start after failed PTY launch")
+        .terminal
+        .expect("running terminal");
+    assert!(started.running);
+
+    controller::finish(&home, ShutdownMode::Stop, "stop".into()).expect("stop");
+}

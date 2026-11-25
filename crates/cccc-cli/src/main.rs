@@ -64,6 +64,14 @@ async fn run() -> Result<()> {
     if matches!(&cli.command, Some(CommandKind::Update(args)) if args.self_check) {
         return update_host::print_self_check();
     }
+    if matches!(
+        &cli.command,
+        Some(CommandKind::Runtime {
+            action: RuntimeAction::AntigravityHook
+        })
+    ) {
+        return run_antigravity_hook();
+    }
     let home = HomeLayout::resolve()?;
     let client = DaemonClient::new(home.clone());
     match cli.command {
@@ -336,14 +344,158 @@ async fn runtime(client: &DaemonClient, action: RuntimeAction) -> Result<()> {
             };
             print(call(client, op, args).await?)?;
         }
+        RuntimeAction::AntigravityHook => return run_antigravity_hook(),
     }
     Ok(())
 }
 
+fn run_antigravity_hook() -> Result<()> {
+    use std::io::Read;
+    let state_file = std::env::var_os(cccc_core::antigravity_hook::ENV_STATE_FILE);
+    let launch_id = std::env::var(cccc_core::antigravity_hook::ENV_LAUNCH_ID).ok();
+    let group_id = std::env::var("CCCC_GROUP_ID").ok();
+    let actor_id = std::env::var("CCCC_ACTOR_ID").ok();
+    if let (Some(state_file), Some(launch_id), Some(group_id), Some(actor_id)) =
+        (state_file, launch_id, group_id, actor_id)
+        && !state_file.is_empty()
+    {
+        let mut raw = Vec::new();
+        let limit = (cccc_core::antigravity_hook::MAX_HOOK_STDIN_BYTES + 1) as u64;
+        let read_ok = std::io::stdin().take(limit).read_to_end(&mut raw).is_ok();
+        handle_antigravity_hook_input(
+            std::path::Path::new(&state_file),
+            &launch_id,
+            &group_id,
+            &actor_id,
+            read_ok.then_some(raw.as_slice()),
+        );
+    }
+    println!("{{}}");
+    Ok(())
+}
+
+fn handle_antigravity_hook_input(
+    state_file: &std::path::Path,
+    launch_id: &str,
+    group_id: &str,
+    actor_id: &str,
+    raw: Option<&[u8]>,
+) {
+    let Some(raw) = raw else {
+        let _ = cccc_core::antigravity_hook::revoke_idle(
+            state_file,
+            launch_id,
+            group_id,
+            actor_id,
+            "stdin_read_error",
+        );
+        return;
+    };
+    if raw.len() > cccc_core::antigravity_hook::MAX_HOOK_STDIN_BYTES {
+        let _ = cccc_core::antigravity_hook::revoke_idle(
+            state_file,
+            launch_id,
+            group_id,
+            actor_id,
+            "oversized_payload",
+        );
+        return;
+    }
+    match serde_json::from_slice::<serde_json::Value>(raw) {
+        Ok(payload) => {
+            let _ = cccc_core::antigravity_hook::apply_hook_payload(
+                state_file, launch_id, group_id, actor_id, &payload,
+            );
+        }
+        Err(_) => {
+            let _ = cccc_core::antigravity_hook::revoke_idle(
+                state_file,
+                launch_id,
+                group_id,
+                actor_id,
+                "invalid_payload",
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::select_active_group;
-    use cccc_core::{GroupStore, HomeLayout, active};
+    use super::{handle_antigravity_hook_input, select_active_group};
+    use cccc_core::{GroupStore, HomeLayout, active, antigravity_hook};
+
+    #[test]
+    fn oversized_antigravity_hook_input_revokes_only_its_own_launch_idle_state() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let l1_file = antigravity_hook::state_file_path(&home, "g_cli", "peer", "L1");
+        let l2_file = antigravity_hook::state_file_path(&home, "g_cli", "peer", "L2");
+        antigravity_hook::record_launch(
+            &home,
+            "g_cli",
+            "peer",
+            "L1",
+            Some(11),
+            "2026-11-25T00:00:00Z",
+        )
+        .expect("bind L1");
+        let idle_payload = serde_json::to_vec(
+            &serde_json::json!({"hookEventName":"SessionStart","conversationId":"c1"}),
+        )
+        .expect("json");
+        handle_antigravity_hook_input(&l1_file, "L1", "g_cli", "peer", Some(&idle_payload));
+        assert_eq!(
+            antigravity_hook::read_live_state(
+                &home,
+                "g_cli",
+                "peer",
+                Some(11),
+                "2026-11-25T00:00:00Z"
+            )
+            .expect("L1 idle")
+            .status,
+            "idle"
+        );
+
+        let oversized = vec![b'x'; antigravity_hook::MAX_HOOK_STDIN_BYTES + 1];
+        handle_antigravity_hook_input(&l1_file, "L1", "g_cli", "peer", Some(&oversized));
+        assert!(
+            antigravity_hook::read_live_state(
+                &home,
+                "g_cli",
+                "peer",
+                Some(11),
+                "2026-11-25T00:00:00Z"
+            )
+            .is_none(),
+            "oversized PreInvocation must revoke stale idle evidence"
+        );
+
+        // Launch L2 is isolated: another oversized event from L1 cannot revoke L2.
+        antigravity_hook::record_launch(
+            &home,
+            "g_cli",
+            "peer",
+            "L2",
+            Some(22),
+            "2026-11-25T00:01:00Z",
+        )
+        .expect("bind L2");
+        handle_antigravity_hook_input(&l2_file, "L2", "g_cli", "peer", Some(&idle_payload));
+        handle_antigravity_hook_input(&l1_file, "L1", "g_cli", "peer", Some(&oversized));
+        assert_eq!(
+            antigravity_hook::read_live_state(
+                &home,
+                "g_cli",
+                "peer",
+                Some(22),
+                "2026-11-25T00:01:00Z"
+            )
+            .expect("L2 remains idle")
+            .status,
+            "idle"
+        );
+    }
 
     #[test]
     fn top_level_use_selects_a_group_without_overloading_scope_selection() {

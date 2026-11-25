@@ -483,9 +483,33 @@ impl Backend {
                         history,
                         launch,
                         ..
-                    } => cccc_runtime::start_actor_with_history(spec, history, launch)
-                        .map(|_| ())
-                        .map_err(runtime_failure),
+                    } => {
+                        let hook_launch_id = spec
+                            .env
+                            .get(cccc_core::antigravity_hook::ENV_LAUNCH_ID)
+                            .cloned();
+                        cccc_runtime::start_actor_with_history(spec, history, launch)
+                            .map(|status| {
+                                if let Some(launch_id) = hook_launch_id
+                                    && let Err(error) = cccc_core::antigravity_hook::record_launch(
+                                        home,
+                                        &status.group_id,
+                                        &status.actor_id,
+                                        &launch_id,
+                                        status.pid,
+                                        &status.started_at,
+                                    )
+                                {
+                                    tracing::warn!(
+                                        %error,
+                                        group_id = %status.group_id,
+                                        actor_id = %status.actor_id,
+                                        "failed to record Antigravity hook launch binding in session owner"
+                                    );
+                                }
+                            })
+                            .map_err(runtime_failure)
+                    }
                     PreparedLaunch::DeepSeek {
                         group,
                         actor,
@@ -736,6 +760,16 @@ impl Backend {
                         } else {
                             payload = format!("{}\n\n{payload}", context.trim_end());
                         }
+                    }
+                    if crate::ops::local_headless::held_batch(&events, chrono::Utc::now())
+                        && !crate::ops::working_state::antigravity_hook_idle_for_status(
+                            home,
+                            &group.group_id,
+                            &actor.id,
+                            &expected,
+                        )
+                    {
+                        return Ok(json!({"backend":"pty","outcome":"withheld"}));
                     }
                     let result = crate::ops::actor_delivery::submit_terminal_text_for_session(
                         &expected, &launched, &payload, &cancelled,

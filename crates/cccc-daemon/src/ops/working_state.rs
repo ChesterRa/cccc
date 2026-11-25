@@ -17,6 +17,87 @@ fn pty_output_observation(group_id: &str, actor_id: &str) -> (Value, Value) {
     (Value::String(last_output_at), json!(quiet_seconds))
 }
 
+fn live_antigravity_terminal(
+    group_id: &str,
+    actor_id: &str,
+) -> Option<cccc_runtime::SessionStatus> {
+    let status = cccc_runtime::status(group_id, actor_id).ok()?;
+    if !status.running {
+        return None;
+    }
+    #[cfg(unix)]
+    let launched_runtime = crate::session_owner::snapshot(group_id, actor_id)
+        .ok()
+        .flatten()
+        .and_then(|snapshot| snapshot.terminal_launch)
+        .or(status.launch)
+        .map(|launch| launch.runtime);
+    #[cfg(not(unix))]
+    let launched_runtime = status.launch.map(|launch| launch.runtime);
+    if launched_runtime.is_some_and(|runtime| runtime != ActorRuntime::Antigravity) {
+        return None;
+    }
+    Some(status)
+}
+
+pub(crate) fn antigravity_hook_idle_for_status(
+    home: &HomeLayout,
+    group_id: &str,
+    actor_id: &str,
+    status: &cccc_runtime::SessionStatus,
+) -> bool {
+    status.running
+        && cccc_core::antigravity_hook::read_live_state(
+            home,
+            group_id,
+            actor_id,
+            status.pid,
+            &status.started_at,
+        )
+        .is_some_and(|state| state.status == "idle")
+}
+
+/// True when a running Actor reports idle state through either a managed
+/// session or Antigravity's native lifecycle hooks, admitting early Mail
+/// notices without interrupting active work.
+pub(crate) fn ready_for_mail_notice(home: &HomeLayout, group_id: &str, actor_id: &str) -> bool {
+    if super::local_headless::ready_for_mail_notice(group_id, actor_id) {
+        return true;
+    }
+    live_antigravity_terminal(group_id, actor_id)
+        .is_some_and(|status| antigravity_hook_idle_for_status(home, group_id, actor_id, &status))
+}
+
+fn live_antigravity_hook_state(
+    home: &HomeLayout,
+    group_id: &str,
+    actor_id: &str,
+    configured_runtime: ActorRuntime,
+) -> Option<cccc_core::antigravity_hook::HookState> {
+    let status = live_antigravity_terminal(group_id, actor_id)?;
+    #[cfg(unix)]
+    let launched_runtime = crate::session_owner::snapshot(group_id, actor_id)
+        .ok()
+        .flatten()
+        .and_then(|snapshot| snapshot.terminal_launch)
+        .or(status.launch)
+        .map(|launch| launch.runtime);
+    #[cfg(not(unix))]
+    let launched_runtime = status.launch.map(|launch| launch.runtime);
+    if configured_runtime != ActorRuntime::Antigravity
+        && launched_runtime != Some(ActorRuntime::Antigravity)
+    {
+        return None;
+    }
+    cccc_core::antigravity_hook::read_live_state(
+        home,
+        group_id,
+        actor_id,
+        status.pid,
+        &status.started_at,
+    )
+}
+
 pub fn runtime_actor_fields(
     home: &HomeLayout,
     actor: &Actor,
@@ -71,8 +152,8 @@ pub(super) fn fields(
     running: bool,
     runner_effective: &str,
 ) -> Map<String, Value> {
-    let managed_session = super::local_headless::running(group_id, &actor.id)
-        || super::local_headless::uses_managed_session(actor);
+    let live_managed = super::local_headless::running(group_id, &actor.id);
+    let configured_managed = super::local_headless::uses_managed_session(actor);
     let local_state = running
         .then(|| super::local_headless::status(group_id, &actor.id))
         .flatten();
@@ -96,7 +177,23 @@ pub(super) fn fields(
             Some(local_state.updated_at),
             local_state.task_id,
         )
-    } else if managed_session {
+    } else if live_managed {
+        (
+            "waiting".to_owned(),
+            "managed_agent_session_pending".to_owned(),
+            None,
+            None,
+        )
+    } else if runner_effective == "pty"
+        && let Some(hook) = live_antigravity_hook_state(home, group_id, &actor.id, actor.runtime)
+    {
+        (
+            hook.status,
+            "antigravity_hook".to_owned(),
+            Some(hook.updated_at),
+            None,
+        )
+    } else if configured_managed {
         (
             "waiting".to_owned(),
             "managed_agent_session_pending".to_owned(),

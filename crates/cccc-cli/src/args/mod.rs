@@ -374,6 +374,9 @@ pub enum RuntimeAction {
         #[command(subcommand)]
         action: HermesAction,
     },
+    /// Internal: record Antigravity lifecycle hook state from stdin.
+    #[command(name = "antigravity-hook", hide = true)]
+    AntigravityHook,
 }
 
 #[derive(Debug, Subcommand)]
@@ -445,6 +448,14 @@ mod tests {
                 .command,
             Some(CommandKind::Reach {
                 action: ReachAction::Install
+            })
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["cccc", "runtime", "antigravity-hook"])
+                .expect("antigravity hook")
+                .command,
+            Some(CommandKind::Runtime {
+                action: RuntimeAction::AntigravityHook
             })
         ));
     }

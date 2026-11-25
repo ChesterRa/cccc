@@ -240,13 +240,17 @@ export function getActorDisplayWorkingState(
   const stateSource = String(actor.runtime_state_source || "")
     .trim()
     .toLowerCase();
+  const workingReason = String(actor.effective_working_reason || "")
+    .trim()
+    .toLowerCase();
   const isRunning = actor.running ?? actor.enabled ?? false;
 
   if (
     !isRunning ||
     effectiveRunner === "headless" ||
     stateSource === "managed_session" ||
-    stateSource === "app_server"
+    stateSource === "app_server" ||
+    workingReason === "antigravity_hook"
   ) {
     return backendState;
   }
