@@ -1154,6 +1154,7 @@ impl Backend {
             TerminalRead::Writable { attachment_id } => {
                 cccc_runtime::attachment_writable(group, id, attachment_id).map(json)
             }
+            TerminalRead::Size => cccc_runtime::terminal_size(group, id).map(json),
         };
         value.map_err(runtime_failure)
     }

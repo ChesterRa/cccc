@@ -41,6 +41,7 @@ observe!(active_history_replay(after: u64, end: Option<u64>, limit: usize) -> (H
 observe!(last_output() -> Option<OutputObservation>, super::protocol::TerminalRead::LastOutput);
 observe!(bracketed_paste_enabled() -> bool, super::protocol::TerminalRead::BracketedPaste);
 observe!(attachment_writable(attachment_id: u64) -> bool, super::protocol::TerminalRead::Writable { attachment_id });
+observe!(terminal_size() -> (u16, u16), super::protocol::TerminalRead::Size);
 
 macro_rules! change {
     ($name:ident ($($argument:ident : $kind:ty),*) -> $result:ty, $action:expr) => {

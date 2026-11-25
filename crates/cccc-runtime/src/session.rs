@@ -352,6 +352,10 @@ impl Session {
         self.attachments.is_writer(attachment_id)
     }
 
+    pub(crate) fn terminal_size(&self) -> Result<(u16, u16), RuntimeError> {
+        self.history.terminal_size()
+    }
+
     pub(crate) fn resize_from_attachment(
         &self,
         attachment_id: u64,

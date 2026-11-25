@@ -86,6 +86,11 @@ pub fn attachment_writable(
     })
 }
 
+/// The PTY's current size as `(cols, rows)`. Viewers follow it; only the writer changes it.
+pub fn terminal_size(group_id: &str, actor_id: &str) -> Result<(u16, u16), RuntimeError> {
+    with_session(group_id, actor_id, |session| session.terminal_size())
+}
+
 pub fn resize_from_attachment(
     group_id: &str,
     actor_id: &str,

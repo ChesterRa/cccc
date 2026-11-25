@@ -43,6 +43,12 @@ impl SessionHistory {
         Ok(HistorySubscription { initial, changes })
     }
 
+    /// The size the PTY and its screen model currently have.
+    pub(crate) fn terminal_size(&self) -> Result<(u16, u16), RuntimeError> {
+        let state = self.state.lock().map_err(|_| RuntimeError::Poisoned)?;
+        Ok(state.terminal.size())
+    }
+
     pub(crate) fn resize_terminal_with(
         &self,
         cols: u16,

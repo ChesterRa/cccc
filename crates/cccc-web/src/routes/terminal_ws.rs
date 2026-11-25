@@ -11,7 +11,8 @@ use tokio::io::AsyncReadExt;
 use super::terminal_ws_bootstrap::{SNAPSHOT_V1, read_snapshot, snapshot_bootstrap};
 use super::terminal_ws_flow::{OutputFlow, output_ack_cursor};
 use super::terminal_ws_protocol::{
-    TerminalInputContext, frame, handle_stream_input, send_output_frame, terminal_writable,
+    TerminalInputContext, frame, handle_stream_input, send_output_frame,
+    terminal_attachment_status, terminal_size_frame,
 };
 use crate::AppState;
 use crate::auth::Principal;
@@ -169,6 +170,14 @@ async fn serve(
             "window_bytes": output_flow.window_bytes(),
         });
     }
+    // A snapshot already carries the size it was drawn at; any later change is sent.
+    let initial = attach_result.get("initial_output");
+    let initial_dimension = |name: &str| {
+        initial
+            .and_then(|value| value.get(name))
+            .and_then(Value::as_u64)
+    };
+    let mut shown_size = initial_dimension("cols").zip(initial_dimension("rows"));
     let attach = frame(b'3', attach_result.to_string().as_bytes());
     if socket.send(Message::Binary(attach.into())).await.is_err() {
         return;
@@ -194,8 +203,8 @@ async fn serve(
     }
     let mut output = [0_u8; TERMINAL_OUTPUT_PAGE_BYTES];
     let mut shutdown = state.shutdown.subscribe();
-    // Retained background terminals need ownership updates, not a 10 Hz idle IPC loop.
-    // The daemon still checks writer ownership on every input and resize operation.
+    // Retained background terminals need ownership and size updates, not a 10 Hz idle IPC
+    // loop. The daemon still checks writer ownership on every input and resize operation.
     let mut writable_poll = tokio::time::interval(Duration::from_millis(500));
     let mut access_poll = tokio::time::interval(LIVE_ACCESS_INTERVAL);
     access_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -214,17 +223,23 @@ async fn serve(
                     break;
                 }
             }
-            _ = writable_poll.tick(), if mode == "control" => {
-                let Some(next_writable) = terminal_writable(
+            _ = writable_poll.tick() => {
+                let Some(status) = terminal_attachment_status(
                     &state,
                     &group_id,
                     &actor_id,
                     attachment_id,
                 ).await else { continue; };
-                if next_writable != writable {
-                    writable = next_writable;
+                if mode == "control" && status.writable != writable {
+                    writable = status.writable;
                     let payload = json!({"terminal_writable": writable});
                     if socket.send(Message::Binary(frame(b'6', payload.to_string().as_bytes()).into())).await.is_err() {
+                        break;
+                    }
+                }
+                if let Some(size) = status.size.filter(|size| Some(*size) != shown_size) {
+                    shown_size = Some(size);
+                    if socket.send(Message::Binary(terminal_size_frame(size).into())).await.is_err() {
                         break;
                     }
                 }

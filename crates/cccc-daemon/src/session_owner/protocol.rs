@@ -288,6 +288,9 @@ pub(super) enum TerminalRead {
     Writable {
         attachment_id: u64,
     },
+    /// The PTY's `(cols, rows)`, which every attachment shows. An older owner
+    /// rejects it, and callers then report no size.
+    Size,
 }
 
 #[derive(Serialize, Deserialize)]

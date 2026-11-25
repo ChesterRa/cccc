@@ -11,6 +11,7 @@ import {
   prepareTerminalForSnapshot,
   type TerminalSnapshotMetadata,
 } from "./terminalSnapshotBootstrap";
+import type { TerminalSize } from "./terminalViewportSize";
 
 export interface TerminalOutputCursorState {
   deliveredCursor: number | null;
@@ -31,6 +32,8 @@ export function createTerminalOutputController(args: {
   resetReady: () => void;
   scheduleReady: () => void;
   fitAfterSnapshot?: () => void;
+  /** The PTY's size, from a snapshot (drawn at that size) or a later size frame. */
+  onServerSize?: (size: TerminalSize, fromSnapshot: boolean) => void;
 }) {
   let outputFlowProtocol = "";
   let pendingSnapshot: TerminalSnapshotMetadata | null = null;
@@ -93,6 +96,9 @@ export function createTerminalOutputController(args: {
       return;
     }
     try {
+      if (snapshot.cols !== null && snapshot.rows !== null) {
+        args.onServerSize?.({ cols: snapshot.cols, rows: snapshot.rows }, true);
+      }
       const refitAfterSnapshot = prepareTerminalForSnapshot(terminal, snapshot);
       args.outputWriter.write(payload, true, () => {
         if (!args.isCurrentGeneration()) return;
@@ -149,6 +155,7 @@ export function createTerminalOutputController(args: {
       onInputError: (message) => args.onDecoded(`\r\n[terminal] ${message}\r\n`),
       onWritable: args.setWritable,
       onLegacyOutput: handleOutputPayload,
+      onSize: (size) => args.onServerSize?.(size, false),
     });
   };
 

@@ -30,6 +30,7 @@ import {
   resolveTerminalConnectionUrl,
 } from "./agentTerminalConnectionBootstrap";
 import type { AgentTerminalConnectionArgs } from "./agentTerminalConnectionTypes";
+import { followServerTerminalSize } from "./terminalViewportSize";
 
 export type AgentTerminalConnectionStatus =
   | "disconnected"
@@ -66,6 +67,7 @@ export function useAgentTerminalConnection(args: AgentTerminalConnectionArgs) {
     inspectActorTail = true,
     takeoverOnAttach = true,
     resizeReadOnly = false,
+    followSizeRef,
   } = args;
 
   const [connectionStatus, setConnectionStatus] =
@@ -359,8 +361,16 @@ export function useAgentTerminalConnection(args: AgentTerminalConnectionArgs) {
           onDecoded: handleDecoded,
           setWritable: (writable) => {
             const gainedControl = writable && !terminalWritableRef.current;
+            const lostControl = !writable && terminalWritableRef.current;
             updateTerminalWritable(writable);
             const term = terminalRef.current;
+            // The writer sizes the PTY from its own window; a former writer keeps
+            // that size until the new writer's size arrives.
+            if (followSizeRef && !resizeReadOnly) {
+              if (gainedControl) followSizeRef.current = null;
+              else if (lostControl && term)
+                followSizeRef.current = { cols: term.cols, rows: term.rows };
+            }
             if (
               gainedControl &&
               visibleRef.current &&
@@ -386,6 +396,17 @@ export function useAgentTerminalConnection(args: AgentTerminalConnectionArgs) {
           scheduleReady: scheduleTerminalReady,
           fitAfterSnapshot: () => {
             if (visibleRef.current) fitBeforeAttach?.();
+          },
+          onServerSize: (size, fromSnapshot) => {
+            if (!followSizeRef) return;
+            const resized = followServerTerminalSize({
+              terminal: terminalRef.current,
+              followSizeRef,
+              size,
+              follows: !terminalWritableRef.current && !resizeReadOnly,
+            });
+            // Rows on screen were drawn for the old size; a fresh snapshot redraws them.
+            if (resized && !fromSnapshot && generation === connectionGeneration) requestReconnect();
           },
         });
 
@@ -565,6 +586,8 @@ export function useAgentTerminalConnection(args: AgentTerminalConnectionArgs) {
     fitBeforeAttach,
     buildCustomWebSocketUrl,
     resizeReadOnly,
+    followSizeRef,
+    requestReconnect,
     inspectActorTail,
     takeoverOnAttach,
     terminalConnectionKey,

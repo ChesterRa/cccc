@@ -106,6 +106,45 @@ pub(super) fn frame(opcode: u8, payload: &[u8]) -> Vec<u8> {
     frame
 }
 
+/// One attachment's live state: whether it may write, and the PTY's current size.
+pub(super) struct TerminalAttachmentStatus {
+    pub(super) writable: bool,
+    pub(super) size: Option<(u64, u64)>,
+}
+
+pub(super) async fn terminal_attachment_status(
+    state: &AppState,
+    group_id: &str,
+    actor_id: &str,
+    attachment_id: u64,
+) -> Option<TerminalAttachmentStatus> {
+    let response = daemon_call(
+        state,
+        "term_attachment_status",
+        json!({
+            "group_id": group_id,
+            "actor_id": actor_id,
+            "attachment_id": attachment_id,
+        }),
+    )
+    .await
+    .filter(|response| response.ok)?;
+    let result = &response.result;
+    let writable = result.get("terminal_writable").and_then(Value::as_bool)?;
+    let dimension = |name: &str| result.get(name).and_then(Value::as_u64);
+    let size = dimension("cols").zip(dimension("rows"));
+    Some(TerminalAttachmentStatus { writable, size })
+}
+
+/// The frame that tells a browser the PTY's size. Only the writer resizes the PTY;
+/// every other attachment must show it at this size or its rows break apart.
+pub(super) fn terminal_size_frame((cols, rows): (u64, u64)) -> Vec<u8> {
+    frame(
+        b'2',
+        json!({"cols": cols, "rows": rows}).to_string().as_bytes(),
+    )
+}
+
 pub(super) async fn terminal_writable(
     state: &AppState,
     group_id: &str,

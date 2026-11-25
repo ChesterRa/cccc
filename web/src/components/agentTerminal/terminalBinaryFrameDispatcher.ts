@@ -1,4 +1,5 @@
 import { decodeTerminalJsonFrame, parseTerminalBinaryFrame } from "../../utils/terminalConnection";
+import { parseTerminalSize, type TerminalSize } from "./terminalViewportSize";
 
 export interface TerminalBinaryFrameHandlers {
   onOutput: (payload: Uint8Array) => void;
@@ -7,6 +8,8 @@ export interface TerminalBinaryFrameHandlers {
   onInputError: (message: string) => void;
   onWritable: (writable: boolean) => void;
   onLegacyOutput: (payload: Uint8Array) => void;
+  /** The PTY's size, sent when the writer changes it. */
+  onSize?: (size: TerminalSize) => void;
 }
 
 export function dispatchTerminalBinaryFrame(
@@ -42,6 +45,11 @@ export function dispatchTerminalBinaryFrame(
       if (typeof status?.terminal_writable === "boolean") {
         handlers.onWritable(status.terminal_writable);
       }
+      return;
+    }
+    case "resize": {
+      const size = parseTerminalSize(decodeTerminalJsonFrame(frame.payload));
+      if (size) handlers.onSize?.(size);
       return;
     }
     default:

@@ -70,6 +70,7 @@ import { fetchTerminalTail } from "../services/api/diagnostics";
 import { useAgentTerminalConnection } from "./agentTerminal/useAgentTerminalConnection";
 import { attachTerminalTouchScroll } from "./agentTerminal/terminalTouchScroll";
 import { getTerminalTheme } from "./agentTerminal/terminalTheme";
+import { fitTerminalViewport, type TerminalSize } from "./agentTerminal/terminalViewportSize";
 import {
   actorHasRuntimeResumeFailure,
   actorSessionReplacement,
@@ -103,20 +104,6 @@ function actorGroupRoleBadgeClass(role: "foreman" | "peer"): string {
       ? "border-amber-500/25 bg-amber-500/12 text-amber-700 dark:text-amber-300"
       : "border-slate-400/25 bg-slate-500/10 text-slate-600 dark:border-slate-400/20 dark:bg-slate-400/10 dark:text-slate-300",
   );
-}
-
-function fitTerminalToContainer(
-  fitAddon: FitAddon | null,
-  container: HTMLDivElement | null,
-): boolean {
-  if (!fitAddon || !container) return false;
-  if (container.clientWidth <= 50 || container.clientHeight <= 50) return false;
-  try {
-    fitAddon.fit();
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 interface AgentTabProps {
@@ -291,6 +278,18 @@ export function AgentTab({
 
   const termRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
+  // While this window does not write, it shows the PTY at the writer's size.
+  const followSizeRef = useRef<TerminalSize | null>(null);
+  const fitTerminalToContainer = useCallback(
+    (fitAddon: FitAddon | null, container: HTMLDivElement | null) =>
+      fitTerminalViewport({
+        fitAddon,
+        container,
+        terminal: terminalRef.current,
+        followSize: followSizeRef.current,
+      }),
+    [],
+  );
   const fitAddonRef = useRef<FitAddon | null>(null);
   const terminalOptionsSnapshotRef = useRef({
     canControl,
@@ -662,12 +661,14 @@ export function AgentTab({
       term.dispose();
       terminalRef.current = null;
       fitAddonRef.current = null;
+      // A new terminal learns the PTY size again from its own attach.
+      followSizeRef.current = null;
     };
-  }, [actor.id, groupId, isHeadless, isRunning, activated]);
+  }, [actor.id, groupId, isHeadless, isRunning, activated, fitTerminalToContainer]);
 
   const fitTerminalBeforeAttach = useCallback(() => {
     fitTerminalToContainer(fitAddonRef.current, termRef.current);
-  }, []);
+  }, [fitTerminalToContainer]);
 
   const {
     connectionStatus,
@@ -692,6 +693,7 @@ export function AgentTab({
     reconnectTrigger,
     terminalRef,
     fitBeforeAttach: fitTerminalBeforeAttach,
+    followSizeRef,
     onStatusChange,
     setTerminalSignal,
     clearTerminalSignal,
@@ -746,7 +748,7 @@ export function AgentTab({
       if (resizeTimeout) clearTimeout(resizeTimeout);
       for (const timer of initialTimers) window.clearTimeout(timer);
     };
-  }, [activated, actor.id, groupId, isHeadless, isRunning, isVisible]);
+  }, [activated, actor.id, fitTerminalToContainer, groupId, isHeadless, isRunning, isVisible]);
 
   // UX: when the user switches to an agent tab (ops mode), focus the terminal automatically.
   // This avoids "typing into nowhere" if the chat composer was previously focused.

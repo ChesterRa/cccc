@@ -49,7 +49,13 @@ pub(super) fn attachment_status(request: &DaemonRequest) -> OpResult {
         .unwrap_or(0);
     let writable = cccc_runtime::attachment_writable(&group_id, &actor_id, attachment_id)
         .map_err(runtime_error)?;
-    object(json!({"terminal_writable": writable}))
+    let mut status = json!({"terminal_writable": writable});
+    // Every attachment shows the PTY at the writer's size, so viewers read it here.
+    if let Ok((cols, rows)) = cccc_runtime::terminal_size(&group_id, &actor_id) {
+        status["cols"] = json!(cols);
+        status["rows"] = json!(rows);
+    }
+    object(status)
 }
 
 pub(super) fn write(_home: &HomeLayout, request: &DaemonRequest) -> OpResult {

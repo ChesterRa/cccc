@@ -103,7 +103,7 @@ pub use terminal_attach::{TerminalAttachMode, TerminalAttachment, TerminalInput,
 pub use terminal_initial_output::{TerminalInitialOutput, TerminalInitialOutputKind};
 pub use terminal_manager::{
     attach, attach_with_size, attach_with_snapshot, attach_with_snapshot_and_size,
-    attachment_writable, resize_from_attachment,
+    attachment_writable, resize_from_attachment, terminal_size,
 };
 pub use transcript_archive::HistoryConfig;
 pub use transcript_reader::{read_latest_page, read_latest_since};

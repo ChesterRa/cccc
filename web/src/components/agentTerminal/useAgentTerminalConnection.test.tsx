@@ -401,3 +401,124 @@ it("closes a terminal while the embedded frame is paused and reconnects only aft
     vi.useRealTimers();
   }
 });
+
+it("shows a non-writing window at the PTY's size and redraws it from a fresh snapshot", async () => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  vi.useFakeTimers();
+  const sockets: SizeSocket[] = [];
+  class SizeSocket {
+    static OPEN = 1;
+    static CONNECTING = 0;
+    readyState = 0;
+    onopen?: () => void;
+    onclose?: (event: { code: number }) => void;
+    onmessage?: (event: { data: string | ArrayBuffer }) => void;
+    sent: Uint8Array[] = [];
+    constructor(public url: string) {
+      sockets.push(this);
+    }
+    send(frame: Uint8Array) {
+      this.sent.push(frame);
+    }
+    close() {
+      this.readyState = 3;
+    }
+    attach(writable: boolean) {
+      this.readyState = 1;
+      this.onopen?.();
+      this.onmessage?.({
+        data: JSON.stringify({
+          type: "terminal.attach",
+          ok: true,
+          result: { replay_cursor: 0, replay_end_cursor: 0, terminal_writable: writable },
+        }),
+      });
+    }
+    ptySize(cols: number, rows: number) {
+      const body = new TextEncoder().encode(JSON.stringify({ cols, rows }));
+      const frame = new Uint8Array(body.length + 1);
+      frame[0] = 50;
+      frame.set(body, 1);
+      this.onmessage?.({ data: frame.buffer });
+    }
+  }
+  vi.stubGlobal("WebSocket", SizeSocket);
+  const terminal = {
+    cols: 68,
+    rows: 22,
+    reset: vi.fn(),
+    write: (_data: unknown, done?: () => void) => done?.(),
+    resize: vi.fn((cols: number, rows: number) => {
+      terminal.cols = cols;
+      terminal.rows = rows;
+    }),
+    onData: () => ({ dispose: vi.fn() }),
+    onResize: () => ({ dispose: vi.fn() }),
+  };
+  const terminalRef = { current: terminal as unknown as Terminal };
+  const followSizeRef = { current: null as { cols: number; rows: number } | null };
+  function Probe() {
+    const [reconnectTrigger, setReconnectTrigger] = useState(0);
+    useAgentTerminalConnection({
+      activated: true,
+      isVisible: true,
+      isRunning: true,
+      isHeadless: false,
+      groupId: "g1",
+      actorId: "a",
+      actorRuntime: "codex",
+      canControl: true,
+      termEpoch: 0,
+      reconnectTrigger,
+      setReconnectTrigger,
+      terminalRef,
+      followSizeRef,
+      inspectActorTail: false,
+      takeoverOnAttach: false,
+      setTerminalSignal: vi.fn(),
+      clearTerminalSignal: vi.fn(),
+    });
+    return null;
+  }
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  const resizeFrames = (socket: SizeSocket) => socket.sent.filter((frame) => frame[0] === 50);
+  try {
+    await act(async () => root.render(<Probe />));
+    // Another window writes; this one only watches.
+    await act(async () => sockets[0].attach(false));
+    await act(async () => sockets[0].ptySize(145, 42));
+    expect([terminal.cols, terminal.rows]).toEqual([145, 42]);
+    expect(followSizeRef.current).toEqual({ cols: 145, rows: 42 });
+    // Rows already on screen were drawn for the old size: attach again from a snapshot.
+    expect(sockets).toHaveLength(2);
+    expect(new URL(sockets[1].url).searchParams.get("since")).toBeNull();
+    expect(new URL(sockets[1].url).searchParams.get("bootstrap")).toBe("snapshot_v1");
+    // It never sizes the PTY itself.
+    expect(resizeFrames(sockets[0])).toHaveLength(0);
+
+    // The size it already shows changes nothing.
+    await act(async () => sockets[1].attach(false));
+    await act(async () => sockets[1].ptySize(145, 42));
+    expect(sockets).toHaveLength(2);
+    expect(terminal.resize).toHaveBeenCalledTimes(1);
+
+    // Once it writes, it fits its own window again and ignores reported sizes.
+    await act(async () => {
+      sockets[1].onmessage?.({
+        data: new Uint8Array([54, ...new TextEncoder().encode('{"terminal_writable":true}')])
+          .buffer,
+      });
+    });
+    expect(followSizeRef.current).toBeNull();
+    await act(async () => sockets[1].ptySize(90, 30));
+    expect([terminal.cols, terminal.rows]).toEqual([145, 42]);
+    expect(sockets).toHaveLength(2);
+  } finally {
+    act(() => root.unmount());
+    host.remove();
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  }
+});

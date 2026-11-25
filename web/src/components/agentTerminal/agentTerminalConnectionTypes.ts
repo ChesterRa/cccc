@@ -1,6 +1,7 @@
 import type { RefObject } from "react";
 import type { Terminal } from "@xterm/xterm";
 import type { TerminalSignal } from "../../stores/useTerminalSignalsStore";
+import type { TerminalSize } from "./terminalViewportSize";
 
 export type AgentTerminalConnectionArgs = {
   activated: boolean;
@@ -25,4 +26,9 @@ export type AgentTerminalConnectionArgs = {
   takeoverOnAttach?: boolean;
   /** An explicitly supported task viewer may resize without terminal input authority. */
   resizeReadOnly?: boolean;
+  /**
+   * Set while this window does not write: the PTY size it must show. The view's fit
+   * reads it (see fitTerminalViewport) instead of measuring its container.
+   */
+  followSizeRef?: { current: TerminalSize | null };
 };

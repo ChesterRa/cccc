@@ -5,7 +5,7 @@ use cccc_contracts::{Actor, RunnerKind};
 use cccc_core::{GroupStore, HomeLayout, actors};
 use cccc_runtime::{HistoryConfig, LaunchSpec};
 use futures_util::{SinkExt, StreamExt};
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::time::Duration;
 use tokio_tungstenite::tungstenite::Message;
@@ -249,6 +249,123 @@ async fn high_volume_initial_replay_does_not_starve_control_input() {
     daemon.await.expect("daemon task").expect("daemon");
     server.abort();
     assert!(stopped, "Ctrl-C was starved by the initial replay loop");
+}
+
+#[tokio::test]
+async fn viewers_follow_the_size_the_writer_gives_the_pty() {
+    let _guard = DAEMON_TEST_LOCK.lock().await;
+    let temp = tempfile::tempdir().expect("tempdir");
+    let project = temp.path().join("project");
+    std::fs::create_dir(&project).expect("project");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    home.initialize().expect("initialize");
+
+    let daemon_home = home.clone();
+    let daemon = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
+    wait_for_daemon(&home).await;
+    // Started the way the product starts it: the PTY lives in a session owner process.
+    let group = daemon_call(
+        &home,
+        "group_create",
+        json!({"title":"terminal size","by":"user"}),
+    )
+    .await;
+    let group_id = group["group"]["group_id"]
+        .as_str()
+        .expect("group id")
+        .to_owned();
+    let actor_id = "size-peer";
+    daemon_call(
+        &home,
+        "attach",
+        json!({"group_id":group_id,"path":project,"by":"user"}),
+    )
+    .await;
+    daemon_call(
+        &home,
+        "actor_add",
+        json!({
+            "group_id":group_id,
+            "actor_id":actor_id,
+            "runtime":"custom",
+            "command":["sh","-c","printf 'current screen'; exec sleep 30"],
+            "by":"user"
+        }),
+    )
+    .await;
+    daemon_call(
+        &home,
+        "actor_start",
+        json!({"group_id":group_id,"actor_id":actor_id,"by":"user"}),
+    )
+    .await;
+    wait_for_daemon_terminal_output(&home, &group_id, actor_id).await;
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("listener");
+    let address = listener.local_addr().expect("address");
+    let web_home = home.clone();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, auth_support::authenticated_app(web_home)).await
+    });
+    let terminal_url = |mode: &str| {
+        format!("ws://{address}/api/v1/groups/{group_id}/actors/{actor_id}/term?mode={mode}")
+    };
+    let (mut writer, _) = tokio_tungstenite::connect_async(terminal_url("control"))
+        .await
+        .expect("connect writer");
+    assert_eq!(
+        read_attach_payload(&mut writer).await["terminal_writable"],
+        true
+    );
+    writer
+        .send(resize_frame(100, 30))
+        .await
+        .expect("writer sizes the PTY");
+    let (mut viewer, _) = tokio_tungstenite::connect_async(terminal_url("viewer"))
+        .await
+        .expect("connect viewer");
+    assert_eq!(
+        read_attach_payload(&mut viewer).await["terminal_writable"],
+        false
+    );
+    assert_eq!(read_size_payload(&mut viewer, (100, 30)).await, (100, 30));
+
+    writer
+        .send(resize_frame(132, 40))
+        .await
+        .expect("writer resizes");
+    assert_eq!(read_size_payload(&mut viewer, (132, 40)).await, (132, 40));
+
+    // A viewer never sizes the PTY, even when its own window is smaller.
+    viewer
+        .send(resize_frame(60, 20))
+        .await
+        .expect("viewer sends a size");
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let status = daemon_call(
+        &home,
+        "term_attachment_status",
+        json!({"group_id":group_id,"actor_id":actor_id,"attachment_id":0}),
+    )
+    .await;
+    assert_eq!(
+        (status["cols"].as_u64(), status["rows"].as_u64()),
+        (Some(132), Some(40))
+    );
+
+    let _ = viewer.send(Message::Close(None)).await;
+    let _ = writer.send(Message::Close(None)).await;
+    daemon_call(
+        &home,
+        "actor_stop",
+        json!({"group_id":group_id,"actor_id":actor_id,"by":"user"}),
+    )
+    .await;
+    shutdown_daemon(&home).await;
+    daemon.await.expect("daemon task").expect("daemon");
+    server.abort();
 }
 
 cccc_daemon::session_owner_test_entry!();

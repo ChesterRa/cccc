@@ -7,6 +7,7 @@ import {
 import {
   TERMINAL_FRAME_ATTACH,
   TERMINAL_FRAME_INPUT_ACK,
+  TERMINAL_FRAME_RESIZE,
   TERMINAL_FRAME_SNAPSHOT,
 } from "../../utils/terminalConnection";
 
@@ -26,6 +27,7 @@ function handlers(): TerminalBinaryFrameHandlers {
     onInputError: vi.fn(),
     onWritable: vi.fn(),
     onLegacyOutput: vi.fn(),
+    onSize: vi.fn(),
   };
 }
 
@@ -46,5 +48,16 @@ describe("terminal binary frame dispatcher", () => {
     );
     expect(target.onAttach).toHaveBeenCalledWith({ replay_cursor: 42 });
     expect(target.onInputError).toHaveBeenCalledWith("denied");
+  });
+
+  it("reports the PTY size the server sends and drops sizes no terminal can show", () => {
+    const target = handlers();
+    dispatchTerminalBinaryFrame(frame(TERMINAL_FRAME_RESIZE, '{"cols":132,"rows":40}'), target);
+    dispatchTerminalBinaryFrame(frame(TERMINAL_FRAME_RESIZE, '{"cols":0,"rows":40}'), target);
+    dispatchTerminalBinaryFrame(frame(TERMINAL_FRAME_RESIZE, "not json"), target);
+    expect(target.onSize).toHaveBeenCalledTimes(1);
+    expect(target.onSize).toHaveBeenCalledWith({ cols: 132, rows: 40 });
+    expect(target.onOutput).not.toHaveBeenCalled();
+    expect(target.onLegacyOutput).not.toHaveBeenCalled();
   });
 });
