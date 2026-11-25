@@ -25,6 +25,7 @@ enum DeviceState {
 /// restore that cannot run fails on its own, management reports the state, nothing listens
 /// before a ticket, and shutdown completes.
 async fn daemon_lifecycle_with(device: DeviceState) {
+    let _daemon_slot = crate::DAEMON_TEST_LOCK.lock().await;
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
     home.initialize().expect("initialize");

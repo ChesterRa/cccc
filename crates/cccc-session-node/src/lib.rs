@@ -34,3 +34,9 @@ pub use relay_http::routes as relay_routes;
 
 #[cfg(test)]
 mod relay_tests;
+
+/// Tests that run a daemon in this process share its runtime manager and the hub
+/// registry, so one daemon's startup or shutdown disturbs another's. They hold
+/// this lock for as long as their daemon runs.
+#[cfg(test)]
+pub(crate) static DAEMON_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());

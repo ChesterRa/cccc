@@ -19,6 +19,8 @@ pub struct Fixture {
     shutdown: broadcast::Sender<()>,
     proxy: Option<JoinHandle<()>>,
     daemon: Option<JoinHandle<anyhow::Result<()>>>,
+    // Declared last, so it is released after the daemon is stopped.
+    _daemon_slot: tokio::sync::MutexGuard<'static, ()>,
 }
 
 pub async fn until(mut predicate: impl AsyncFnMut() -> bool) {
@@ -33,6 +35,7 @@ pub async fn until(mut predicate: impl AsyncFnMut() -> bool) {
 
 impl Fixture {
     pub async fn new() -> Self {
+        let daemon_slot = crate::DAEMON_TEST_LOCK.lock().await;
         let temp = tempfile::tempdir().expect("isolated relay fixture");
         let home = HomeLayout::from_path(temp.path().join("hub")).expect("hub");
         let node = HomeLayout::from_path(temp.path().join("node")).expect("node");
@@ -105,6 +108,7 @@ impl Fixture {
             shutdown,
             proxy: Some(proxy),
             daemon: Some(daemon),
+            _daemon_slot: daemon_slot,
         }
     }
 

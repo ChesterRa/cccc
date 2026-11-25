@@ -35,6 +35,7 @@ async fn device_rejects_a_stale_offer_before_sync_and_the_hub_retries_it() {
 }
 
 async fn retry_after_native_reload(device_reloads_before_sync: bool) {
+    let _daemon_slot = crate::DAEMON_TEST_LOCK.lock().await;
     let temp = tempfile::tempdir().expect("isolated Home");
     let home = HomeLayout::from_path(temp.path().join("hub")).expect("Home");
     home.initialize().expect("initialize");
