@@ -77,105 +77,68 @@ pub(super) fn json_state(
     }
 }
 
-pub(super) fn command_output_state(
-    runtime: ActorRuntime,
-    output: &str,
-    expected: &[String],
-) -> Report {
-    match runtime {
-        ActorRuntime::Copilot => {
-            let Ok(document) = serde_json::from_str::<Value>(output) else {
-                return Report::new(State::Missing);
-            };
-            let entry = document
-                .get("cccc")
-                .or_else(|| document.pointer("/mcpServers/cccc"));
-            let Some(entry) = entry else {
-                return Report::new(State::Missing);
-            };
-            let source = entry
-                .get("source")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .trim()
-                .to_ascii_lowercase();
-            let tools_ok = entry.get("tools").is_none_or(|tools| match tools {
-                Value::String(value) => value.trim().is_empty() || value.trim() == "*",
-                Value::Array(values) => values.iter().any(|value| value.as_str() == Some("*")),
-                _ => false,
-            });
-            let state = if common_matches(entry, expected) && tools_ok && !has_context_env(entry) {
-                State::Ready
-            } else {
-                State::Stale
-            };
-            Report { state, source }
-        }
-        ActorRuntime::Devin => {
-            if let Ok(document) = serde_json::from_str::<Value>(output)
-                && let Some(entry) = find_devin_entry(&document)
-            {
-                return Report::new(if common_matches(entry, expected) {
-                    State::Ready
-                } else {
-                    State::Stale
-                });
-            }
-            let command = debug_string(output, "command");
-            if !command.is_empty() && output.to_ascii_lowercase().contains("stdio") {
-                let args = debug_args(output);
-                return Report::new(if command_matches(&command, &args, expected) {
-                    State::Ready
-                } else {
-                    State::Stale
-                });
-            }
-            let entry = parse_key_values(output);
-            let server = entry
-                .get("server")
-                .or_else(|| entry.get("name"))
-                .map(String::as_str);
-            let transport = entry
-                .get("transport")
-                .or_else(|| entry.get("type"))
-                .map(String::as_str)
-                .unwrap_or("stdio");
-            if server.is_some_and(|server| server.eq_ignore_ascii_case("cccc"))
-                && matches!(
-                    transport.to_ascii_lowercase().as_str(),
-                    "" | "stdio" | "local"
-                )
-                && let Some(command) = entry.get("command")
-            {
-                let args = entry
-                    .get("args")
-                    .map(|value| {
-                        value
-                            .split_whitespace()
-                            .map(str::to_owned)
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default();
-                return Report::new(if command_matches(command, &args, expected) {
-                    State::Ready
-                } else {
-                    State::Stale
-                });
-            }
-            let command_line = devin_list_command(output, "cccc");
-            Report::new(
-                if command_line
-                    .as_deref()
-                    .is_some_and(|line| command_line_matches(line, expected))
-                {
-                    State::Ready
-                } else {
-                    State::Missing
-                },
-            )
-        }
-        _ => Report::new(State::Missing),
+pub(super) fn devin_cli_state(output: &str, expected: &[String]) -> Report {
+    if let Ok(document) = serde_json::from_str::<Value>(output)
+        && let Some(entry) = find_devin_entry(&document)
+    {
+        return Report::new(if common_matches(entry, expected) {
+            State::Ready
+        } else {
+            State::Stale
+        });
     }
+    let command = debug_string(output, "command");
+    if !command.is_empty() && output.to_ascii_lowercase().contains("stdio") {
+        let args = debug_args(output);
+        return Report::new(if command_matches(&command, &args, expected) {
+            State::Ready
+        } else {
+            State::Stale
+        });
+    }
+    let entry = parse_key_values(output);
+    let server = entry
+        .get("server")
+        .or_else(|| entry.get("name"))
+        .map(String::as_str);
+    let transport = entry
+        .get("transport")
+        .or_else(|| entry.get("type"))
+        .map(String::as_str)
+        .unwrap_or("stdio");
+    if server.is_some_and(|server| server.eq_ignore_ascii_case("cccc"))
+        && matches!(
+            transport.to_ascii_lowercase().as_str(),
+            "" | "stdio" | "local"
+        )
+        && let Some(command) = entry.get("command")
+    {
+        let args = entry
+            .get("args")
+            .map(|value| {
+                value
+                    .split_whitespace()
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        return Report::new(if command_matches(command, &args, expected) {
+            State::Ready
+        } else {
+            State::Stale
+        });
+    }
+    let command_line = devin_list_command(output, "cccc");
+    Report::new(
+        if command_line
+            .as_deref()
+            .is_some_and(|line| command_line_matches(line, expected))
+        {
+            State::Ready
+        } else {
+            State::Missing
+        },
+    )
 }
 
 fn parse_key_values(output: &str) -> BTreeMap<String, String> {
@@ -434,17 +397,6 @@ fn string_values(value: Option<&Value>) -> Vec<String> {
     }
 }
 
-fn has_context_env(entry: &Value) -> bool {
-    const KEYS: [&str; 3] = cccc_core::runtime_mcp::CONTEXT_VARIABLES;
-    let Some(env) = entry.get("env").or_else(|| entry.get("environment")) else {
-        return false;
-    };
-    match env {
-        Value::Object(values) => KEYS.iter().any(|key| values.contains_key(*key)),
-        _ => KEYS.iter().any(|key| env.to_string().contains(key)),
-    }
-}
-
 fn debug_string(output: &str, field: &str) -> String {
     let pattern = format!(r#"\b{}:\s*\"((?:\\.|[^\"\\])*)\""#, regex::escape(field));
     regex::Regex::new(&pattern)
@@ -539,17 +491,6 @@ mod tests {
             &json!({"command":"/opt/cccc","args":["mcp"],"disabled":true}),
             &expected
         ));
-    }
-
-    #[test]
-    fn copilot_rejects_actor_identity_persisted_in_global_config() {
-        let report = command_output_state(
-            ActorRuntime::Copilot,
-            r#"{"cccc":{"command":"/opt/cccc","args":["mcp"],"source":"user","env":{"CCCC_ACTOR_ID":"peer1"}}}"#,
-            &["/opt/cccc".into(), "mcp".into()],
-        );
-        assert_eq!(report.state, State::Stale);
-        assert_eq!(report.source, "user");
     }
 
     #[test]
@@ -712,39 +653,17 @@ mod tests {
     }
 
     #[test]
-    fn cli_backed_runtime_outputs_match_supported_parsers() {
-        let expected = ["/opt/cccc".into(), "mcp".into()];
-        let fixtures = [
-            (
-                ActorRuntime::Copilot,
-                r#"{"cccc":{"command":"/opt/cccc","args":["mcp"],"source":"user","tools":["*"]}}"#,
-            ),
-            (
-                ActorRuntime::Devin,
-                r#"McpServer { transport: stdio, command: "/opt/cccc", args: ["mcp"] }"#,
-            ),
-        ];
-        for (runtime, output) in fixtures {
-            assert_eq!(
-                command_output_state(runtime, output, &expected).state,
-                State::Ready,
-                "{}",
-                cccc_core::runtime_mcp::name(runtime)
-            );
-        }
-    }
-
-    #[test]
     fn devin_accepts_json_key_value_and_list_outputs() {
         let expected = ["/path with spaces/cccc".into(), "mcp".into()];
         let outputs = [
+            r#"McpServer { transport: stdio, command: "/path with spaces/cccc", args: ["mcp"] }"#,
             r#"{"mcpServers":{"cccc":{"transport":"stdio","command":"/path with spaces/cccc","args":["mcp"]}}}"#,
             "Server: cccc\nTransport: stdio\nCommand: /path with spaces/cccc\nArgs: mcp\n",
             "Configured MCP servers:\n\n  • cccc\n    Command: \"/path with spaces/cccc\" mcp\n",
         ];
         for output in outputs {
             assert_eq!(
-                command_output_state(ActorRuntime::Devin, output, &expected).state,
+                devin_cli_state(output, &expected).state,
                 State::Ready,
                 "{output}"
             );
@@ -770,8 +689,7 @@ mod tests {
         })
         .to_string();
         assert_eq!(
-            command_output_state(
-                ActorRuntime::Devin,
+            devin_cli_state(
                 &output,
                 &[executable.to_string_lossy().into_owned(), "mcp".into()],
             )
@@ -784,12 +702,7 @@ mod tests {
     fn devin_list_does_not_accept_an_unrelated_server_command() {
         let output = "Configured MCP servers:\n\n  • other\n    Command: /opt/cccc mcp\n";
         assert_eq!(
-            command_output_state(
-                ActorRuntime::Devin,
-                output,
-                &["/opt/cccc".into(), "mcp".into()],
-            )
-            .state,
+            devin_cli_state(output, &["/opt/cccc".into(), "mcp".into()],).state,
             State::Missing
         );
     }

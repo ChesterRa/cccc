@@ -44,7 +44,7 @@ pub struct WebArgs {
 
 #[derive(Debug, Args)]
 pub struct SetupArgs {
-    /// Runtime to set up; omit to set up the supported runtimes.
+    /// Runtime to set up; omit to list each runtime without writing anything.
     #[arg(long)]
     pub runtime: Option<String>,
     /// Project directory whose MCP configuration to prepare.

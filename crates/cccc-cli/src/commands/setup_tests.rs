@@ -41,56 +41,33 @@ fn antigravity_uses_native_registration_with_inherited_launcher() {
 }
 
 #[test]
-fn manual_runtime_has_explicit_batch_status() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
-    let args = SetupArgs {
-        runtime: None,
-        path: ".".into(),
-        runtime_mode: "default".into(),
-        login: false,
+fn overview_lists_each_runtime_once_with_what_setup_would_write() {
+    let listed = overview();
+    let names = listed
+        .iter()
+        .map(|item| item["runtime"].as_str().expect("runtime"))
+        .collect::<Vec<_>>();
+    assert_eq!(names, SUPPORTED);
+    let entry = |name: &str| {
+        listed
+            .iter()
+            .find(|item| item["runtime"] == name)
+            .expect("listed runtime")
+            .clone()
     };
-    let value = setup_one(
-        &home,
-        &args,
-        "custom",
-        Path::new("/opt/cccc"),
-        &json!({"mcpServers":{}}),
-    )
-    .expect("manual setup");
-    assert_eq!(value["status"], "requires_action");
-    assert_eq!(value["mode"], "manual");
-}
-
-#[test]
-fn batch_count_includes_only_written_or_registered_configuration() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
-    let args = SetupArgs {
-        runtime: None,
-        path: ".".into(),
-        runtime_mode: "default".into(),
-        login: false,
-    };
-    let config = json!({"mcpServers":{}});
-    let setup =
-        |runtime| setup_one(&home, &args, runtime, Path::new("/opt/cccc"), &config).expect("setup");
-    let results = [
-        // CCCC injects these servers into each managed session: nothing to
-        // configure, even when the runtime's CLI is not installed.
-        setup("claude"),
-        setup("pi"),
-        hermes_setup(),
-        json!({"runtime":"deepseek","mode":"managed_session","status":"ready","managed":true,"mcp":"injected_per_session"}),
-        // Nothing configured: a manual runtime and a missing CLI.
-        setup("custom"),
-        json!({"runtime":"kimi","status":"unavailable","error":"kimi CLI not found"}),
-        // Configuration setup wrote or found registered.
-        json!({"runtime":"cline","mode":"auto","status":"added"}),
-        json!({"runtime":"cursor","mode":"auto","status":"ready","path":"/home/u/.cursor/mcp.json"}),
-        json!({"runtime":"grok","mode":"managed_session","status":"ready","managed":true,"mcp":"native_registry"}),
-    ];
-    assert_eq!(configured_count(&results), 3);
+    assert_eq!(
+        entry("claude"),
+        json!({"runtime":"claude","members":"per_launch","setup_writes":null})
+    );
+    for name in ["codex", "copilot"] {
+        assert_eq!(entry(name)["members"], "per_launch");
+        assert!(entry(name)["setup_writes"].is_string());
+    }
+    assert_eq!(
+        entry("cursor"),
+        json!({"runtime":"cursor","members":"user_config_entry","setup_writes":"user MCP entry `cccc`"})
+    );
+    assert_eq!(entry("custom")["members"], "manual");
 }
 
 #[test]

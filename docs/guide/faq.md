@@ -122,6 +122,30 @@ and browser profiles remain available after reinstall. Exact macOS/Linux and
 Windows standalone steps are in the
 [distribution and migration guide](../rust-migration.md#uninstall-without-removing-user-data).
 
+CCCC does not remove the `cccc` MCP entry it wrote into another runtime's user
+configuration. Claude Code, Codex, Copilot, OpenCode, Kilo, Pi, Hermes and
+DeepSeek members get CCCC's server per launch and leave no such entry; an
+entry an earlier version wrote for Copilot can still be removed below. To clean up
+before removing the executable:
+
+1. If you connected your own Claude Code, Codex, OpenCode or Pi sessions, run
+   `cccc sessions disable --runtime <name>` for each first; see
+   [local sessions](local-sessions.md). For Codex this switches back to an
+   ordinary `cccc` entry, so remove that entry afterwards.
+2. Remove only a `cccc` entry that starts this installation's `cccc mcp`,
+   with the runtime's own command or from its file:
+   - `codex mcp remove cccc`, `copilot mcp remove cccc`,
+     `devin mcp remove -s user cccc`,
+     `kiro-cli mcp remove --name cccc --scope global`,
+     `droid mcp remove cccc`, `amp mcp remove cccc`, `auggie mcp remove cccc`,
+     `agy mcp remove cccc`.
+   - Cursor: the `cccc` server in `~/.cursor/mcp.json`. Kimi Code: the `cccc`
+     server in `~/.kimi-code/mcp.json` (or under `KIMI_CODE_HOME`).
+     Grok: the `[mcp_servers.cccc]` table in `~/.grok/config.toml` (or under
+     `GROK_HOME`). Cline: the `cccc` server in its
+     `cline_mcp_settings.json`, by default under `~/.cline/data/settings/`
+     (`CLINE_MCP_SETTINGS_PATH`, `CLINE_DATA_DIR` or `CLINE_DIR` move it).
+
 ### How do I upgrade from an older version (0.3.x)?
 
 You must uninstall the old version first:

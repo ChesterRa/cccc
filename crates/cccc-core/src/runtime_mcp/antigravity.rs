@@ -1,5 +1,6 @@
-//! Native `agy mcp add` owns MCP registration. CLI setup and Actor launch also
-//! disable the native feedback survey, which can consume automated terminal input.
+//! Native `agy mcp add` owns MCP registration. Session-only feedback survey
+//! suppression is passed via CLI `--settings` on native PTY launch rather than
+//! mutating the user's `~/.gemini/antigravity-cli/settings.json`.
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::io;
@@ -21,9 +22,7 @@ fn ensure_in_home(
     add: impl FnOnce() -> io::Result<()>,
 ) -> io::Result<PathBuf> {
     let path = home.join(".gemini/config/mcp_config.json");
-    let configured = ensure_entry(cwd, &path, add)?;
-    disable_feedback_survey(&home.join(".gemini/antigravity-cli/settings.json"))?;
-    Ok(configured)
+    ensure_entry(cwd, &path, add)
 }
 
 fn ensure_entry(
@@ -65,42 +64,6 @@ fn ensure_entry(
         Ok(())
     })?;
     Ok(path.to_owned())
-}
-
-fn disable_feedback_survey(path: &Path) -> io::Result<()> {
-    let resolved = match std::fs::canonicalize(path) {
-        Ok(resolved) => resolved,
-        Err(error) if path.is_symlink() => return Err(error),
-        Err(_) => path.to_owned(),
-    };
-    if read_settings(&resolved)?.get("showFeedbackSurvey") == Some(&Value::Bool(false)) {
-        return Ok(());
-    }
-    // This is an upstream user preference, not a process-local override. Preserve
-    // every other preference and serialize concurrent CCCC launches before writing.
-    crate::fs::with_exclusive_lock(&resolved.with_extension("cccc.lock"), || {
-        let mut settings = read_settings(&resolved)?;
-        if settings.get("showFeedbackSurvey") != Some(&Value::Bool(false)) {
-            settings.insert("showFeedbackSurvey".into(), Value::Bool(false));
-            crate::fs::write_json(&resolved, &settings)?;
-        }
-        Ok(())
-    })
-}
-
-fn read_settings(path: &Path) -> io::Result<serde_json::Map<String, Value>> {
-    let bytes = match std::fs::read(path) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Default::default()),
-        Err(error) => return Err(error),
-    };
-    serde_json::from_slice::<Value>(&bytes)
-        .ok()
-        .and_then(|value| value.as_object().cloned())
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, format!(
-            "invalid Antigravity settings at {}; correct the JSON before starting the Actor",
-            path.display()
-        )))
 }
 
 fn read_entry(path: &Path) -> io::Result<Option<Value>> {

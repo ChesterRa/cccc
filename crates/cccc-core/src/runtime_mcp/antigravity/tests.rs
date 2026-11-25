@@ -137,9 +137,10 @@ fn ready_configuration_does_not_require_a_writable_provider_directory() {
     let path = temp.path().join(".gemini/config/mcp_config.json");
     write(&path, &json!({"mcpServers":{"cccc":ready()}}));
     let settings = temp.path().join(".gemini/antigravity-cli/settings.json");
-    write(&settings, &json!({"showFeedbackSurvey":false}));
     let hooks = temp.path().join(".gemini/config/hooks.json");
     let malformed = b"{broken";
+    std::fs::create_dir_all(settings.parent().expect("settings dir")).expect("settings dir");
+    std::fs::write(&settings, malformed).expect("existing settings");
     std::fs::write(&hooks, malformed).expect("existing hook configuration");
     ensure(
         &temp.path().join("project"),
@@ -150,6 +151,7 @@ fn ready_configuration_does_not_require_a_writable_provider_directory() {
     assert!(!path.with_extension("cccc.lock").exists());
     assert!(!settings.with_extension("cccc.lock").exists());
     assert!(!hooks.with_extension("cccc.lock").exists());
+    assert_eq!(std::fs::read(&settings).expect("read settings"), malformed);
     assert_eq!(
         std::fs::read(&hooks).expect("read hook configuration"),
         malformed
@@ -157,69 +159,37 @@ fn ready_configuration_does_not_require_a_writable_provider_directory() {
 }
 
 #[test]
-fn setup_disables_input_consuming_surveys_and_preserves_other_preferences() {
+fn setup_does_not_create_or_modify_user_settings_json() {
     let temp = tempfile::tempdir().expect("tempdir");
+    let path = temp.path().join(".gemini/config/mcp_config.json");
     let settings = temp.path().join(".gemini/antigravity-cli/settings.json");
-    let expected = json!({"showFeedbackSurvey":false,"model":"chosen-model","enableTelemetry":true,"custom":{"keep":[1,2]}});
-    for initial in [
-        None,
-        Some(
-            json!({"showFeedbackSurvey":true,"model":"chosen-model","enableTelemetry":true,"custom":{"keep":[1,2]}}),
-        ),
-    ] {
-        if let Some(initial) = initial {
-            write(&settings, &initial);
-        }
-        disable_feedback_survey(&settings).expect("prepare input");
-        let actual = read_settings(&settings).expect("settings");
-        assert_eq!(actual["showFeedbackSurvey"], false);
-        if actual.contains_key("model") {
-            assert_eq!(Value::Object(actual), expected);
-        }
-        let before = std::fs::read(&settings).expect("read");
-        disable_feedback_survey(&settings).expect("already prepared");
-        assert_eq!(std::fs::read(&settings).expect("read"), before);
-    }
-}
 
-#[test]
-fn invalid_native_preferences_are_not_replaced() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let path = temp.path().join("settings.json");
-    for bytes in ["{broken", "[]", "null"] {
-        std::fs::write(&path, bytes).expect("write");
-        assert_eq!(
-            disable_feedback_survey(&path)
-                .expect_err("invalid preferences")
-                .kind(),
-            io::ErrorKind::InvalidData
-        );
-        assert_eq!(std::fs::read_to_string(&path).expect("read"), bytes);
-    }
-}
+    ensure(
+        &temp.path().join("project"),
+        &environment(temp.path()),
+        || {
+            write(&path, &json!({"mcpServers":{"cccc":ready()}}));
+            Ok(())
+        },
+    )
+    .expect("setup without creating settings.json");
+    assert!(!settings.exists());
+    assert!(!settings.with_extension("cccc.lock").exists());
 
-#[cfg(unix)]
-#[test]
-fn native_preference_symlink_is_preserved() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let target = temp.path().join("shared.json");
-    let path = temp.path().join("settings.json");
-    write(&target, &json!({"showFeedbackSurvey":true,"model":"keep"}));
-    std::os::unix::fs::symlink(&target, &path).expect("symlink");
-    disable_feedback_survey(&path).expect("update target");
-    assert!(path.is_symlink());
-    assert_eq!(read_settings(&target).expect("settings")["model"], "keep");
+    let user_prefs = br#"{"showFeedbackSurvey":true,"model":"chosen-model"}"#;
+    std::fs::create_dir_all(settings.parent().expect("settings dir")).expect("settings dir");
+    std::fs::write(&settings, user_prefs).expect("write user prefs");
+    ensure(
+        &temp.path().join("project"),
+        &environment(temp.path()),
+        || panic!("already configured"),
+    )
+    .expect("setup preserves user settings.json");
     assert_eq!(
-        read_settings(&target).expect("settings")["showFeedbackSurvey"],
-        false
+        std::fs::read(&settings).expect("read user prefs"),
+        user_prefs
     );
-    let broken = temp.path().join("broken.json");
-    std::os::unix::fs::symlink(temp.path().join("missing.json"), &broken).expect("broken link");
-    assert!(disable_feedback_survey(&broken).is_err());
-    assert!(
-        broken.is_symlink(),
-        "do not replace user-owned broken links"
-    );
+    assert!(!settings.with_extension("cccc.lock").exists());
 }
 
 #[test]

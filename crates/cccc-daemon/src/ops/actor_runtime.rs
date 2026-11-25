@@ -273,7 +273,7 @@ pub(super) fn same_untrusted_workspace(original: &OpError, restart: &OpError) ->
 
 fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<SessionStatus, OpError> {
     let actor = environment::resolve_launch_actor(home, group, actor)?;
-    let command = if actor.command.is_empty() {
+    let mut command = if actor.command.is_empty() {
         cccc_runtime::default_command(actor.runtime)
     } else {
         actor.command.clone()
@@ -281,6 +281,7 @@ fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<SessionSt
     let cwd = working_directory(group, &actor)?;
     let mut env = environment::launch_env(home, group, &actor);
     super::runtime_mcp::prepare(home, actor.runtime, &command, &cwd, &mut env)?;
+    super::runtime_mcp::inject_pty_arguments(actor.runtime, &mut command, &env)?;
     // Only the PTY registry reads these host-owned attribution fields. Managed
     // providers capture their workspace directly; changing their environment
     // would invalidate otherwise compatible persisted conversation receipts.

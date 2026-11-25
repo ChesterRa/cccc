@@ -3,9 +3,10 @@ mod state;
 
 use cccc_contracts::ActorRuntime;
 use cccc_core::HomeLayout;
+use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
@@ -14,6 +15,7 @@ use state::{Report, State};
 
 const CHECK_TIMEOUT: Duration = Duration::from_secs(10);
 const SETUP_TIMEOUT: Duration = Duration::from_secs(30);
+const ANTIGRAVITY_SESSION_SETTINGS: &str = r#"{"showFeedbackSurvey":false}"#;
 
 fn setup_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -36,6 +38,7 @@ pub(super) fn prepare(
         runtime,
         ActorRuntime::Claude
             | ActorRuntime::Codex
+            | ActorRuntime::Copilot
             | ActorRuntime::Grok
             | ActorRuntime::Opencode
             | ActorRuntime::Kilo
@@ -44,30 +47,46 @@ pub(super) fn prepare(
     ) {
         return Ok(());
     }
-    let executable = super::codex_mcp::resolve_cccc_executable().ok_or_else(|| {
+    let executable = resolve_cccc_executable()?;
+    prepare_with_executable(home, runtime, launch_command, cwd, env, &executable)
+}
+
+fn resolve_cccc_executable() -> Result<PathBuf, OpError> {
+    super::codex_mcp::resolve_cccc_executable().ok_or_else(|| {
         OpError::new(
             "runtime_mcp_executable_missing",
             "cannot locate the active CCCC executable for runtime MCP setup",
         )
-    })?;
+    })
+}
+
+fn prepare_with_executable(
+    home: &HomeLayout,
+    runtime: ActorRuntime,
+    launch_command: &[String],
+    cwd: &Path,
+    env: &mut BTreeMap<String, String>,
+    executable: &Path,
+) -> Result<(), OpError> {
     env.insert(
         "CCCC_HOME".into(),
         home.root().to_string_lossy().into_owned(),
     );
 
     if runtime == ActorRuntime::Antigravity {
-        return ensure_antigravity(launch_command, cwd, env, &executable);
+        return ensure_antigravity(launch_command, cwd, env, executable);
     }
 
     match runtime {
         ActorRuntime::Claude
         | ActorRuntime::Codex
+        | ActorRuntime::Copilot
         | ActorRuntime::Grok
         | ActorRuntime::Kilo
         | ActorRuntime::Pi
         | ActorRuntime::Opencode
         | ActorRuntime::Hermes => {
-            unreachable!("managed runtime returned early")
+            unreachable!("runtime with separate launch integration returned early")
         }
         _ => {
             let _guard = setup_lock().lock().map_err(|_| {
@@ -76,7 +95,7 @@ pub(super) fn prepare(
                     "runtime MCP setup lock is poisoned",
                 )
             })?;
-            ensure_persistent(runtime, cwd, env, &executable)
+            ensure_persistent(runtime, cwd, env, executable)
         }
     }
 }
@@ -108,6 +127,106 @@ fn ensure_antigravity(
     .map_err(|error| OpError::new("runtime_mcp_setup_failed", error.to_string()))
 }
 
+fn is_direct_cli_for(program: &str, expected: &str, windows: bool) -> bool {
+    let basename = if windows {
+        program.rsplit(['/', '\\']).next().unwrap_or(program)
+    } else {
+        program.rsplit('/').next().unwrap_or(program)
+    };
+    if !windows {
+        return basename == expected;
+    }
+    basename.eq_ignore_ascii_case(expected)
+        || basename.rsplit_once('.').is_some_and(|(stem, extension)| {
+            stem.eq_ignore_ascii_case(expected)
+                && ["exe", "cmd", "bat"]
+                    .iter()
+                    .any(|shim| extension.eq_ignore_ascii_case(shim))
+        })
+}
+
+fn options_end(command: &[String]) -> usize {
+    command
+        .iter()
+        .skip(1)
+        .position(|arg| arg == "--")
+        .map_or(command.len(), |offset| offset + 1)
+}
+
+/// These options belong to native PTY launches. Managed adapters configure
+/// their own invocation after parsing the saved command.
+pub(super) fn inject_pty_arguments(
+    runtime: ActorRuntime,
+    command: &mut Vec<String>,
+    env: &BTreeMap<String, String>,
+) -> Result<(), OpError> {
+    match runtime {
+        ActorRuntime::Antigravity => inject_antigravity_settings(command),
+        ActorRuntime::Copilot
+            if command
+                .first()
+                .is_some_and(|program| is_direct_cli_for(program, "copilot", cfg!(windows))) =>
+        {
+            inject_copilot_mcp(command, env, &resolve_cccc_executable()?);
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn inject_copilot_mcp(
+    command: &mut Vec<String>,
+    env: &BTreeMap<String, String>,
+    executable: &Path,
+) {
+    let context = cccc_core::runtime_mcp::CONTEXT_VARIABLES
+        .into_iter()
+        .filter_map(|key| {
+            env.get(key)
+                .map(|value| (key.to_owned(), Value::String(value.clone())))
+        })
+        .collect();
+    let end = options_end(command);
+    command.splice(end..end, copilot_mcp_args(executable, context));
+}
+
+/// Both Copilot launch surfaces use the CLI's process-local stdio server
+/// format, with a caller-selected set of CCCC context variables.
+pub(super) fn copilot_mcp_args(executable: &Path, env: Map<String, Value>) -> [String; 2] {
+    let config = json!({"mcpServers":{"cccc":{
+        "type":"local", "command":executable.to_string_lossy(),
+        "args":["mcp"], "env":env, "tools":["*"]
+    }}});
+    ["--additional-mcp-config".into(), config.to_string()]
+}
+
+/// Pass session-only feedback-survey suppression on native `agy` PTY launches
+/// without mutating `~/.gemini/antigravity-cli/settings.json`. AGY treats
+/// repeated `--settings` flags as last-wins, so commands that already pass
+/// `--settings` / `--settings=` or invoke a non-`agy` wrapper stay unchanged.
+fn inject_antigravity_settings(command: &mut Vec<String>) {
+    let Some(program) = command.first() else {
+        return;
+    };
+    if !is_direct_cli_for(program, "agy", cfg!(windows)) {
+        return;
+    }
+    let flag_end = options_end(command);
+    let has_settings = command[1..flag_end]
+        .iter()
+        .any(|arg| arg == "--settings" || arg.starts_with("--settings="));
+    if has_settings {
+        return;
+    }
+    command.splice(
+        flag_end..flag_end,
+        [
+            "--settings".to_owned(),
+            ANTIGRAVITY_SESSION_SETTINGS.to_owned(),
+        ],
+    );
+}
+
 fn ensure_persistent(
     runtime: ActorRuntime,
     cwd: &Path,
@@ -129,10 +248,8 @@ fn ensure_persistent(
     if report.state == State::Ready {
         return Ok(());
     }
-    if matches!(
-        runtime,
-        ActorRuntime::Copilot | ActorRuntime::Kiro | ActorRuntime::Auggie
-    ) && report.state == State::Stale
+    if matches!(runtime, ActorRuntime::Kiro | ActorRuntime::Auggie)
+        && report.state == State::Stale
         && !report.source.is_empty()
         && !report.source.contains("user")
     {
@@ -195,13 +312,6 @@ fn inspect(
     expected: &[String],
 ) -> Result<Report, OpError> {
     match runtime {
-        ActorRuntime::Copilot => inspect_cli(
-            runtime,
-            &["copilot", "mcp", "get", "cccc", "--json"],
-            cwd,
-            env,
-            expected,
-        ),
         ActorRuntime::Devin => inspect_devin(cwd, env, expected),
         _ => Ok(state::json_state(runtime, cwd, env, expected)),
     }
@@ -212,23 +322,11 @@ fn inspect_devin(
     env: &BTreeMap<String, String>,
     expected: &[String],
 ) -> Result<Report, OpError> {
-    let inspected = inspect_cli(
-        ActorRuntime::Devin,
-        &["devin", "mcp", "get", "cccc"],
-        cwd,
-        env,
-        expected,
-    )?;
+    let inspected = inspect_devin_cli(&["devin", "mcp", "get", "cccc"], cwd, env, expected)?;
     if inspected.state == State::Ready {
         return Ok(inspected);
     }
-    let listed = inspect_cli(
-        ActorRuntime::Devin,
-        &["devin", "mcp", "list"],
-        cwd,
-        env,
-        expected,
-    )?;
+    let listed = inspect_devin_cli(&["devin", "mcp", "list"], cwd, env, expected)?;
     if listed.state == State::Ready {
         Ok(listed)
     } else {
@@ -236,8 +334,7 @@ fn inspect_devin(
     }
 }
 
-fn inspect_cli(
-    runtime: ActorRuntime,
+fn inspect_devin_cli(
     command: &[&str],
     cwd: &Path,
     env: &BTreeMap<String, String>,
@@ -247,12 +344,9 @@ fn inspect_cli(
         .iter()
         .map(|part| (*part).to_owned())
         .collect::<Vec<_>>();
+    let runtime = ActorRuntime::Devin;
     match process::run(&command, cwd, env, CHECK_TIMEOUT) {
-        Ok(output) if output.code == 0 => Ok(state::command_output_state(
-            runtime,
-            &output.stdout,
-            expected,
-        )),
+        Ok(output) if output.code == 0 => Ok(state::devin_cli_state(&output.stdout, expected)),
         Ok(_) => Ok(Report::new(State::Missing)),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Err(OpError::new(
             "runtime_mcp_cli_missing",
@@ -361,9 +455,283 @@ path.write_text(json.dumps({'mcpServers':{'cccc':{'command':'cccc','args':['mcp'
         ];
         ensure_antigravity(&command, &cwd, &env, Path::new("/fixture/cccc")).expect("native setup");
         assert!(provider_home.join("selected-invoked").is_file());
+        assert!(
+            !provider_home
+                .join(".gemini/antigravity-cli/settings.json")
+                .exists(),
+            "Antigravity setup must not create user settings.json"
+        );
         std::fs::remove_file(&script).expect("remove fixture CLI");
         ensure_antigravity(&command, &cwd, &env, Path::new("/fixture/cccc"))
             .expect("ready entry needs no subprocess");
+    }
+
+    #[test]
+    fn antigravity_injects_session_settings_for_default_persisted_and_double_dash_commands() {
+        let mut default_cmd = cccc_runtime::default_command(ActorRuntime::Antigravity);
+        inject_antigravity_settings(&mut default_cmd);
+        assert_eq!(
+            default_cmd,
+            [
+                "agy",
+                "--dangerously-skip-permissions",
+                "--settings",
+                r#"{"showFeedbackSurvey":false}"#
+            ]
+        );
+
+        let mut persisted = vec![
+            "/home/user/.local/bin/agy".to_owned(),
+            "--model".to_owned(),
+            "gemini-4".to_owned(),
+        ];
+        inject_antigravity_settings(&mut persisted);
+        assert_eq!(
+            persisted,
+            [
+                "/home/user/.local/bin/agy",
+                "--model",
+                "gemini-4",
+                "--settings",
+                r#"{"showFeedbackSurvey":false}"#
+            ]
+        );
+
+        let mut bare = vec!["agy".to_owned()];
+        inject_antigravity_settings(&mut bare);
+        assert_eq!(
+            bare,
+            ["agy", "--settings", r#"{"showFeedbackSurvey":false}"#]
+        );
+
+        let mut with_separator = vec![
+            "agy".to_owned(),
+            "--dangerously-skip-permissions".to_owned(),
+            "--".to_owned(),
+            "--settings".to_owned(),
+        ];
+        inject_antigravity_settings(&mut with_separator);
+        assert_eq!(
+            with_separator,
+            [
+                "agy",
+                "--dangerously-skip-permissions",
+                "--settings",
+                r#"{"showFeedbackSurvey":false}"#,
+                "--",
+                "--settings"
+            ]
+        );
+    }
+
+    #[test]
+    fn antigravity_skips_session_settings_when_user_already_passes_settings_flag() {
+        for initial in [
+            vec![
+                "agy".to_owned(),
+                "--dangerously-skip-permissions".to_owned(),
+                "--settings".to_owned(),
+                r#"{"showTips":false}"#.to_owned(),
+            ],
+            vec![
+                "agy".to_owned(),
+                r#"--settings={"showTips":false}"#.to_owned(),
+                "--dangerously-skip-permissions".to_owned(),
+            ],
+            vec![
+                "/opt/bin/agy".to_owned(),
+                "--settings=/tmp/custom.json".to_owned(),
+            ],
+        ] {
+            let mut command = initial.clone();
+            inject_antigravity_settings(&mut command);
+            assert_eq!(command, initial);
+        }
+    }
+
+    #[test]
+    fn antigravity_skips_session_settings_for_non_agy_executables_and_wrappers() {
+        for initial in [
+            vec![
+                "python3".to_owned(),
+                "-u".to_owned(),
+                "-c".to_owned(),
+                "import time; time.sleep(30)".to_owned(),
+            ],
+            vec!["/tmp/fixture/input.py".to_owned(), "/tmp/work".to_owned()],
+            vec!["/usr/local/bin/agy-wrapper".to_owned()],
+            vec!["/tmp/selected-agy".to_owned()],
+            vec!["agy.sh".to_owned()],
+            Vec::new(),
+        ] {
+            let mut command = initial.clone();
+            inject_antigravity_settings(&mut command);
+            assert_eq!(command, initial);
+        }
+
+        // Verify platform basename matching directly for Unix and Windows.
+        assert!(is_direct_cli_for("agy", "agy", false));
+        assert!(is_direct_cli_for("/usr/local/bin/agy", "agy", false));
+        assert!(!is_direct_cli_for("agy.exe", "agy", false));
+        assert!(!is_direct_cli_for("agy.sh", "agy", false));
+        assert!(!is_direct_cli_for("selected-agy", "agy", false));
+
+        assert!(is_direct_cli_for("agy", "agy", true));
+        assert!(is_direct_cli_for(
+            r"C:\Users\dev\.local\bin\AGY.EXE",
+            "agy",
+            true
+        ));
+        assert!(is_direct_cli_for(r"C:\bin\agy.cmd", "agy", true));
+        assert!(is_direct_cli_for("agy.bat", "agy", true));
+        assert!(!is_direct_cli_for(r"C:\bin\agy.ps1", "agy", true));
+        assert!(!is_direct_cli_for(r"C:\bin\agy-wrapper.exe", "agy", true));
+    }
+
+    #[test]
+    fn antigravity_prepares_mcp_then_adds_settings_only_to_the_pty_command() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("cccc-home")).expect("home");
+        let cwd = temp.path().join("project");
+        std::fs::create_dir_all(&cwd).expect("cwd");
+        let provider_home = temp.path().join("provider");
+        let mcp_path = provider_home.join(".gemini/config/mcp_config.json");
+        std::fs::create_dir_all(mcp_path.parent().expect("mcp dir")).expect("mcp dir");
+        std::fs::write(
+            &mcp_path,
+            r#"{"mcpServers":{"cccc":{"command":"cccc","args":["mcp"],"disabled":false}}}"#,
+        )
+        .expect("ready mcp config");
+        let mut env = BTreeMap::from([
+            ("HOME".into(), provider_home.display().to_string()),
+            ("USERPROFILE".into(), provider_home.display().to_string()),
+        ]);
+
+        let mut command = vec![
+            "agy".to_owned(),
+            "--dangerously-skip-permissions".to_owned(),
+        ];
+        prepare_with_executable(
+            &home,
+            ActorRuntime::Antigravity,
+            &command,
+            &cwd,
+            &mut env,
+            Path::new("/fixture/cccc"),
+        )
+        .expect("prepare antigravity");
+        assert_eq!(command, ["agy", "--dangerously-skip-permissions"]);
+        inject_pty_arguments(ActorRuntime::Antigravity, &mut command, &env)
+            .expect("configure antigravity PTY");
+        assert_eq!(
+            command,
+            [
+                "agy",
+                "--dangerously-skip-permissions",
+                "--settings",
+                r#"{"showFeedbackSurvey":false}"#
+            ]
+        );
+        assert!(
+            !provider_home
+                .join(".gemini/antigravity-cli/settings.json")
+                .exists(),
+            "prepare must not create ~/.gemini/antigravity-cli/settings.json"
+        );
+
+        let mut with_user_settings = vec![
+            "agy".to_owned(),
+            "--settings".to_owned(),
+            r#"{"showTips":false}"#.to_owned(),
+        ];
+        prepare_with_executable(
+            &home,
+            ActorRuntime::Antigravity,
+            &with_user_settings,
+            &cwd,
+            &mut env,
+            Path::new("/fixture/cccc"),
+        )
+        .expect("prepare antigravity with user --settings");
+        inject_pty_arguments(ActorRuntime::Antigravity, &mut with_user_settings, &env)
+            .expect("configure antigravity PTY with user --settings");
+        assert_eq!(
+            with_user_settings,
+            ["agy", "--settings", r#"{"showTips":false}"#]
+        );
+    }
+
+    #[test]
+    fn copilot_pty_injects_only_its_launch_identity_and_leaves_user_config_untouched() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("cccc-home")).expect("home");
+        let settings = temp.path().join(".copilot/mcp-config.json");
+        std::fs::create_dir_all(settings.parent().expect("settings dir")).expect("settings dir");
+        let user_config = br#"{"mcpServers":{"other":{"type":"local","command":"other"}}}"#;
+        std::fs::write(&settings, user_config).expect("user config");
+        let mut env = BTreeMap::from([
+            ("HOME".into(), temp.path().display().to_string()),
+            ("USERPROFILE".into(), temp.path().display().to_string()),
+            ("PATH".into(), temp.path().display().to_string()),
+            ("CCCC_HOME".into(), home.root().display().to_string()),
+            ("CCCC_GROUP_ID".into(), "g_fixture".into()),
+            ("CCCC_ACTOR_ID".into(), "peer".into()),
+            (
+                "UNRELATED_FIXTURE_ENV".into(),
+                "not a launch identity".into(),
+            ),
+        ]);
+        let user_flag = r#"{"mcpServers":{"another":{"command":"another"}}}"#;
+        let saved = [
+            "copilot",
+            "--allow-all",
+            "--additional-mcp-config",
+            user_flag,
+            "--",
+            "prompt text",
+        ];
+        let mut command = saved.map(str::to_owned).to_vec();
+        prepare(
+            &home,
+            ActorRuntime::Copilot,
+            &command,
+            temp.path(),
+            &mut env,
+        )
+        .expect("Copilot has no persistent setup step");
+        assert_eq!(command, saved);
+        inject_copilot_mcp(&mut command, &env, Path::new("/a path/cccc"));
+        assert_eq!(
+            command[..5],
+            [
+                "copilot",
+                "--allow-all",
+                "--additional-mcp-config",
+                user_flag,
+                "--additional-mcp-config",
+            ]
+        );
+        assert_eq!(command[6..], ["--", "prompt text"]);
+        let config: Value = serde_json::from_str(&command[5]).expect("MCP config");
+        assert_eq!(
+            config,
+            json!({"mcpServers":{"cccc":{
+                "type":"local", "command":"/a path/cccc", "args":["mcp"],
+                "env":{"CCCC_HOME":home.root(),"CCCC_GROUP_ID":"g_fixture","CCCC_ACTOR_ID":"peer"},
+                "tools":["*"]
+            }}})
+        );
+        assert_eq!(std::fs::read(settings).expect("user config"), user_config);
+    }
+
+    #[test]
+    fn copilot_pty_does_not_pass_native_options_to_wrappers() {
+        let saved = ["script-wrapper", "copilot", "--allow-all"];
+        let mut command = saved.map(str::to_owned).to_vec();
+        inject_pty_arguments(ActorRuntime::Copilot, &mut command, &BTreeMap::new())
+            .expect("wrapper needs no native options");
+        assert_eq!(command, saved);
+        assert!(is_direct_cli_for(r"C:\bin\COPILOT.CMD", "copilot", true));
     }
 
     #[test]

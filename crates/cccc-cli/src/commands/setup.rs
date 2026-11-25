@@ -80,34 +80,11 @@ pub fn run(home: &HomeLayout, args: SetupArgs) -> Result<()> {
         "mcpServers":{"cccc":{"command":executable,"args":["mcp"],"env":{"CCCC_HOME":home.root()}}}
     });
     if runtime.is_empty() {
-        let mut results = Vec::new();
-        for runtime in SUPPORTED {
-            // Batch setup configures installed CLIs only; without this check
-            // these runtimes would write files or report a bare OS error.
-            if let Some(program) = batch_required_cli(runtime)
-                && cccc_core::runtime_mcp::find_program(
-                    program,
-                    std::env::var_os("PATH").as_deref(),
-                )
-                .is_none()
-            {
-                results.push(json!({
-                    "runtime":runtime,"status":"unavailable","error":format!("{program} CLI not found")
-                }));
-                continue;
-            }
-            match setup_one(home, &args, runtime, &executable, &config) {
-                Ok(value) => results.push(value),
-                Err(error) => results.push(json!({
-                    "runtime":runtime,"status":"unavailable","error":error.to_string()
-                })),
-            }
-        }
-        let configured = configured_count(&results);
         println!(
             "{}",
             serde_json::to_string_pretty(&json!({
-                "mode":"batch","configured":configured,"results":results,"config":config
+                "mode":"overview","runtimes":overview(),
+                "note":"Nothing was written. Run `cccc setup --runtime <name>` to prepare one runtime."
             }))?
         );
         return Ok(());
@@ -127,10 +104,7 @@ pub fn run(home: &HomeLayout, args: SetupArgs) -> Result<()> {
         return Ok(());
     }
     if runtime == "deepseek" {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&setup_deepseek(home, true))?
-        );
+        println!("{}", serde_json::to_string_pretty(&setup_deepseek(home))?);
         return Ok(());
     }
     println!(
@@ -140,15 +114,9 @@ pub fn run(home: &HomeLayout, args: SetupArgs) -> Result<()> {
     Ok(())
 }
 
-fn setup_deepseek(home: &HomeLayout, install: bool) -> serde_json::Value {
+fn setup_deepseek(home: &HomeLayout) -> serde_json::Value {
     let mut env = cccc_runtime::unicode_environment().collect();
-    let result = if install {
-        cccc_daemon::deepseek_setup::ensure(home, &mut env)
-    } else {
-        let command = cccc_runtime::default_command(cccc_contracts::ActorRuntime::Deepseek);
-        cccc_daemon::deepseek_setup::prepare_for_start(home, &mut env, &command)
-    };
-    deepseek_setup_json(home, result)
+    deepseek_setup_json(home, cccc_daemon::deepseek_setup::ensure(home, &mut env))
 }
 
 fn deepseek_setup_json(
@@ -199,30 +167,29 @@ fn select_public_executable(current: PathBuf, launcher: Option<PathBuf>) -> Path
         .unwrap_or(current)
 }
 
-/// Counts the runtimes whose `cccc` MCP entry setup wrote or confirmed. A
-/// runtime whose CCCC server is injected into each managed session needs no
-/// entry, so its "ready" is not counted.
-fn configured_count(results: &[serde_json::Value]) -> usize {
-    results
+/// What setup without `--runtime` reports instead of writing: how members CCCC
+/// starts get its MCP server, and what `--runtime <name>` would change.
+fn overview() -> Vec<serde_json::Value> {
+    SUPPORTED
         .iter()
-        .filter(|value| {
-            matches!(value["status"].as_str(), Some("added" | "ready"))
-                && value["mcp"] != "injected_per_session"
+        .map(|runtime| {
+            let (members, setup_writes) = match *runtime {
+                "claude" | "opencode" | "kilo" | "pi" | "hermes" => ("per_launch", None),
+                "codex" => (
+                    "per_launch",
+                    Some("user MCP entry for Codex sessions you start yourself"),
+                ),
+                "copilot" => (
+                    "per_launch",
+                    Some("user MCP entry for Copilot sessions you start yourself"),
+                ),
+                "deepseek" => ("per_launch", Some("the pinned DeepSeek Harness")),
+                "custom" => ("manual", None),
+                _ => ("user_config_entry", Some("user MCP entry `cccc`")),
+            };
+            json!({"runtime":runtime,"members":members,"setup_writes":setup_writes})
         })
-        .count()
-}
-
-/// The CLI batch setup looks for before preparing a runtime whose setup would
-/// otherwise write a file (Cursor and Kimi Code have no `mcp add`; Antigravity
-/// locks its configuration first) or fail with a bare OS error (Grok).
-fn batch_required_cli(runtime: &str) -> Option<&'static str> {
-    match runtime {
-        "antigravity" => Some("agy"),
-        "cursor" => Some("cursor-agent"),
-        "grok" => Some("grok"),
-        "kimi" => Some("kimi"),
-        _ => None,
-    }
+        .collect()
 }
 
 fn setup_one(
@@ -232,17 +199,6 @@ fn setup_one(
     executable: &Path,
     config: &serde_json::Value,
 ) -> Result<serde_json::Value> {
-    if runtime == "deepseek" {
-        return Ok(setup_deepseek(home, false));
-    }
-    if runtime == "hermes" {
-        return Ok(hermes_setup());
-    }
-    if runtime == "custom" {
-        return Ok(json!({
-            "runtime":runtime,"mode":"manual","status":"requires_action","config":config
-        }));
-    }
     if runtime == "cursor" {
         let path = cccc_core::runtime_mcp::ensure_cursor(
             &absolute(&args.path)?,
@@ -281,7 +237,6 @@ fn setup_one(
         })?;
         return Ok(
             json!({"runtime":runtime,"mode":"auto","status":"ready","path":path,
-            "note":"Native feedback surveys are disabled in Antigravity user settings, including standalone sessions, to keep automated input from being consumed by a survey.",
             "config":{"mcpServers":{"cccc":{"command":"cccc","args":["mcp"]}}}}),
         );
     }

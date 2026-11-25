@@ -14,7 +14,7 @@ Independently started Codex, Claude Code, Pi and OpenCode V2 CLI sessions can al
 | Cline CLI | `cline` | `cline` | Native registration |
 | Codex CLI | `codex` | CCCC-managed app-server + native TUI | Agent-scoped MCP injected into the managed session |
 | DeepSeek Harness | `deepseek` | CCCC-managed `dsh --profile acp` (structured ACP, no native terminal) | Injected per ACP session; install once with `cccc setup --runtime deepseek` |
-| GitHub Copilot CLI | `copilot` | Native `copilot` TUI or official ACP | Native registration for TUI; injected per ACP session |
+| GitHub Copilot CLI | `copilot` | Native `copilot` TUI or official ACP | Injected per launch in both modes |
 | Cursor CLI | `cursor` | Native `cursor-agent` TUI or official ACP | Native registration for TUI; injected per ACP session |
 | Devin CLI | `devin` | Native `devin` TUI or official ACP | Native registration for TUI; injected per ACP session |
 | Kiro CLI | `kiro` | Native TUI or official V3 ACP | Native registration for TUI; injected per ACP session |
@@ -845,9 +845,21 @@ Common checks:
 | Existing agent does not pick up setup changes | Restart the agent after setup or profile changes. |
 | ChatGPT Web Model cannot call CCCC | Confirm the public HTTPS MCP URL, ChatGPT connector setup, and bound conversation. |
 
-Before the Rust daemon creates a Runtime session, it establishes the Runtime's CCCC MCP path. Codex, Claude Code, OpenCode, Kilo, and Pi receive an agent-scoped server inside their managed session. Grok shares one native user-level entry between its managed session and terminal, with identity inherited from the launching process. Other automatically configured runtimes are checked against the active public CCCC executable: missing entries are installed, safely replaceable stale user/global entries are replaced, and the result is verified before the agent process starts. A failed check, repair, or verification prevents launch, including daemon restart recovery. A stale entry from a more specific project or non-user scope fails with an actionable error instead of being silently overwritten. Cursor starts MCP servers without the CCCC variables of the agent's environment, so its user entry in `~/.cursor/mcp.json` maps `CCCC_HOME`, `CCCC_GROUP_ID` and `CCCC_ACTOR_ID` with Cursor's `${env:NAME}` interpolation; an entry with fixed values, other CCCC variables or another executable is replaced. Cursor CLI 2026.11.11 reads project servers only from `.cursor/mcp.json` at the top of the enclosing Git work tree, or in the working directory outside one; a `cccc` entry there takes precedence, so CCCC checks that file. Outside CCCC, Cursor fills these placeholders from the environment of the session that starts it; CCCC treats a placeholder Cursor could not fill as unset, so such a session uses the default CCCC home with no agent identity. Auggie 1.2.1 likewise passes an MCP server only `HOME`, `LOGNAME`, `PATH`, `SHELL`, `TERM`, `USER` and the variables its entry names. CCCC's user entry in `~/.augment/settings.json` therefore maps each of the three to `${NAME:-$NAME}`, and sets `useShellInterpolation: false` so that Auggie starts the CCCC executable directly rather than through a shell; an entry without these values, or with other fixed CCCC variables, is replaced. A `cccc` entry in `.augment/settings.local.json` or `.augment/settings.json` at the top of the enclosing Git work tree, or in the working directory outside one, takes precedence over the user entry, so a different one there stops the agent from starting with an error. Outside CCCC, Auggie expands an unset variable to the exact text `$NAME`, which CCCC treats as unset in the same way. Indirect custom provider commands remain responsible for their own MCP configuration. `cccc setup` for Claude, OpenCode, Kilo and Pi reports session ownership. Optional ACP setup reports session injection without modifying global MCP files; it does not certify provider login. For Grok it prepares and verifies the same native registration used during agent and Chet startup.
+Before the Rust daemon creates a Runtime session, it establishes the Runtime's CCCC MCP path. Codex, Claude Code, OpenCode, Kilo, and Pi receive an agent-scoped server inside their managed session. Copilot receives its CCCC server for each native launch. Grok shares one native user-level entry between its managed session and terminal, with identity inherited from the launching process. Other automatically configured runtimes are checked against the active public CCCC executable: missing entries are installed, safely replaceable stale user/global entries are replaced, and the result is verified before the agent process starts. A failed check, repair, or verification prevents launch, including daemon restart recovery. A stale entry from a more specific project or non-user scope fails with an actionable error instead of being silently overwritten. Cursor starts MCP servers without the CCCC variables of the agent's environment, so its user entry in `~/.cursor/mcp.json` maps `CCCC_HOME`, `CCCC_GROUP_ID` and `CCCC_ACTOR_ID` with Cursor's `${env:NAME}` interpolation; an entry with fixed values, other CCCC variables or another executable is replaced. Cursor CLI 2026.11.11 reads project servers only from `.cursor/mcp.json` at the top of the enclosing Git work tree, or in the working directory outside one; a `cccc` entry there takes precedence, so CCCC checks that file. Outside CCCC, Cursor fills these placeholders from the environment of the session that starts it; CCCC treats a placeholder Cursor could not fill as unset, so such a session uses the default CCCC home with no agent identity. Auggie 1.2.1 likewise passes an MCP server only `HOME`, `LOGNAME`, `PATH`, `SHELL`, `TERM`, `USER` and the variables its entry names. CCCC's user entry in `~/.augment/settings.json` therefore maps each of the three to `${NAME:-$NAME}`, and sets `useShellInterpolation: false` so that Auggie starts the CCCC executable directly rather than through a shell; an entry without these values, or with other fixed CCCC variables, is replaced. A `cccc` entry in `.augment/settings.local.json` or `.augment/settings.json` at the top of the enclosing Git work tree, or in the working directory outside one, takes precedence over the user entry, so a different one there stops the agent from starting with an error. Outside CCCC, Auggie expands an unset variable to the exact text `$NAME`, which CCCC treats as unset in the same way. Indirect custom provider commands remain responsible for their own MCP configuration. `cccc setup` for Claude, OpenCode, Kilo and Pi reports session ownership. Optional ACP setup reports session injection without modifying global MCP files; it does not certify provider login. For Grok it prepares and verifies the same native registration used during agent and Chet startup.
 
 This preflight runs before the provider discovers its tools. It therefore repairs Python-to-Rust executable path changes without requiring a second restart. Sessions that were already running when an external MCP configuration changed still need to be restarted because provider tool catalogs are session-scoped.
+
+### Copilot CLI MCP configuration
+
+When CCCC launches the native `copilot` PTY, it adds the member's `cccc`
+server with `--additional-mcp-config`. Copilot CLI 1.0.115 was verified to
+merge this launch's configuration with the user's other servers and earlier
+CLI options. The last option supplies the `cccc` server when several sources
+use that name. CCCC keeps the saved command and user MCP file as they are.
+
+Wrapper commands are responsible for their own MCP setup. Running
+`cccc setup --runtime copilot` explicitly registers `cccc` for Copilot
+sessions you start yourself.
 
 ### Cline installation
 
@@ -866,17 +878,25 @@ The Web UI also exposes runtime detection and agent configuration from the add/e
 
 ### Antigravity MCP and first terminal delivery
 
-Startup preparation also sets `showFeedbackSurvey` to `false` in
-`~/.gemini/antigravity-cli/settings.json`. AGY's periodic rating prompt can consume
-an automated paste without submitting it to the agent. This is a native **user
-preference**, so it also disables the survey in standalone AGY sessions under
-that user. Other preferences are preserved; malformed JSON is reported without
-overwriting it. CCCC does not recognize or dismiss surveys by matching UI text.
+When launching an Antigravity native PTY Actor whose executable basename is
+`agy`, CCCC appends `--settings '{"showFeedbackSurvey":false}'` for that
+session only (covering both the default command and previously saved `agy`
+commands) so AGY's periodic rating prompt does not consume automated terminal
+input. CCCC does not create or modify `~/.gemini/antigravity-cli/settings.json`,
+so standalone AGY sessions keep their own preferences. Because AGY treats
+repeated `--settings` flags as last-wins rather than merging them, CCCC leaves
+commands that already pass `--settings` or `--settings=` unchanged; include
+`"showFeedbackSurvey": false` in your own `--settings` payload if you want
+surveys suppressed. Commands whose executable basename is not `agy` (such as
+custom wrapper scripts) are also left unchanged, so native surveys may still
+appear unless suppressed by the wrapper or user settings. CCCC does not
+recognize or dismiss surveys by matching UI text.
 
 Antigravity uses native `agy mcp add cccc cccc mcp` before agent startup and in
 `cccc setup --runtime antigravity`. It requires an AGY CLI version supporting
-`mcp add` (verified with 1.2.2). CCCC verifies the enabled entry after setup,
-serializes updates between instances, and preserves unrelated MCP servers.
+`mcp add` and `--settings` (verified with 1.5.17). CCCC verifies the enabled
+entry after setup, serializes updates between instances, and preserves unrelated
+MCP servers.
 A conflicting project `.agents/mcp_config.json` entry or malformed configuration
 fails explicitly; CCCC does not overwrite it or ask the model to repair it.
 The global entry uses `cccc mcp` on the agent's PATH and inherits instance and

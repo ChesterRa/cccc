@@ -491,10 +491,10 @@ The former `ccccd` executable is also retired. Scripts should use
 Prepare or report the MCP integration for an agent runtime.
 
 ```bash
-cccc setup                         # Configure every supported runtime; unavailable CLIs are reported
+cccc setup                         # List how each runtime gets CCCC's MCP; writes nothing
 cccc setup --runtime claude        # Report CCCC-owned per-session MCP for Claude Code
 cccc setup --runtime codex         # Auto-configure for Codex
-cccc setup --runtime copilot       # Auto-configure for GitHub Copilot CLI
+cccc setup --runtime copilot       # Register `cccc` for Copilot sessions you start yourself
 cccc setup --runtime cursor        # Configure native Cursor CLI MCP
 cccc setup --runtime devin         # Auto-configure for Devin CLI
 cccc setup --runtime kiro          # Auto-configure for Kiro CLI
@@ -510,13 +510,13 @@ cccc setup --runtime deepseek      # Install or repair the pinned DeepSeek Harne
 cccc setup --runtime antigravity   # Auto-configure for Antigravity CLI
 ```
 
-Without `--runtime`, setup makes one pass over every supported runtime and reports each result
-without stopping at a failure. A runtime whose `cccc` MCP entry lives in its own configuration gets
-that entry written or confirmed when its CLI is installed; a missing CLI or a failed setup is
-reported as `unavailable`. Claude Code, OpenCode, Kilo, Pi, Hermes and DeepSeek report that CCCC
-injects their MCP into each managed session; DeepSeek reports `setup_required` until it is
-installed. `custom` returns the configuration to add by hand. The batch `configured` count includes
-only the runtimes whose entry setup wrote or confirmed.
+Without `--runtime`, setup changes nothing. For each supported runtime it reports how members
+that CCCC starts get its MCP server (`per_launch`, `user_config_entry` or `manual`) and what
+`cccc setup --runtime <name>` would write, if anything. Claude Code, Codex, Copilot, OpenCode,
+Kilo, Pi, Hermes and DeepSeek members get the server in each launch. For Codex and Copilot,
+`--runtime <name>` adds a user entry only for sessions you start yourself. For the runtimes marked `user_config_entry`, member
+startup and `--runtime <name>` write one `cccc` MCP entry into that runtime's user configuration
+when no usable entry exists.
 
 ### `cccc update`
 

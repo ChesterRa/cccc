@@ -1,5 +1,4 @@
 use super::*;
-use serde_json::json;
 
 impl AnalystSession {
     #[allow(clippy::too_many_arguments)]
@@ -105,13 +104,9 @@ impl AnalystSession {
                     Some((entry["name"].as_str()?.to_owned(), entry["value"].clone()))
                 })
                 .collect::<serde_json::Map<String, Value>>();
-            let config = json!({"mcpServers":{"cccc":{"type":"local","command":mcp["command"],"args":mcp["args"],"env":env,"tools":["*"]}}});
             // This configuration contains only the CCCC-scoped transport
             // identity, no provider credentials and no global config writes.
-            launch_command.extend([
-                "--additional-mcp-config".into(),
-                serde_json::to_string(&config).map_err(io::Error::other)?,
-            ]);
+            launch_command.extend(super::super::runtime_mcp::copilot_mcp_args(&cccc, env));
         }
         // Resolve npm .cmd/.bat shims using the same PATH/PATHEXT rules as
         // runtime detection. std::process::Command handles batch-file quoting;
@@ -227,6 +222,8 @@ fn restrict_secretary_copilot_mcp(command: &mut Vec<String>, catalog: &Value) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+
     #[test]
     fn secretary_disables_inherited_copilot_servers_without_changing_yolo() {
         let mut command = vec!["copilot".into(), "--allow-all".into(), "--acp".into()];
