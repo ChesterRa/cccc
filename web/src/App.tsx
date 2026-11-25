@@ -23,6 +23,7 @@ import { useSwipeNavigation } from "./hooks/useSwipeNavigation";
 import { useCrossGroupRecipients } from "./hooks/useCrossGroupRecipients";
 import { useDeepLink } from "./hooks/useDeepLink";
 import { useGlobalEvents } from "./hooks/useGlobalEvents";
+import { useWebMods } from "./features/mods/useWebMods";
 import {
   VISUAL_VIEWPORT_BOX,
   VISUAL_VIEWPORT_BOX_ATTRIBUTE,
@@ -347,6 +348,8 @@ export default function App({
     openChatWindow,
     showError,
   });
+
+  useWebMods();
 
   useGlobalEvents({
     refreshGroups,

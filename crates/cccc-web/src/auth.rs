@@ -280,6 +280,7 @@ fn requires_admin(method: &Method, path: &str) -> bool {
         || path == "/api/v1/mcp"
         || path.starts_with("/api/v1/observability")
         || path.starts_with("/api/v1/branding")
+        || (path.starts_with("/api/v1/web_mods") && *method != Method::GET)
         || path.starts_with("/api/v1/fs/")
         || path.starts_with("/api/v1/registry/")
         || path.starts_with("/api/v1/membership")

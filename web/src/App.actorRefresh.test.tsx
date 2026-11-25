@@ -173,6 +173,10 @@ async function serveRequest(input: string | URL | Request, init?: RequestInit): 
     unexpectedRequests.push(`${method} ${url.pathname}`);
     throw new Error(`Unexpected mutation: ${method} ${url.pathname}`);
   }
+  // Web mods: none installed, so the page only checks rarely.
+  if (url.pathname === "/api/v1/web_mods") {
+    return jsonResponse({ api: 1, revision: "none", mods: [] });
+  }
   if (url.pathname === "/api/v1/reply-requests/summary") {
     return jsonResponse({
       groups: Object.keys(actorsByGroup).map((group_id) => ({

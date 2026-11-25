@@ -81,6 +81,7 @@ pub mod voice_secretary_settings;
 pub mod web_bootstrap;
 pub mod web_login_grants;
 pub mod web_model_connectors;
+pub mod web_mods;
 pub mod web_runtime_proof;
 pub mod workspace;
 pub mod workspace_changes;

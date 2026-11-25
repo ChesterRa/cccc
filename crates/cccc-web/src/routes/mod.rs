@@ -76,6 +76,7 @@ mod web_model_dots;
 mod web_model_pairing;
 mod web_model_shared_browser;
 mod web_model_supervisor;
+mod web_mods;
 
 use crate::AppState;
 use axum::Router;
@@ -97,6 +98,7 @@ pub fn router() -> Router<AppState> {
         .merge(system_branding::routes())
         .merge(system_branding_assets::routes())
         .merge(system_branding_manifest::routes())
+        .merge(web_mods::routes())
         .merge(system_scope::routes())
         .merge(filesystem::routes())
         .merge(access_tokens::routes())

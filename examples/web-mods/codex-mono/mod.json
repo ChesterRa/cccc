@@ -1,0 +1,9 @@
+{
+  "id": "codex-mono",
+  "name": "Codex mono",
+  "version": "1",
+  "api": 1,
+  "description": "A quiet black-and-white theme after the Codex app: neutral greys, white or charcoal surfaces, rounded shapes and the system typeface. Light and dark.",
+  "author": "CCCC",
+  "style": "style.css"
+}

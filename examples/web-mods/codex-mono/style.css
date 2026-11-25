@@ -1,0 +1,134 @@
+/*
+ * Codex mono: a quiet black-and-white theme after the Codex app.
+ * Neutral greys only; white (or charcoal) surfaces; a light grey pill for the
+ * selection; rounded keys and cards; the system typeface. Floating surfaces get a
+ * faint frost and a soft shadow. Red is kept only for destructive actions.
+ */
+
+:root[data-ui-style="lcd"] {
+  --mod-surface-shadow: 0 1px 2px rgb(0 0 0 / 0.04), 0 8px 24px rgb(0 0 0 / 0.06);
+  --mod-frost: blur(12px) saturate(1.1);
+
+  --lcd-bg: #ffffff;
+  --lcd-panel: #f9f9f9;
+  --lcd-panel-2: #f3f3f3;
+  --lcd-raised: #ffffff;
+  --lcd-plate: #f3f3f3;
+  --lcd-plate-ink: #0d0d0d;
+  --lcd-ink: #0d0d0d;
+  --lcd-ink-strong: #000000;
+  --lcd-dim: #5d5d5d;
+  --lcd-muted: #8f8f8f;
+  --lcd-rule: rgb(0 0 0 / 0.08);
+  --lcd-rule-strong: rgb(0 0 0 / 0.16);
+  --lcd-sep: rgb(0 0 0 / 0.06);
+  --lcd-link: #0d0d0d;
+  --lcd-run: #0d0d0d;
+  --lcd-wait: #0d0d0d;
+  --lcd-on-wait: #ffffff;
+  --lcd-danger: #b4232a;
+  --lcd-sel-bg: #0d0d0d;
+  --lcd-sel-fg: #ffffff;
+  --lcd-sel-soft: #ececec;
+  --lcd-code-bg: #f3f3f3;
+  --lcd-overlay: rgb(0 0 0 / 0.3);
+
+  --lcd-font-body: ui-sans-serif, -apple-system, "SF Pro Text", "Segoe UI", system-ui, var(--lcd-font-cjk);
+  --lcd-font-pixel: var(--lcd-font-body);
+  --lcd-font-brand: var(--lcd-font-body);
+}
+
+:root[data-ui-style="lcd"].dark {
+  --mod-surface-shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 8px 24px rgb(0 0 0 / 0.35);
+
+  --lcd-bg: #212121;
+  --lcd-panel: #181818;
+  --lcd-panel-2: #2a2a2a;
+  --lcd-raised: #2f2f2f;
+  --lcd-plate: #2f2f2f;
+  --lcd-plate-ink: #ececec;
+  --lcd-ink: #ececec;
+  --lcd-ink-strong: #ffffff;
+  --lcd-dim: #b4b4b4;
+  --lcd-muted: #8e8e8e;
+  --lcd-rule: rgb(255 255 255 / 0.08);
+  --lcd-rule-strong: rgb(255 255 255 / 0.16);
+  --lcd-sep: rgb(255 255 255 / 0.06);
+  --lcd-link: #ececec;
+  --lcd-run: #ececec;
+  --lcd-wait: #ececec;
+  --lcd-on-wait: #0d0d0d;
+  --lcd-danger: #f28b8b;
+  --lcd-sel-bg: #ececec;
+  --lcd-sel-fg: #0d0d0d;
+  --lcd-sel-soft: #2f2f2f;
+  --lcd-code-bg: #2a2a2a;
+  --lcd-overlay: rgb(0 0 0 / 0.55);
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] {
+  /* The sidebar sits one shade off the conversation, as in Codex. */
+  --color-sidebar-bg: var(--lcd-panel);
+  /* The LCD look zeroes these on the scope element, so they are restored there. */
+  --radius-xs: 6px;
+  --radius-sm: 8px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 16px;
+  --radius-2xl: 20px;
+  --radius-3xl: 24px;
+  --radius-4xl: 28px;
+  --glass-shadow: var(--mod-surface-shadow);
+  --glass-shadow-lg: var(--mod-surface-shadow);
+  --glass-tab-bg: var(--lcd-panel-2);
+  --glass-tab-bg-active: var(--lcd-raised);
+  --glass-tab-shadow-active: 0 1px 2px rgb(0 0 0 / 0.08);
+}
+
+/* Rows, keys and fields are soft rounded shapes rather than LCD blocks. */
+:root[data-ui-style="lcd"] [data-lcd-scope] :is(
+    button,
+    input,
+    textarea,
+    select,
+    .glass-group-item,
+    .glass-group-item-active,
+    .glass-tab,
+    [data-composer-send-control],
+    [data-message-audio]
+  ) {
+  border-radius: var(--radius-md) !important;
+}
+
+/* The selected Group is a light grey pill, not an inverted block. */
+:root[data-ui-style="lcd"] [data-lcd-scope] .glass-group-item-active {
+  background: var(--lcd-sel-soft) !important;
+  border-color: transparent !important;
+  outline: none !important;
+  box-shadow: none !important;
+}
+:root[data-ui-style="lcd"] [data-lcd-scope] .glass-group-item-active :is(span, button, svg) {
+  background: transparent !important;
+  color: var(--lcd-ink) !important;
+}
+
+/* Floating surfaces: a faint frost, a hairline and a soft shadow. */
+:root[data-ui-style="lcd"] :is(
+    .glass-modal,
+    [data-lcd-scope] [role="dialog"],
+    [data-radix-popper-content-wrapper] > *
+  ) {
+  backdrop-filter: var(--mod-frost);
+  -webkit-backdrop-filter: var(--mod-frost);
+  border: 1px solid var(--lcd-rule) !important;
+  border-radius: var(--radius-xl) !important;
+  box-shadow: var(--mod-surface-shadow) !important;
+}
+
+/* The composer is one rounded card above the conversation. */
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-composer-surface] {
+  background: var(--lcd-raised);
+  border: 1px solid var(--lcd-rule-strong) !important;
+  border-radius: var(--radius-3xl) !important;
+  box-shadow: var(--mod-surface-shadow);
+}

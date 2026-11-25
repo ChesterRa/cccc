@@ -40,6 +40,18 @@ fn process_recovery_requires_an_administrator_for_reads_and_changes() {
 }
 
 #[test]
+fn web_mods_are_readable_by_any_viewer_but_only_an_administrator_changes_them() {
+    for path in ["/api/v1/web_mods", "/api/v1/web_mods/files/glass/style.css"] {
+        assert!(!requires_admin(&Method::GET, path), "{path}");
+        // Mod files sit under /api/ so they are never served to anonymous visitors.
+        assert!(!is_public(&Method::GET, path), "{path}");
+    }
+    for method in [Method::PUT, Method::POST, Method::DELETE] {
+        assert!(requires_admin(&method, "/api/v1/web_mods/glass/enabled"));
+    }
+}
+
+#[test]
 fn attended_update_requires_an_administrator() {
     for method in [Method::GET, Method::POST] {
         assert!(requires_admin(&method, "/api/v1/update/start"));
