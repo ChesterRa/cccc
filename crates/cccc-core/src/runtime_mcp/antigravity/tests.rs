@@ -267,3 +267,36 @@ fn concurrent_instances_do_not_race_native_registration() {
     });
     assert_eq!(calls.load(Ordering::SeqCst), 1);
 }
+
+#[test]
+fn windows_mixed_case_userprofile_override_aligns_mcp_setup_and_onboarding_gate() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home_a = temp.path().join("home-a");
+    let home_b = temp.path().join("home-b");
+    let cwd = temp.path().join("project");
+    std::fs::create_dir_all(&home_a).expect("home a");
+    std::fs::create_dir_all(&home_b).expect("home b");
+    let inherited = vec![("USERPROFILE".to_owned(), home_a.display().to_string())];
+    let actor_env = BTreeMap::from([("userprofile".to_owned(), home_b.display().to_string())]);
+    let resolved = cccc_runtime::resolve_antigravity_home_from(&cwd, &actor_env, inherited, true)
+        .expect("resolved windows home");
+    assert_eq!(
+        resolved, home_b,
+        "case-insensitive Windows override must resolve both setup and gate to home B"
+    );
+    let mcp_b = home_b.join(".gemini/config/mcp_config.json");
+    let configured = ensure_in_home(&cwd, &resolved, || {
+        write(&mcp_b, &json!({"mcpServers":{"cccc":ready()}}));
+        Ok(())
+    })
+    .expect("setup in home B");
+    assert_eq!(configured, mcp_b);
+    assert!(
+        !home_a.join(".gemini/config/mcp_config.json").exists(),
+        "inherited USERPROFILE=A must not be touched when actor sets userprofile=B"
+    );
+    assert_eq!(
+        resolved.join(".gemini/antigravity-cli/cache/onboarding.json"),
+        home_b.join(".gemini/antigravity-cli/cache/onboarding.json")
+    );
+}

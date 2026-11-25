@@ -261,6 +261,9 @@ pub(super) fn process_batch_tracked(
             target.as_ref(),
         );
     }
+    if status.startup_input_pending {
+        return BatchOutcome::Retry;
+    }
     let first_delivery = *preamble_session != status.started_at;
     if first_delivery {
         if current_actor.runtime != ActorRuntime::Custom

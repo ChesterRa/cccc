@@ -10,24 +10,16 @@ pub fn ensure(
     environment: &BTreeMap<String, String>,
     add: impl FnOnce() -> io::Result<()>,
 ) -> io::Result<PathBuf> {
-    let effective: BTreeMap<String, String> = cccc_runtime::unicode_environment()
-        .chain(environment.iter().map(|(k, v)| (k.clone(), v.clone())))
-        .collect();
-    let keys = if cfg!(windows) {
-        ["USERPROFILE", "HOME"]
-    } else {
-        ["HOME", "USERPROFILE"]
-    };
-    let home = keys
-        .iter()
-        .find_map(|key| effective.get(*key).filter(|value| !value.is_empty()))
+    let home = cccc_runtime::resolve_antigravity_home(cwd, environment, false)
         .ok_or_else(|| io::Error::other("Antigravity MCP setup requires a user home directory"))?;
-    let home = Path::new(home);
-    let home = if home.is_absolute() {
-        home.to_owned()
-    } else {
-        cwd.join(home)
-    };
+    ensure_in_home(cwd, &home, add)
+}
+
+fn ensure_in_home(
+    cwd: &Path,
+    home: &Path,
+    add: impl FnOnce() -> io::Result<()>,
+) -> io::Result<PathBuf> {
     let path = home.join(".gemini/config/mcp_config.json");
     let configured = ensure_entry(cwd, &path, add)?;
     disable_feedback_survey(&home.join(".gemini/antigravity-cli/settings.json"))?;

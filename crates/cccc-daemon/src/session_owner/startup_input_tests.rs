@@ -220,3 +220,301 @@ time.sleep(30)
     );
     controller::finish(&home, ShutdownMode::Stop, "stop".into()).expect("stop");
 }
+
+#[test]
+fn antigravity_fresh_home_onboarding_gate_survives_keep_and_releases_after_wizard() {
+    let temp = tempfile::tempdir().expect("isolated home");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let actor_home = temp.path().join("agy-home");
+    std::fs::create_dir_all(&actor_home).expect("actor home");
+    let onboarding = actor_home.join(".gemini/antigravity-cli/cache/onboarding.json");
+    let store = GroupStore::new(home.clone()).expect("store");
+    let mut group = store
+        .create("Antigravity startup fixture", "")
+        .expect("group");
+    let mut actor = Actor::new("agy1");
+    actor.runtime = ActorRuntime::Antigravity;
+    actor.runner = RunnerKind::Pty;
+    group.actors.push(actor.clone());
+    store.save(&group).expect("save actor");
+    let _lock = cccc_core::fs::try_exclusive_lock(&home.daemon_dir().join("ccccd.lock"))
+        .expect("home lock")
+        .expect("private home is unlocked");
+    controller::initialize(&home).expect("controller");
+    let actor_ref = ActorRef {
+        group_id: group.group_id.clone(),
+        actor_id: actor.id.clone(),
+        actor_created_at: actor.created_at.clone(),
+        generation: None,
+    };
+    let mut env = std::collections::BTreeMap::new();
+    env.insert("HOME".into(), actor_home.to_string_lossy().into_owned());
+    env.insert(
+        "USERPROFILE".into(),
+        actor_home.to_string_lossy().into_owned(),
+    );
+    let script = r#"
+import os, tty, time
+from pathlib import Path
+tty.setraw(0)
+os.write(1, b'\x1b[?2004hWelcome to Antigravity CLI\r\nTerms of Service & Data Use\r\n[Previous] [Done]\r\n')
+Path('painted').touch()
+choice = os.read(0, 1)
+Path('wizard_key').write_bytes(choice)
+os.write(1, b'\x1b[2J\x1b[HTrust this workspace?\r\n> 1. Yes, trust\r\n2. No, exit\r\n')
+Path('trust_ready').touch()
+trust_choice = os.read(0, 1)
+Path('trust_key').write_bytes(trust_choice)
+os.write(1, '\x1b[2J\x1b[HAntigravity CLI 1.5.16\r\n──────────\r\n>\r\n──────────\r\n? for shortcuts\r\n'.encode())
+Path('prompt_ready').touch()
+data = b''
+pasted = False
+while True:
+    byte = os.read(0, 1)
+    if not byte:
+        raise SystemExit(1)
+    if byte in (b'\n', b'\r') and not pasted:
+        payload = data.replace(b'\x1b[200~', b'').replace(b'\x1b[201~', b'').strip()
+        Path('first').write_bytes(payload)
+        break
+    data += byte
+    if data.endswith(b'\x1b[200~'):
+        pasted = True
+    elif data.endswith(b'\x1b[201~'):
+        pasted = False
+time.sleep(30)
+"#;
+    let terminal = controller::start(
+        &home,
+        actor_ref.clone(),
+        PreparedLaunch::Pty {
+            spec: cccc_runtime::LaunchSpec {
+                group_id: group.group_id.clone(),
+                actor_id: actor.id.clone(),
+                runner: RunnerKind::Pty,
+                command: vec!["python3".into(), "-u".into(), "-c".into(), script.into()],
+                cwd: temp.path().into(),
+                env: env.clone(),
+                cols: 80,
+                rows: 24,
+            },
+            history: cccc_runtime::HistoryConfig {
+                path: temp.path().join("agy-terminal.pty"),
+                max_bytes: 65536,
+                hot_bytes: 8192,
+                persist: false,
+            },
+            launch: cccc_runtime::ActorLaunch {
+                runtime: ActorRuntime::Antigravity,
+                submit: ActorSubmit::Enter,
+            },
+            preamble: String::new(),
+        },
+    )
+    .expect("start antigravity terminal")
+    .terminal
+    .expect("terminal");
+    assert!(terminal.startup_input_pending);
+    wait_until(|| temp.path().join("painted").exists());
+
+    let first = Event::new("chat.message", &group.group_id);
+    cccc_core::ledger::append(&store.ledger_path(&group.group_id).expect("ledger"), &first)
+        .expect("source event");
+    let send = |event: &Event, text: &str| {
+        controller::submit(
+            &home,
+            &group,
+            &actor,
+            std::slice::from_ref(event),
+            text,
+            &AtomicBool::new(false),
+            &AtomicBool::new(false),
+            None,
+        )
+        .expect("submit")
+    };
+    assert_eq!(send(&first, "Reply with OK")["outcome"], "not_written");
+    assert!(
+        !temp.path().join("wizard_key").exists(),
+        "no business byte may enter the onboarding wizard"
+    );
+
+    // Owner maintenance preservation keeps the onboarding gate intact.
+    controller::finish(&home, ShutdownMode::PreserveAgents, "keep".into()).expect("keep");
+    controller::initialize(&home).expect("reconnect");
+    let retained = super::runtime::status(&group.group_id, &actor.id).expect("retained status");
+    assert_eq!(retained.started_at, terminal.started_at);
+    assert!(retained.running && retained.startup_input_pending);
+    assert_eq!(send(&first, "Reply with OK")["outcome"], "not_written");
+
+    // Cross-shell onboarding write while wizard is still visible keeps input held.
+    std::fs::create_dir_all(onboarding.parent().expect("cache dir")).expect("cache dir");
+    std::fs::write(&onboarding, r#"{"onboardingComplete": true}"#).expect("write onboarding");
+    assert_eq!(send(&first, "Reply with OK")["outcome"], "not_written");
+    assert!(!temp.path().join("wizard_key").exists());
+
+    // User advances wizard into workspace trust -> still held even with onboardingComplete=true.
+    super::runtime::write(&group.group_id, &actor.id, b"\r").expect("user completes wizard");
+    wait_until(|| temp.path().join("trust_ready").exists());
+    assert_eq!(send(&first, "Reply with OK")["outcome"], "not_written");
+    assert!(
+        !temp.path().join("trust_key").exists(),
+        "no business byte may answer the workspace trust prompt"
+    );
+
+    // User accepts workspace trust -> bordered chat input appears -> delivery succeeds once.
+    super::runtime::write(&group.group_id, &actor.id, b"1").expect("user accepts trust");
+    wait_until(|| temp.path().join("prompt_ready").exists());
+    wait_until(|| send(&first, "Reply with OK")["outcome"] == "accepted");
+    wait_until(|| {
+        std::fs::read_to_string(temp.path().join("first")).is_ok_and(|text| text == "Reply with OK")
+    });
+    assert_eq!(
+        std::fs::read(temp.path().join("wizard_key")).expect("wizard key"),
+        b"\r"
+    );
+    assert_eq!(
+        std::fs::read(temp.path().join("trust_key")).expect("trust key"),
+        b"1"
+    );
+    super::runtime::stop(&group.group_id, &actor.id).expect("stop ready terminal");
+
+    // Early exit before onboarding completes pauses auto-wake until explicit user Start.
+    std::fs::remove_file(&onboarding).expect("reset fresh home");
+    let mcp_path = actor_home.join(".gemini/config/mcp_config.json");
+    std::fs::create_dir_all(mcp_path.parent().expect("mcp dir")).expect("mcp dir");
+    std::fs::write(
+        &mcp_path,
+        r#"{"mcpServers":{"cccc":{"command":"cccc","args":["mcp"],"disabled":false}}}"#,
+    )
+    .expect("mcp config");
+    let settings_path = actor_home.join(".gemini/antigravity-cli/settings.json");
+    std::fs::create_dir_all(settings_path.parent().expect("settings dir")).expect("settings dir");
+    std::fs::write(&settings_path, r#"{"showFeedbackSurvey":false}"#).expect("settings");
+    let scope_url = temp.path().to_string_lossy().into_owned();
+    let scope_key = "scope_agy".to_owned();
+    group.active_scope_key = scope_key.clone();
+    group.scopes.push(cccc_core::Scope {
+        scope_key,
+        url: scope_url,
+        label: "workspace".into(),
+        git_remote: String::new(),
+    });
+    group.actors[0].command = vec![
+        "python3".into(),
+        "-u".into(),
+        "-c".into(),
+        "import time; time.sleep(30)".into(),
+    ];
+    group.actors[0].env = env.clone();
+    store.save(&group).expect("save actor for user start");
+    actor = group.actors[0].clone();
+
+    let closed = controller::start(
+        &home,
+        actor_ref,
+        PreparedLaunch::Pty {
+            spec: cccc_runtime::LaunchSpec {
+                group_id: group.group_id.clone(),
+                actor_id: actor.id.clone(),
+                runner: RunnerKind::Pty,
+                command: vec![
+                    "python3".into(),
+                    "-u".into(),
+                    "-c".into(),
+                    "raise SystemExit(0)".into(),
+                ],
+                cwd: temp.path().into(),
+                env,
+                cols: 80,
+                rows: 24,
+            },
+            history: cccc_runtime::HistoryConfig {
+                path: temp.path().join("agy-closed.pty"),
+                max_bytes: 65536,
+                hot_bytes: 8192,
+                persist: false,
+            },
+            launch: cccc_runtime::ActorLaunch {
+                runtime: ActorRuntime::Antigravity,
+                submit: ActorSubmit::Enter,
+            },
+            preamble: String::new(),
+        },
+    )
+    .expect("start exiting fresh antigravity")
+    .terminal
+    .expect("closed terminal");
+    wait_until(|| {
+        super::runtime::status(&group.group_id, &actor.id)
+            .is_ok_and(|status| !status.running && status.startup_input_pending)
+    });
+    let exited = crate::ops::actor_runtime::reap_exited().expect("reap exited");
+    assert!(
+        exited
+            .iter()
+            .any(|status| status.group_id == group.group_id
+                && status.started_at == closed.started_at)
+    );
+    crate::ops::actor_runtime::reconcile_exited(&home, exited).expect("reconcile exit");
+
+    let list_paused = crate::handle_request(
+        &home,
+        &cccc_contracts::DaemonRequest {
+            v: 1,
+            op: "actor_list".into(),
+            args: serde_json::json!({"group_id": group.group_id})
+                .as_object()
+                .expect("args")
+                .clone(),
+        },
+    );
+    assert!(list_paused.ok, "{:?}", list_paused.error);
+    assert_eq!(
+        list_paused.result["actors"][0]["runtime_confirmation_paused"],
+        serde_json::json!(true),
+        "early exit before onboarding must report runtime_confirmation_paused"
+    );
+    let auto_wake = crate::ops::actor_runtime::apply(&home, &group, &actor.id, "actor.start")
+        .expect_err("automatic wake must remain paused");
+    assert_eq!(auto_wake.code, "runtime_confirmation_paused");
+
+    // Explicit user actor_start clears the pause and launches a fresh guarded terminal.
+    let user_start = crate::handle_request(
+        &home,
+        &cccc_contracts::DaemonRequest {
+            v: 1,
+            op: "actor_start".into(),
+            args: serde_json::json!({
+                "group_id": group.group_id,
+                "actor_id": actor.id,
+                "by": "user",
+            })
+            .as_object()
+            .expect("args")
+            .clone(),
+        },
+    );
+    assert!(user_start.ok, "{:?}", user_start.error);
+    let restarted = super::runtime::status(&group.group_id, &actor.id).expect("restarted status");
+    assert!(restarted.running);
+    assert_ne!(restarted.started_at, closed.started_at);
+    assert!(restarted.startup_input_pending);
+    let list_running = crate::handle_request(
+        &home,
+        &cccc_contracts::DaemonRequest {
+            v: 1,
+            op: "actor_list".into(),
+            args: serde_json::json!({"group_id": group.group_id})
+                .as_object()
+                .expect("args")
+                .clone(),
+        },
+    );
+    assert!(list_running.ok, "{:?}", list_running.error);
+    assert_eq!(
+        list_running.result["actors"][0]["runtime_confirmation_paused"],
+        serde_json::json!(false)
+    );
+    controller::finish(&home, ShutdownMode::Stop, "stop".into()).expect("stop");
+}
