@@ -83,6 +83,7 @@ pub struct SessionStatus {
 
 pub struct Session {
     status: SessionStatus,
+    antigravity_onboarding_file: Option<PathBuf>,
     master: Option<Box<dyn MasterPty + Send>>,
     child: Box<dyn Child + Send + Sync>,
     process_tree: OwnedProcessTree,
@@ -100,7 +101,7 @@ impl Session {
         history_config: Option<HistoryConfig>,
         history_cursor_floor: u64,
     ) -> Result<Self, RuntimeError> {
-        Self::start_with_environment(spec, history_config, history_cursor_floor, false)
+        Self::start_with_environment(spec, history_config, history_cursor_floor, false, None)
     }
 
     pub(crate) fn start_with_environment(
@@ -108,6 +109,44 @@ impl Session {
         history_config: Option<HistoryConfig>,
         history_cursor_floor: u64,
         clear_environment: bool,
+        launch: Option<ActorLaunch>,
+    ) -> Result<Self, RuntimeError> {
+        Self::start_with_environment_and_hook(
+            spec,
+            history_config,
+            history_cursor_floor,
+            clear_environment,
+            launch,
+            || {},
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn start_with_post_spawn_hook(
+        spec: LaunchSpec,
+        history_config: Option<HistoryConfig>,
+        history_cursor_floor: u64,
+        clear_environment: bool,
+        launch: Option<ActorLaunch>,
+        after_spawn: impl FnOnce(),
+    ) -> Result<Self, RuntimeError> {
+        Self::start_with_environment_and_hook(
+            spec,
+            history_config,
+            history_cursor_floor,
+            clear_environment,
+            launch,
+            after_spawn,
+        )
+    }
+
+    fn start_with_environment_and_hook(
+        spec: LaunchSpec,
+        history_config: Option<HistoryConfig>,
+        history_cursor_floor: u64,
+        clear_environment: bool,
+        launch: Option<ActorLaunch>,
+        after_spawn: impl FnOnce(),
     ) -> Result<Self, RuntimeError> {
         let cwd = spec.cwd.canonicalize()?;
         let scope_key = spec.env.get("CCCC_SCOPE_KEY").cloned().unwrap_or_default();
@@ -121,6 +160,22 @@ impl Session {
             .split_first()
             .ok_or(RuntimeError::EmptyCommand)?;
         let working_directory = crate::compatible_path(&cwd);
+        let antigravity_onboarding_file = crate::startup_input::antigravity_onboarding_path(
+            working_directory,
+            &spec.env,
+            clear_environment,
+        );
+        // Lock the startup-input gate decision BEFORE spawning the child PTY so
+        // an external shell completing onboarding between spawn and registration
+        // cannot bypass the gate for a child that started in the wizard.
+        let startup_input_pending = spec.runner == RunnerKind::Pty
+            && launch.is_some_and(|launch| {
+                crate::startup_input::required(launch.runtime)
+                    || (launch.runtime == ActorRuntime::Antigravity
+                        && !antigravity_onboarding_file
+                            .as_deref()
+                            .is_some_and(crate::startup_input::antigravity_onboarding_complete))
+            });
         if crate::executable::runs_cmd_in_prefixed_directory(&prepared_command, working_directory) {
             return Err(RuntimeError::CmdInPrefixedDirectory(
                 spec.cwd.display().to_string(),
@@ -152,6 +207,7 @@ impl Session {
                 .spawn_command(command)
                 .map_err(native_pty_spawn_error)
         })?;
+        after_spawn();
         let pid = child.process_id();
         #[cfg(target_os = "linux")]
         let (reader, writer) = {
@@ -201,9 +257,10 @@ impl Session {
                 started_at: utc_now(),
                 exit_code: None,
                 exit_detail: None,
-                launch: None,
-                startup_input_pending: false,
+                launch,
+                startup_input_pending,
             },
+            antigravity_onboarding_file,
             master: Some(pair.master),
             child,
             process_tree,
@@ -216,10 +273,20 @@ impl Session {
         })
     }
 
-    pub(crate) fn attribute_launch(&mut self, launch: ActorLaunch) {
-        self.status.launch = Some(launch);
-        self.status.startup_input_pending =
-            self.status.runner == RunnerKind::Pty && crate::startup_input::required(launch.runtime);
+    fn antigravity_onboarding_complete(&self) -> bool {
+        self.antigravity_onboarding_file
+            .as_deref()
+            .is_some_and(crate::startup_input::antigravity_onboarding_complete)
+    }
+
+    fn startup_input_satisfied(&self, runtime: ActorRuntime) -> Result<bool, RuntimeError> {
+        if runtime == ActorRuntime::Antigravity {
+            if !self.antigravity_onboarding_complete() {
+                return Ok(false);
+            }
+            return self.history.antigravity_onboarding_screen_clear();
+        }
+        self.history.startup_input_ready(runtime)
     }
 
     pub(crate) fn startup_input_ready(&mut self) -> Result<bool, RuntimeError> {
@@ -229,7 +296,7 @@ impl Session {
         let Some(launch) = self.status.launch else {
             return Ok(false);
         };
-        if self.history.startup_input_ready(launch.runtime)? {
+        if self.startup_input_satisfied(launch.runtime)? {
             self.status.startup_input_pending = false;
         }
         Ok(!self.status.startup_input_pending)
@@ -241,7 +308,7 @@ impl Session {
             && self
                 .status
                 .launch
-                .is_some_and(|launch| crate::startup_input::required(launch.runtime))
+                .is_some_and(|launch| crate::startup_input::supports_gate(launch.runtime))
         {
             self.status.startup_input_pending = false;
             return true;
@@ -266,8 +333,7 @@ impl Session {
             // A status read observes readiness without granting a later write.
             // Submission checks the current input region again under its gate.
             observed.startup_input_pending = !self
-                .history
-                .startup_input_ready(launch.runtime)
+                .startup_input_satisfied(launch.runtime)
                 .unwrap_or(false);
         }
         observed

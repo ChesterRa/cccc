@@ -62,20 +62,52 @@ fn start_inner_environment(
     clear_environment: bool,
     launch: Option<ActorLaunch>,
 ) -> Result<SessionStatus, RuntimeError> {
+    start_inner_environment_with_hook(spec, history, clear_environment, launch, || {})
+}
+
+#[cfg(test)]
+pub(crate) fn start_actor_with_history_and_post_spawn_hook(
+    spec: LaunchSpec,
+    history: HistoryConfig,
+    launch: ActorLaunch,
+    after_spawn: impl FnOnce(),
+) -> Result<SessionStatus, RuntimeError> {
+    start_inner_environment_with_hook(spec, Some(history), false, Some(launch), after_spawn)
+}
+
+fn start_inner_environment_with_hook(
+    spec: LaunchSpec,
+    history: Option<HistoryConfig>,
+    clear_environment: bool,
+    launch: Option<ActorLaunch>,
+    after_spawn: impl FnOnce(),
+) -> Result<SessionStatus, RuntimeError> {
     let key = (spec.group_id.clone(), spec.actor_id.clone());
     remove_exited_before_start(&key)?;
     let history_cursor_floor = match completed_history(&key.0, &key.1)? {
         Some(history) => history.end_cursor()?,
         None => 0,
     };
-    let mut session = if clear_environment {
-        Session::start_with_environment(spec, history, history_cursor_floor, true)?
-    } else {
-        Session::start_with_history(spec, history, history_cursor_floor)?
+    #[cfg(test)]
+    let mut session = Session::start_with_post_spawn_hook(
+        spec,
+        history,
+        history_cursor_floor,
+        clear_environment,
+        launch,
+        after_spawn,
+    )?;
+    #[cfg(not(test))]
+    let mut session = {
+        let _ = after_spawn;
+        Session::start_with_environment(
+            spec,
+            history,
+            history_cursor_floor,
+            clear_environment,
+            launch,
+        )?
     };
-    if let Some(launch) = launch {
-        session.attribute_launch(launch);
-    }
     let status = session.status();
     let mut registry = sessions().write().map_err(|_| RuntimeError::Poisoned)?;
     if registry.contains_key(&key) {
