@@ -98,7 +98,9 @@ pub use process_tree::{
 pub use process_tree::{prepare_web_process_guard, protect_owned_process_groups};
 pub use session::{ActorLaunch, LaunchSpec, SessionStatus};
 pub use session_history::OutputObservation;
-pub use startup_input::required as startup_input_required;
+pub use startup_input::{
+    required as startup_input_required, resolve_antigravity_home, resolve_antigravity_home_from,
+};
 pub use terminal_attach::{TerminalAttachMode, TerminalAttachment, TerminalInput, TerminalOutput};
 pub use terminal_initial_output::{TerminalInitialOutput, TerminalInitialOutputKind};
 pub use terminal_manager::{

@@ -10,27 +10,20 @@ pub fn ensure(
     environment: &BTreeMap<String, String>,
     add: impl FnOnce() -> io::Result<()>,
 ) -> io::Result<PathBuf> {
-    let effective: BTreeMap<String, String> = cccc_runtime::unicode_environment()
-        .chain(environment.iter().map(|(k, v)| (k.clone(), v.clone())))
-        .collect();
-    let keys = if cfg!(windows) {
-        ["USERPROFILE", "HOME"]
-    } else {
-        ["HOME", "USERPROFILE"]
-    };
-    let home = keys
-        .iter()
-        .find_map(|key| effective.get(*key).filter(|value| !value.is_empty()))
+    let home = cccc_runtime::resolve_antigravity_home(cwd, environment, false)
         .ok_or_else(|| io::Error::other("Antigravity MCP setup requires a user home directory"))?;
-    let home = Path::new(home);
-    let home = if home.is_absolute() {
-        home.to_owned()
-    } else {
-        cwd.join(home)
-    };
+    ensure_in_home(cwd, &home, add)
+}
+
+fn ensure_in_home(
+    cwd: &Path,
+    home: &Path,
+    add: impl FnOnce() -> io::Result<()>,
+) -> io::Result<PathBuf> {
     let path = home.join(".gemini/config/mcp_config.json");
     let configured = ensure_entry(cwd, &path, add)?;
     disable_feedback_survey(&home.join(".gemini/antigravity-cli/settings.json"))?;
+    ensure_hooks(&home.join(".gemini/config/hooks.json"))?;
     Ok(configured)
 }
 
@@ -107,6 +100,139 @@ fn read_settings(path: &Path) -> io::Result<serde_json::Map<String, Value>> {
         .and_then(|value| value.as_object().cloned())
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, format!(
             "invalid Antigravity settings at {}; correct the JSON before starting the Actor",
+            path.display()
+        )))
+}
+
+fn ensure_hooks(path: &Path) -> io::Result<()> {
+    let resolved = match std::fs::canonicalize(path) {
+        Ok(resolved) => resolved,
+        Err(error) if path.is_symlink() => return Err(error),
+        Err(_) => path.to_owned(),
+    };
+    let handler = crate::antigravity_hook::hook_handler();
+    if hook_entry_ready(
+        read_hooks(&resolved)?.get(crate::antigravity_hook::HOOK_ENTRY_NAME),
+        &handler,
+        &resolved,
+    )? {
+        return Ok(());
+    }
+    // Preserve all user-defined hooks (including extra events or handlers under
+    // the same group name) and serialize concurrent CCCC launches before writing.
+    crate::fs::with_exclusive_lock(&resolved.with_extension("cccc.lock"), || {
+        let mut hooks = read_hooks(&resolved)?;
+        if hook_entry_ready(
+            hooks.get(crate::antigravity_hook::HOOK_ENTRY_NAME),
+            &handler,
+            &resolved,
+        )? {
+            return Ok(());
+        }
+        let merged = merge_hook_entry(
+            hooks.get(crate::antigravity_hook::HOOK_ENTRY_NAME),
+            &handler,
+            &resolved,
+        )?;
+        hooks.insert(crate::antigravity_hook::HOOK_ENTRY_NAME.into(), merged);
+        crate::fs::write_json(&resolved, &hooks)
+    })
+}
+
+const TRACKED_HOOK_EVENTS: [&str; 3] = ["SessionStart", "PreInvocation", "Stop"];
+
+fn hook_entry_ready(existing: Option<&Value>, handler: &Value, path: &Path) -> io::Result<bool> {
+    let Some(entry) = existing else {
+        return Ok(false);
+    };
+    let object = validate_hook_group(entry, path)?;
+    Ok(TRACKED_HOOK_EVENTS.iter().all(|event| {
+        object
+            .get(*event)
+            .and_then(Value::as_array)
+            .is_some_and(|handlers| handlers.iter().any(|item| item == handler))
+    }))
+}
+
+fn merge_hook_entry(existing: Option<&Value>, handler: &Value, path: &Path) -> io::Result<Value> {
+    let mut object = match existing {
+        None => serde_json::Map::new(),
+        Some(entry) => validate_hook_group(entry, path)?.clone(),
+    };
+    for event in TRACKED_HOOK_EVENTS {
+        match object.get_mut(event) {
+            None => {
+                object.insert(event.into(), Value::Array(vec![handler.clone()]));
+            }
+            Some(Value::Array(handlers)) => {
+                if !handlers.iter().any(|item| item == handler) {
+                    handlers.push(handler.clone());
+                }
+            }
+            Some(_) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "invalid Antigravity hook event `{event}` under `{}` in {}; expected an array",
+                        crate::antigravity_hook::HOOK_ENTRY_NAME,
+                        path.display()
+                    ),
+                ));
+            }
+        }
+    }
+    Ok(Value::Object(object))
+}
+
+fn validate_hook_group<'a>(
+    entry: &'a Value,
+    path: &Path,
+) -> io::Result<&'a serde_json::Map<String, Value>> {
+    let object = entry.as_object().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "invalid Antigravity hook group `{}` in {}; expected a JSON object",
+                crate::antigravity_hook::HOOK_ENTRY_NAME,
+                path.display()
+            ),
+        )
+    })?;
+    if object.get("enabled") == Some(&Value::Bool(false)) {
+        return Err(io::Error::other(format!(
+            "Antigravity hook group `{}` in {} is disabled (`enabled: false`); re-enable or remove it before starting the Actor",
+            crate::antigravity_hook::HOOK_ENTRY_NAME,
+            path.display()
+        )));
+    }
+    for event in TRACKED_HOOK_EVENTS {
+        if let Some(value) = object.get(event)
+            && !value.is_array()
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "invalid Antigravity hook event `{event}` under `{}` in {}; expected an array",
+                    crate::antigravity_hook::HOOK_ENTRY_NAME,
+                    path.display()
+                ),
+            ));
+        }
+    }
+    Ok(object)
+}
+
+fn read_hooks(path: &Path) -> io::Result<serde_json::Map<String, Value>> {
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Default::default()),
+        Err(error) => return Err(error),
+    };
+    serde_json::from_slice::<Value>(&bytes)
+        .ok()
+        .and_then(|value| value.as_object().cloned())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, format!(
+            "invalid Antigravity hooks configuration at {}; correct the JSON before starting the Actor",
             path.display()
         )))
 }

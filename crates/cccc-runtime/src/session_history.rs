@@ -331,6 +331,26 @@ impl SessionHistory {
             }
         }
     }
+
+    pub(crate) fn antigravity_onboarding_screen_clear(&self) -> Result<bool, RuntimeError> {
+        let mut state = match self.state.try_lock() {
+            Ok(state) => state,
+            Err(TryLockError::WouldBlock) => return Ok(false),
+            Err(TryLockError::Poisoned(_)) => return Err(RuntimeError::Poisoned),
+        };
+        match state.terminal.visible_text() {
+            Some(rows) => Ok(crate::startup_input::antigravity_screen_ready(&rows)),
+            None => {
+                if !state.startup_mirror_warning {
+                    state.startup_mirror_warning = true;
+                    crate::diagnostic(format_args!(
+                        "CCCC startup input held: terminal text mirror unavailable (Antigravity); inspect its startup UI before releasing input"
+                    ));
+                }
+                Ok(false)
+            }
+        }
+    }
 }
 
 #[cfg(test)]

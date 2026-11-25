@@ -86,7 +86,7 @@ pub(crate) fn prepare_maintenance(
                 })
                 .map(|actor| actor.id.clone())
                 .collect::<HashSet<_>>();
-            let idle = idle_actor_ids(group_id, &eligible);
+            let idle = idle_actor_ids(home, group_id, &eligible);
             (eligible, idle)
         })
     });
@@ -176,25 +176,30 @@ fn run_tick(
     }
 }
 
-/// Actors whose managed session is idle. Waiting Mail reaches them promptly;
-/// actors that are working, waiting on approval, or whose state is unknown (no
-/// managed session) keep the longer interruption-avoiding delay. Delivery
+/// Actors whose managed session or native lifecycle hooks report idle. Waiting
+/// Mail reaches them promptly; actors that are working, waiting on approval, or
+/// whose state is unknown keep the longer interruption-avoiding delay. Delivery
 /// rechecks this at admission, since the Actor may start work in between.
-fn idle_actor_ids(group_id: &str, actor_ids: &HashSet<String>) -> HashSet<String> {
+fn idle_actor_ids(
+    home: &HomeLayout,
+    group_id: &str,
+    actor_ids: &HashSet<String>,
+) -> HashSet<String> {
     actor_ids
         .iter()
-        .filter(|actor_id| super::local_headless::ready_for_mail_notice(group_id, actor_id))
+        .filter(|actor_id| super::working_state::ready_for_mail_notice(home, group_id, actor_id))
         .cloned()
         .collect()
 }
 
 /// Announce a Mail just written at once to its recipients that are idle, rather
 /// than on the next unread tick, up to a minute away. Recipients that work, or
-/// have no managed session, keep the tick's delays. Runs under the Group write
+/// whose state is unknown, keep the tick's delays. Runs under the Group write
 /// permit of the send, which the tick also takes, so the two never both notify.
 pub fn notify_idle_mail_recipients(home: &HomeLayout, group: &GroupDoc, mail: &Event) {
     notify_idle_mail_recipients_with(home, group, mail, |actor| {
-        let ready = || super::local_headless::ready_for_mail_notice(&group.group_id, &actor.id);
+        let ready =
+            || super::working_state::ready_for_mail_notice(home, &group.group_id, &actor.id);
         if !crate::session_owner::enabled(home) {
             return ready();
         }
@@ -755,8 +760,10 @@ mod tests {
     #[test]
     fn actors_without_a_managed_session_are_never_treated_as_idle() {
         // No session reports a finished turn, so Mail keeps the longer delay.
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
         let actors = HashSet::from(["pty-peer".to_owned(), "stopped-peer".to_owned()]);
-        assert!(idle_actor_ids("g_no_sessions", &actors).is_empty());
+        assert!(idle_actor_ids(&home, "g_no_sessions", &actors).is_empty());
     }
     use serde_json::json;
 

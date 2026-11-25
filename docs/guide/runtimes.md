@@ -893,12 +893,26 @@ receipt. Merely starting an idle agent does not submit a model prompt.
 Native Cursor TUI uses the `cccc` entry described above in `~/.cursor/mcp.json`.
 In ACP mode, CCCC supplies the agent's MCP server when it opens the session.
 
-Antigravity uses the normal automatic PTY delivery path. Opening its Web
-terminal or confirming each new process is not required. Terminal footer text
-is not a delivery gate. Complete native login, workspace trust, or other
-first-use setup before sending tasks; paste mode can also be enabled during
-these dialogs and does not prove that the conversation is ready. CCCC does not
-add an application-level readiness handshake to the native TUI.
+Antigravity uses the normal automatic PTY delivery path once first-run
+onboarding is complete in the Actor's effective `HOME`. For an already-onboarded
+`HOME` (`~/.gemini/antigravity-cli/cache/onboarding.json` has
+`"onboardingComplete": true` before launch), opening its Web terminal or
+confirming each new process is not required and terminal display text is not a
+delivery gate.
+
+On a fresh `HOME` (such as an isolated per-actor `--env HOME=...` where
+`onboarding.json` is absent or `onboardingComplete` is not `true` before
+launch), CCCC activates the Session's `runtime_startup_input` gate so automatic
+preambles and messages are held without being pasted into AGY's first-run wizard
+(color scheme, Terms of Service, or workspace trust). Complete the wizard
+interactively in the terminal (or run `agy` once in that `HOME`); pending
+messages deliver automatically once `onboardingComplete` is `true` and AGY's
+bordered chat input (`>`) is visible, or after an explicit user release in the
+Web UI. CCCC never auto-writes `onboarding.json`, so Terms of Service consent
+remains user-driven. Complete native login, workspace trust, or other first-use
+setup before sending tasks; paste mode can also be enabled during these dialogs
+and does not prove that the conversation is ready. CCCC does not add an
+application-level readiness handshake to the native TUI.
 
 Previously accepted or uncertain deliveries are not automatically replayed.
 For a failed or uncertain delivery, check the terminal before using the existing

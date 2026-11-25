@@ -377,4 +377,113 @@ mod terminal_output {
         );
         assert!(state["pty_last_output_at"].is_string(), "{state:?}");
     }
+
+    #[test]
+    fn antigravity_pty_projects_hook_working_and_idle_state_for_mail_notices() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("init home");
+        let group_id = "g_agy_hook_working_state";
+        let mut actor = Actor::new(ACTOR_ID);
+        actor.runtime = ActorRuntime::Antigravity;
+        actor.runner = RunnerKind::Pty;
+        let _stop = start_terminal(group_id, temp.path(), "exec sleep 30");
+        let status = cccc_runtime::status(group_id, ACTOR_ID).expect("terminal status");
+
+        // Before hooks report anything, Antigravity PTY stays conservative.
+        let before = fields(&home, &actor, group_id, true, "pty");
+        assert_unknown_state(&before);
+        assert!(!super::super::working_state::ready_for_mail_notice(
+            &home, group_id, ACTOR_ID
+        ));
+
+        let launch_id = "agy-launch-1";
+        let state_file =
+            cccc_core::antigravity_hook::state_file_path(&home, group_id, ACTOR_ID, launch_id);
+        cccc_core::antigravity_hook::record_launch(
+            &home,
+            group_id,
+            ACTOR_ID,
+            launch_id,
+            status.pid,
+            &status.started_at,
+        )
+        .expect("record launch");
+
+        cccc_core::antigravity_hook::apply_hook_payload(
+            &state_file,
+            launch_id,
+            group_id,
+            ACTOR_ID,
+            &serde_json::json!({"hookEventName":"SessionStart","conversationId":"c1"}),
+        )
+        .expect("session start");
+        let idle = fields(&home, &actor, group_id, true, "pty");
+        assert_eq!(idle["effective_working_state"], "idle");
+        assert_eq!(idle["effective_working_reason"], "antigravity_hook");
+        assert!(idle["effective_working_updated_at"].is_string());
+        assert!(super::super::working_state::ready_for_mail_notice(
+            &home, group_id, ACTOR_ID
+        ));
+
+        cccc_core::antigravity_hook::apply_hook_payload(
+            &state_file,
+            launch_id,
+            group_id,
+            ACTOR_ID,
+            &serde_json::json!({"hookEventName":"PreInvocation","conversationId":"c1"}),
+        )
+        .expect("pre invocation");
+        let working = fields(&home, &actor, group_id, true, "pty");
+        assert_eq!(working["effective_working_state"], "working");
+        assert_eq!(working["effective_working_reason"], "antigravity_hook");
+        assert!(!super::super::working_state::ready_for_mail_notice(
+            &home, group_id, ACTOR_ID
+        ));
+
+        // Stop without fullyIdle: true keeps the actor busy.
+        cccc_core::antigravity_hook::apply_hook_payload(
+            &state_file,
+            launch_id,
+            group_id,
+            ACTOR_ID,
+            &serde_json::json!({"hookEventName":"Stop","conversationId":"c1","fullyIdle":false}),
+        )
+        .expect("stop not fully idle");
+        assert_eq!(
+            fields(&home, &actor, group_id, true, "pty")["effective_working_state"],
+            "working"
+        );
+        assert!(!super::super::working_state::ready_for_mail_notice(
+            &home, group_id, ACTOR_ID
+        ));
+
+        // Stop with fullyIdle: true returns the actor to idle.
+        cccc_core::antigravity_hook::apply_hook_payload(
+            &state_file,
+            launch_id,
+            group_id,
+            ACTOR_ID,
+            &serde_json::json!({"hookEventName":"Stop","conversationId":"c1","fullyIdle":true}),
+        )
+        .expect("stop fully idle");
+        assert_eq!(
+            fields(&home, &actor, group_id, true, "pty")["effective_working_state"],
+            "idle"
+        );
+        assert!(super::super::working_state::ready_for_mail_notice(
+            &home, group_id, ACTOR_ID
+        ));
+
+        // Switching saved config to ACP for the next launch must not hide the
+        // currently running Antigravity PTY's live hook state.
+        let mut switched_next_launch = actor.clone();
+        switched_next_launch.runtime_mode = RuntimeMode::Acp;
+        let live_after_config_change = fields(&home, &switched_next_launch, group_id, true, "pty");
+        assert_eq!(live_after_config_change["effective_working_state"], "idle");
+        assert_eq!(
+            live_after_config_change["effective_working_reason"],
+            "antigravity_hook"
+        );
+    }
 }

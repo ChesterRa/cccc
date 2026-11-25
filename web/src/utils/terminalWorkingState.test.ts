@@ -38,6 +38,33 @@ describe("terminal working state", () => {
         now,
       ),
     ).toBe("working");
+    // Authoritative Antigravity lifecycle hooks are not overridden by PTY heuristics.
+    expect(
+      getActorDisplayWorkingState(
+        {
+          running: true,
+          runner: "pty",
+          runtime_state_source: "terminal",
+          effective_working_state: "idle",
+          effective_working_reason: "antigravity_hook",
+        },
+        { kind: "working_output", updatedAt: now },
+        now,
+      ),
+    ).toBe("idle");
+    expect(
+      getActorDisplayWorkingState(
+        {
+          running: true,
+          runner: "pty",
+          runtime_state_source: "terminal",
+          effective_working_state: "working",
+          effective_working_reason: "antigravity_hook",
+        },
+        { kind: "idle_prompt", updatedAt: now },
+        now,
+      ),
+    ).toBe("working");
   });
 
   it("detects a prompt when a terminal status line follows it", () => {

@@ -512,6 +512,7 @@ pub(crate) fn observe_attempt(
                     Some("accepted") => RetainedDelivery::Accepted(DeliveryEvidence::from_json(
                         &result["delivery_evidence"],
                     )),
+                    Some("withheld") => RetainedDelivery::Withdrawn,
                     Some("not_written") => RetainedDelivery::Unsubmitted,
                     _ => RetainedDelivery::Unknown,
                 },

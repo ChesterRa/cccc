@@ -261,6 +261,24 @@ pub(super) fn process_batch_tracked(
             target.as_ref(),
         );
     }
+    let events = jobs.iter().map(|job| job.event.clone()).collect::<Vec<_>>();
+    if crate::ops::local_headless::held_batch(&events, chrono::Utc::now())
+        && !crate::ops::working_state::antigravity_hook_idle_for_status(
+            &job.home,
+            &current_group.group_id,
+            &current_actor.id,
+            &status,
+        )
+    {
+        super::actor_delivery::withdraw_jobs(
+            jobs,
+            "early Mail notice withheld while the Actor works; the unread tick re-issues it",
+        );
+        return BatchOutcome::Delivered;
+    }
+    if status.startup_input_pending {
+        return BatchOutcome::Retry;
+    }
     let first_delivery = *preamble_session != status.started_at;
     if first_delivery {
         if current_actor.runtime != ActorRuntime::Custom
@@ -303,7 +321,6 @@ pub(super) fn process_batch_tracked(
         }
     }
 
-    let events = jobs.iter().map(|job| job.event.clone()).collect::<Vec<_>>();
     let Some(mut payload) = super::actor_delivery_render::render_batch_with_mail_context(
         &job.home,
         &current_group,
@@ -332,6 +349,22 @@ pub(super) fn process_batch_tracked(
     );
     if let Some(pending) = &instructions {
         payload = format!("{payload}\n\n{}", pending.delivery_line());
+    }
+    // Recheck immediately before writing: startup input-mode / settle waits can
+    // span seconds during which PreInvocation may transition the Actor to working.
+    if crate::ops::local_headless::held_batch(&events, chrono::Utc::now())
+        && !crate::ops::working_state::antigravity_hook_idle_for_status(
+            &job.home,
+            &current_group.group_id,
+            &current_actor.id,
+            &status,
+        )
+    {
+        super::actor_delivery::withdraw_jobs(
+            jobs,
+            "early Mail notice withheld while the Actor works; the unread tick re-issues it",
+        );
+        return BatchOutcome::Delivered;
     }
     attempted.extend(jobs.iter().map(|job| job.event.id.clone()));
     match submit_text(
@@ -380,6 +413,20 @@ fn process_owned_pty_batch(
     target: Option<&crate::session_owner::OwnedTarget>,
 ) -> BatchOutcome {
     let events = jobs.iter().map(|job| job.event.clone()).collect::<Vec<_>>();
+    if crate::ops::local_headless::held_batch(&events, chrono::Utc::now())
+        && !crate::ops::working_state::antigravity_hook_idle_for_status(
+            home,
+            &group.group_id,
+            &actor.id,
+            status,
+        )
+    {
+        super::actor_delivery::withdraw_jobs(
+            jobs,
+            "early Mail notice withheld while the Actor works; the unread tick re-issues it",
+        );
+        return BatchOutcome::Delivered;
+    }
     let Some(mut payload) = super::actor_delivery_render::render_batch_with_mail_context(
         home, group, &actor.id, &events,
     ) else {
@@ -412,6 +459,18 @@ fn process_owned_pty_batch(
             finish_jobs(
                 jobs,
                 DeliveryEvidence::from_json(&result["delivery_evidence"]),
+            );
+            BatchOutcome::Delivered
+        }
+        Ok(result)
+            if result.get("outcome").and_then(serde_json::Value::as_str) == Some("withheld") =>
+        {
+            for event in &events {
+                attempted.remove(&event.id);
+            }
+            super::actor_delivery::withdraw_jobs(
+                jobs,
+                "early Mail notice withheld while the Actor works; the unread tick re-issues it",
             );
             BatchOutcome::Delivered
         }
@@ -1714,5 +1773,279 @@ mod tests {
             }
             other => panic!("expected Terminal, got {other:?}"),
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn early_mail_notice_is_withheld_when_antigravity_pty_becomes_working() {
+        use ::cccc_runtime::{ActorLaunch, HistoryConfig, LaunchSpec};
+        use cccc_contracts::RunnerKind;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = cccc_core::HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("init home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let mut group = store.create("agy held notice", "").expect("group");
+        let mut actor = Actor::new("peer1");
+        actor.runtime = ActorRuntime::Antigravity;
+        actor.runner = RunnerKind::Pty;
+        group.actors.push(actor.clone());
+        store.save(&group).expect("save group");
+
+        let status = ::cccc_runtime::start_actor_with_history(
+            LaunchSpec {
+                group_id: group.group_id.clone(),
+                actor_id: actor.id.clone(),
+                runner: RunnerKind::Pty,
+                command: vec!["/bin/sh".into(), "-c".into(), "exec sleep 30".into()],
+                cwd: temp.path().to_path_buf(),
+                env: Default::default(),
+                cols: 80,
+                rows: 24,
+            },
+            HistoryConfig {
+                path: temp.path().join("terminal.pty"),
+                max_bytes: 65536,
+                hot_bytes: 8192,
+                persist: false,
+            },
+            ActorLaunch {
+                runtime: ActorRuntime::Antigravity,
+                submit: actor.submit,
+            },
+        )
+        .expect("start pty");
+        struct StopPty(String, String);
+        impl Drop for StopPty {
+            fn drop(&mut self) {
+                let _ = ::cccc_runtime::stop(&self.0, &self.1);
+            }
+        }
+        let _stop = StopPty(group.group_id.clone(), actor.id.clone());
+
+        let launch_id = "agy-working-launch";
+        let state_file = cccc_core::antigravity_hook::state_file_path(
+            &home,
+            &group.group_id,
+            &actor.id,
+            launch_id,
+        );
+        cccc_core::antigravity_hook::record_launch(
+            &home,
+            &group.group_id,
+            &actor.id,
+            launch_id,
+            status.pid,
+            &status.started_at,
+        )
+        .expect("record launch");
+        cccc_core::antigravity_hook::apply_hook_payload(
+            &state_file,
+            launch_id,
+            &group.group_id,
+            &actor.id,
+            &serde_json::json!({"hookEventName":"PreInvocation","conversationId":"c1"}),
+        )
+        .expect("mark working");
+
+        let ledger_path = store.ledger_path(&group.group_id).expect("ledger");
+        let mut mail = Event::new("chat.message", &group.group_id);
+        mail.by = "user".into();
+        mail.data = serde_json::json!({"to":["peer1"],"text":"review","message_mode":"mail"})
+            .as_object()
+            .cloned()
+            .expect("mail");
+        cccc_core::ledger::append(&ledger_path, &mail).expect("append mail");
+
+        let deliver_by = (chrono::Utc::now() + chrono::Duration::minutes(30)).to_rfc3339();
+        let mut notice = Event::new("system.notify", &group.group_id);
+        notice.by = "system".into();
+        notice.data = serde_json::json!({
+            "kind":"mail_notice","target_actor_id":"peer1","title":"Mail waiting",
+            "message":"Unread Mail is waiting in your Inbox.",
+            "context":{"actor_id":"peer1","source_event_ids":[mail.id],"deliver_by":deliver_by}
+        })
+        .as_object()
+        .cloned()
+        .expect("notice");
+        cccc_core::ledger::append(&ledger_path, &notice).expect("append notice");
+        crate::ops::runtime_delivery::claim(&home, &group, &actor, &notice.id, "pty", false)
+            .expect("claim notice");
+
+        let job = DeliveryJob {
+            home: home.clone(),
+            group: group.clone(),
+            actor: actor.clone(),
+            event: notice.clone(),
+            claimed: true,
+            transport: "pty",
+        };
+        let mut jobs = vec![job];
+        assert_eq!(
+            process_batch(&mut jobs, &mut String::new(), &AtomicBool::new(false)),
+            BatchOutcome::Delivered
+        );
+        let state = crate::ops::runtime_delivery::latest_state(
+            &home,
+            &group.group_id,
+            &actor.id,
+            &notice.id,
+        )
+        .expect("delivery state")
+        .map(|(state, _)| state);
+        assert_eq!(state.as_deref(), Some("withdrawn"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn early_mail_notice_is_withheld_when_antigravity_pty_flips_working_during_startup_settle() {
+        use ::cccc_runtime::{ActorLaunch, HistoryConfig, LaunchSpec};
+        use cccc_contracts::RunnerKind;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = cccc_core::HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("init home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let mut group = store.create("agy settle flip", "").expect("group");
+        let mut actor = Actor::new("peer1");
+        actor.runtime = ActorRuntime::Antigravity;
+        actor.runner = RunnerKind::Pty;
+        group.actors.push(actor.clone());
+        store.save(&group).expect("save group");
+
+        let received = temp.path().join("received");
+        // Enable bracketed paste immediately so wait_for_input_mode returns quickly,
+        // then sit in the 1.5s ANTIGRAVITY_STARTUP_SETTLE window.
+        let status = ::cccc_runtime::start_actor_with_history(
+            LaunchSpec {
+                group_id: group.group_id.clone(),
+                actor_id: actor.id.clone(),
+                runner: RunnerKind::Pty,
+                command: vec![
+                    "/bin/sh".into(),
+                    "-c".into(),
+                    format!(
+                        "stty raw -echo; printf '\\033[?2004h'; exec cat > {}",
+                        received.display()
+                    ),
+                ],
+                cwd: temp.path().to_path_buf(),
+                env: Default::default(),
+                cols: 80,
+                rows: 24,
+            },
+            HistoryConfig {
+                path: temp.path().join("terminal.pty"),
+                max_bytes: 65536,
+                hot_bytes: 8192,
+                persist: false,
+            },
+            ActorLaunch {
+                runtime: ActorRuntime::Antigravity,
+                submit: actor.submit,
+            },
+        )
+        .expect("start pty");
+        struct StopPty(String, String);
+        impl Drop for StopPty {
+            fn drop(&mut self) {
+                let _ = ::cccc_runtime::stop(&self.0, &self.1);
+            }
+        }
+        let _stop = StopPty(group.group_id.clone(), actor.id.clone());
+
+        let launch_id = "agy-settle-launch";
+        let state_file = cccc_core::antigravity_hook::state_file_path(
+            &home,
+            &group.group_id,
+            &actor.id,
+            launch_id,
+        );
+        cccc_core::antigravity_hook::record_launch(
+            &home,
+            &group.group_id,
+            &actor.id,
+            launch_id,
+            status.pid,
+            &status.started_at,
+        )
+        .expect("record launch");
+        // Start idle so the pre-wait check passes and enters the 1.5s settle wait.
+        cccc_core::antigravity_hook::apply_hook_payload(
+            &state_file,
+            launch_id,
+            &group.group_id,
+            &actor.id,
+            &serde_json::json!({"hookEventName":"SessionStart","conversationId":"c1"}),
+        )
+        .expect("mark idle");
+
+        let ledger_path = store.ledger_path(&group.group_id).expect("ledger");
+        let mut mail = Event::new("chat.message", &group.group_id);
+        mail.by = "user".into();
+        mail.data = serde_json::json!({"to":["peer1"],"text":"review","message_mode":"mail"})
+            .as_object()
+            .cloned()
+            .expect("mail");
+        cccc_core::ledger::append(&ledger_path, &mail).expect("append mail");
+
+        let deliver_by = (chrono::Utc::now() + chrono::Duration::minutes(30)).to_rfc3339();
+        let mut notice = Event::new("system.notify", &group.group_id);
+        notice.by = "system".into();
+        notice.data = serde_json::json!({
+            "kind":"mail_notice","target_actor_id":"peer1","title":"Mail waiting",
+            "message":"Unread Mail is waiting in your Inbox.",
+            "context":{"actor_id":"peer1","source_event_ids":[mail.id],"deliver_by":deliver_by}
+        })
+        .as_object()
+        .cloned()
+        .expect("notice");
+        cccc_core::ledger::append(&ledger_path, &notice).expect("append notice");
+        crate::ops::runtime_delivery::claim(&home, &group, &actor, &notice.id, "pty", false)
+            .expect("claim notice");
+
+        let flip_file = state_file.clone();
+        let flip_group = group.group_id.clone();
+        let flip_actor = actor.id.clone();
+        let flipper = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(300));
+            cccc_core::antigravity_hook::apply_hook_payload(
+                &flip_file,
+                launch_id,
+                &flip_group,
+                &flip_actor,
+                &serde_json::json!({"hookEventName":"PreInvocation","conversationId":"c1"}),
+            )
+            .expect("flip working during settle");
+        });
+
+        let job = DeliveryJob {
+            home: home.clone(),
+            group: group.clone(),
+            actor: actor.clone(),
+            event: notice.clone(),
+            claimed: true,
+            transport: "pty",
+        };
+        let mut jobs = vec![job];
+        assert_eq!(
+            process_batch(&mut jobs, &mut String::new(), &AtomicBool::new(false)),
+            BatchOutcome::Delivered
+        );
+        flipper.join().expect("flipper joined");
+
+        let state = crate::ops::runtime_delivery::latest_state(
+            &home,
+            &group.group_id,
+            &actor.id,
+            &notice.id,
+        )
+        .expect("delivery state")
+        .map(|(state, _)| state);
+        assert_eq!(state.as_deref(), Some("withdrawn"));
+        assert!(
+            std::fs::read(&received).unwrap_or_default().is_empty(),
+            "withheld early notice must not write anything to the PTY"
+        );
     }
 }

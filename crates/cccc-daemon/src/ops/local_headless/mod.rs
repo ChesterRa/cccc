@@ -25,6 +25,7 @@ pub(crate) use events::{
     append as append_event, append_with_dedupe as append_event_with_dedupe,
     contains_dedupe as contains_event_dedupe,
 };
+pub(crate) use notice_gate::held_batch;
 pub(crate) use supervisor::submit_prepared;
 pub(crate) use supervisor::{
     cancel_turn, respond_interaction, respond_permission, structured_state,
