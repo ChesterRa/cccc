@@ -200,7 +200,7 @@ export function SortableGroupItem({
           aria-current={isActive ? "page" : undefined}
           aria-keyshortcuts={keyboardReorder ? "Alt+ArrowUp Alt+ArrowDown" : undefined}
           className={classNames(
-            "flex-1 min-w-0 min-h-[44px] md:min-h-7 pointer-coarse:min-h-[44px] flex items-center justify-between gap-2 text-left",
+            "flex-1 min-w-0 min-h-[44px] md:min-h-8 pointer-coarse:min-h-[44px] flex items-center justify-between gap-2 text-left",
             !dragDisabled && "!cursor-grab active:!cursor-grabbing",
           )}
           onClick={onSelect}

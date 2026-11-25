@@ -42,7 +42,7 @@ describe("useUIStore sidebar width", () => {
     expect(mod.clampSidebarWidth(NaN)).toBe(mod.SIDEBAR_DEFAULT_WIDTH);
     expect(mod.clampSidebarWidth(281.7)).toBe(282);
     expect(mod.SIDEBAR_MAX_WIDTH).toBe(360);
-    expect(mod.getSidebarWidthCssValue(999)).toBe("clamp(248px, 360px, min(360px, 34vw))");
+    expect(mod.getSidebarWidthCssValue(999)).toBe("clamp(200px, 360px, min(360px, 34vw))");
   });
 
   it("tracks presentation dock open state per group", async () => {

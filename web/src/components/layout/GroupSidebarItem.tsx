@@ -123,7 +123,7 @@ export function GroupSidebarItem({
           type="button"
           role="button"
           aria-current={isActive ? "page" : undefined}
-          className="flex-1 min-w-0 min-h-[44px] md:min-h-7 pointer-coarse:min-h-[44px] flex items-center justify-between gap-2 text-left"
+          className="flex-1 min-w-0 min-h-[44px] md:min-h-8 pointer-coarse:min-h-[44px] flex items-center justify-between gap-2 text-left"
           onClick={onSelect}
           onKeyDown={menu.onKeyDown}
           onMouseEnter={onWarm}
