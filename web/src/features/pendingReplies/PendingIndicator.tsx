@@ -60,7 +60,7 @@ export function GroupPendingIndicator({
   return (
     <button
       type="button"
-      className="flex h-[44px] min-w-[44px] shrink-0 items-center justify-center rounded-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--color-accent-primary)]"
+      className="flex h-[44px] min-w-[44px] shrink-0 items-center justify-center rounded-md md:h-8 md:min-w-0 pointer-coarse:h-[44px] pointer-coarse:min-w-[44px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--color-accent-primary)]"
       aria-label={label}
       title={label}
       onPointerDown={(event) => event.stopPropagation()}

@@ -179,3 +179,12 @@ export function frameResourceUrl(url: string, location: Location = window.locati
     return url;
   }
 }
+
+/** The count to show for a Group's connections, or null when there is nothing to show. */
+export function groupConnectionCountText(
+  connection: GroupConnectionCount | undefined,
+): { value: string; current: boolean } | null {
+  if (!connection || connection.count === 0) return null;
+  const current = connection.count !== null && Date.parse(connection.expires_at) > Date.now();
+  return { value: current ? String(connection.count) : "?", current };
+}

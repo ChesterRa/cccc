@@ -4,6 +4,8 @@ import { Button } from "../ui/button";
 
 interface GroupMenuActionProps {
   label: string;
+  detail?: string;
+  ariaLabel?: string;
   icon?: ReactNode;
   /** Reserve the icon column so labels line up when siblings carry icons. */
   iconSlot?: boolean;
@@ -14,6 +16,8 @@ interface GroupMenuActionProps {
 
 export function GroupMenuAction({
   label,
+  detail,
+  ariaLabel,
   icon,
   iconSlot,
   disabled,
@@ -26,6 +30,8 @@ export function GroupMenuAction({
       variant="ghost"
       size="sm"
       role="menuitem"
+      aria-label={ariaLabel}
+      title={ariaLabel}
       data-tone={tone}
       disabled={disabled}
       className={classNames(
@@ -50,7 +56,7 @@ export function GroupMenuAction({
           {icon}
         </span>
       ) : null}
-      <span className="truncate">{label}</span>
+      <span className="truncate">{detail ? `${label} · ${detail}` : label}</span>
     </Button>
   );
 }

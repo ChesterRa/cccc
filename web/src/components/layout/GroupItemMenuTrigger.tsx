@@ -7,6 +7,8 @@ interface GroupItemMenuTriggerProps {
   label: string;
   open: boolean;
   onToggle: (button: HTMLButtonElement) => void;
+  /** Grow to a 44 px target under a coarse pointer, for rows whose column leaves room. */
+  touchTarget?: boolean;
 }
 
 export function GroupItemMenuTrigger({
@@ -14,6 +16,7 @@ export function GroupItemMenuTrigger({
   label,
   open,
   onToggle,
+  touchTarget = false,
 }: GroupItemMenuTriggerProps) {
   return (
     <IconButton
@@ -25,6 +28,7 @@ export function GroupItemMenuTrigger({
         // Touch devices have no hover state to reveal the trigger from, so it
         // stays visible whenever the primary pointer is coarse.
         "pointer-events-none shrink-0 text-[var(--color-text-tertiary)] opacity-0 max-md:pointer-events-auto max-md:opacity-100 pointer-coarse:pointer-events-auto pointer-coarse:opacity-100 group-hover/item:pointer-events-auto group-hover/item:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100",
+        touchTarget && "pointer-coarse:min-h-[44px] pointer-coarse:min-w-[44px]",
         open &&
           "pointer-events-auto opacity-100 bg-[var(--glass-tab-bg)] border-[var(--glass-border-subtle)] text-[var(--color-text-primary)] shadow-sm",
         !open && isActive && "pointer-events-auto opacity-100 text-[rgb(35,36,37)] dark:text-white",

@@ -1,23 +1,21 @@
 import { ConnectLinkIcon } from "../../components/Icons";
 import { useTranslation } from "react-i18next";
-import type { GroupConnectionCount } from "./protocol";
+import { groupConnectionCountText, type GroupConnectionCount } from "./protocol";
 
 export function GroupConnectionBadge({
   connection,
   onClick,
   disabled = false,
-  compact = false,
 }: {
   connection?: GroupConnectionCount;
   onClick?: () => void;
   disabled?: boolean;
-  compact?: boolean;
 }) {
   const { t } = useTranslation("layout");
-  if (!connection || connection.count === 0 || !onClick) return null;
-  const current = connection.count !== null && Date.parse(connection.expires_at) > Date.now();
-  const label = t(current ? "groupConnections.count" : "groupConnections.countUnknown", {
-    count: connection.count,
+  const text = groupConnectionCountText(connection);
+  if (!text || !onClick) return null;
+  const label = t(text.current ? "groupConnections.count" : "groupConnections.countUnknown", {
+    count: connection?.count,
   });
   return (
     <button
@@ -25,7 +23,7 @@ export function GroupConnectionBadge({
       title={label}
       aria-label={label}
       disabled={disabled}
-      className={`flex min-h-8 shrink-0 items-center gap-1 rounded-md text-xs text-[var(--color-text-secondary)] hover:bg-[var(--glass-panel-bg)] focus-visible:outline-2 disabled:opacity-50 ${compact ? "px-0" : "px-1.5"}`}
+      className={`flex min-h-8 shrink-0 items-center gap-1 rounded-md text-xs text-[var(--color-text-secondary)] hover:bg-[var(--glass-panel-bg)] focus-visible:outline-2 disabled:opacity-50 px-1.5`}
       onPointerDown={(event) => event.stopPropagation()}
       onMouseDown={(event) => event.stopPropagation()}
       onTouchStart={(event) => event.stopPropagation()}
@@ -35,7 +33,7 @@ export function GroupConnectionBadge({
       }}
     >
       <ConnectLinkIcon size={13} />
-      <span>{current ? connection.count : "?"}</span>
+      <span>{text.value}</span>
     </button>
   );
 }

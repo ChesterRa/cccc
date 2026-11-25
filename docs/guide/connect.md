@@ -191,11 +191,14 @@ automatic Web updates are outside this iteration.
 
 ## See Group connections
 
-A connection icon and count beside a Group identify its explicit account-managed
-and Direct Group connections. Open it to see the peer Groups and manage that
-Group's relations. When both methods connect the same pair, it is counted once.
-An unconfirmed count shows `?`, not zero. Same-account discovery is not counted
-as Group connections. The account website separates pending invitations, active
+A Group's **⋮** menu shows **Group connections** with the number of its explicit
+account-managed and Direct Group connections, for example
+`Group connections · 2`; a Group without connections shows the entry without a
+number. Open it to see the peer Groups and manage that Group's relations. The
+CCCC Connect workbench of a remote instance still shows the count beside each
+Group. When both methods connect the same pair, it is counted once. An
+unconfirmed count shows `?`, not zero. Same-account discovery is not counted as
+Group connections. The account website separates pending invitations, active
 connections and collapsed history, and offers a return link to your own Group.
 Cross-member communication does not grant terminals or a remote Workbench view.
 

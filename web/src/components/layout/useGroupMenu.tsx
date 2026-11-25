@@ -14,7 +14,12 @@ import {
 import { GroupMenuAction } from "./GroupMenuAction";
 
 export type GroupMenuActionItem = {
+  /** Also identifies the item, so it should not change while the menu is open. */
   label: string;
+  /** Shown after the label, such as a count that may change while the menu is open. */
+  detail?: string;
+  /** Accessible name when it should say more than the visible text. */
+  ariaLabel?: string;
   onClick: () => void;
   icon?: ReactNode;
   disabled?: boolean;
@@ -93,6 +98,8 @@ export function useGroupMenu(label: string, actions: GroupMenuActionItem[]) {
                 ) : null}
                 <GroupMenuAction
                   label={action.label}
+                  detail={action.detail}
+                  ariaLabel={action.ariaLabel}
                   icon={action.icon}
                   iconSlot={hasIcons}
                   tone={action.tone}

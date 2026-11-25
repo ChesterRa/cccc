@@ -1642,6 +1642,29 @@
   color: inherit;
 }
 
+/* On the reversed active row, a ghost button's hover fill (--lcd-sel-soft) sits close to
+   --lcd-sel-fg in both themes. Reverse the menu key back to paper and ink while its menu
+   is open or hovered so the icon stays legible. */
+:root[data-ui-style="lcd"]
+  [data-lcd-scope]
+  .glass-group-item-active
+  button[aria-haspopup="menu"][aria-expanded="true"] {
+  border-color: var(--lcd-sel-fg);
+  background: var(--lcd-sel-fg);
+  color: var(--lcd-sel-bg);
+}
+
+@media (hover: hover) {
+  :root[data-ui-style="lcd"]
+    [data-lcd-scope]
+    .glass-group-item-active
+    button[aria-haspopup="menu"]:hover {
+    border-color: var(--lcd-sel-fg);
+    background: var(--lcd-sel-fg);
+    color: var(--lcd-sel-bg);
+  }
+}
+
 :root[data-ui-style="lcd"] .lcd-group-symbol {
   display: inline-flex;
   flex-shrink: 0;

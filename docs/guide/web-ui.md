@@ -44,8 +44,9 @@ The local Group list scrolls independently from the collapsible **CCCC Connect**
 section and the Voice dock below it. CCCC Connect starts collapsed; click its heading
 to expand or collapse the instance list. The section's information button opens the full
 local instance name and public address. Group rows are more compact, while their
-ordering stays unchanged; connection counts and action menus keep fixed positions,
-with menus visible on touchscreens.
+ordering stays unchanged. Each row ends with the Group's status, its pending-reply
+count and its **⋮** menu, each in a fixed column; menus are visible on touchscreens.
+A Group's connection count is in its **⋮** menu, on the **Group connections** entry.
 
 The composer uses one send control with an adjacent mode arrow. The primary action
 shows the selected mode; its tooltip includes the send shortcut. Recipient chips

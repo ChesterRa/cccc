@@ -1,6 +1,6 @@
 import { groupSidebarRowClass } from "./groupSidebarModel";
-import { ConnectLinkIcon, GroupArchiveIcon, GroupArchiveRestoreIcon } from "../Icons";
-import { GroupConnectionBadge } from "../../features/connect/GroupConnectionBadge";
+import { GroupArchiveIcon, GroupArchiveRestoreIcon } from "../Icons";
+import { useGroupConnectionMenuItem } from "../../features/connect/groupConnectionMenuItem";
 import type { GroupConnectionCount } from "../../features/connect/protocol";
 import { GroupMeta } from "../../types";
 import { getGroupStatusFromSource } from "../../utils/groupStatus";
@@ -48,17 +48,14 @@ export function GroupSidebarItem({
 }: GroupSidebarItemProps) {
   const gid = String(group.group_id || "");
   const collapsedLabel = usePendingGroupLabel(gid, group.title || gid);
+  const connectionItems = useGroupConnectionMenuItem(
+    connectionsLabel,
+    connection,
+    onOpenConnections,
+  );
   const menu = useGroupMenu(menuAriaLabel || menuActionLabel || "", [
     ...(runActions ?? []),
-    ...(onOpenConnections && connectionsLabel
-      ? [
-          {
-            label: connectionsLabel,
-            icon: <ConnectLinkIcon size={15} />,
-            onClick: onOpenConnections,
-          },
-        ]
-      : []),
+    ...connectionItems,
     ...(onMenuAction && menuActionLabel
       ? [
           {
@@ -150,22 +147,23 @@ export function GroupSidebarItem({
           <GroupStatusIndicator status={status} />
         </button>
 
-        <GroupPendingIndicator groupId={gid} groupName={group.title || gid} />
-        {connection?.count && onOpenConnections ? (
-          <div className="flex w-[44px] shrink-0 justify-end">
-            <GroupConnectionBadge connection={connection} onClick={onOpenConnections} compact />
-          </div>
-        ) : null}
-        {menu.available && (
-          <div className="flex w-8 shrink-0 justify-end pointer-coarse:w-[44px]">
+        {/* Fixed slots, present on every row, keep the status, pending count and menu
+            in the same columns whether or not a row has pending replies. The connection
+            count is in the menu. */}
+        <div className="flex w-11 shrink-0 justify-end md:w-10 pointer-coarse:w-11">
+          <GroupPendingIndicator groupId={gid} groupName={group.title || gid} />
+        </div>
+        <div className="flex w-8 shrink-0 justify-end pointer-coarse:w-[44px]">
+          {menu.available && (
             <GroupItemMenuTrigger
+              touchTarget
               isActive={isActive}
               label={menuAriaLabel || menuActionLabel || connectionsLabel || ""}
               open={menu.open}
               onToggle={menu.toggle}
             />
-          </div>
-        )}
+          )}
+        </div>
       </div>
       {menu.menu}
     </div>

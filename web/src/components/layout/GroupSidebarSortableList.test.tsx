@@ -154,6 +154,65 @@ describe("GroupSidebarSortableList mobile controls", () => {
     expect(document.activeElement).toBe(trigger);
   });
 
+  it("keeps every row's columns, and carries the connection count in the menu", async () => {
+    const future = new Date(Date.now() + 60_000).toISOString();
+    const past = new Date(Date.now() - 60_000).toISOString();
+    const render = (summary: { counts: Record<string, number | null>; expires_at: string }) =>
+      act(async () =>
+        root.render(
+          <GroupSidebarSortableList
+            groups={[...groups, { group_id: "g_gamma", title: "Gamma" } as GroupMeta]}
+            section="working"
+            selectedGroupId="g_beta"
+            isDark
+            isCollapsed={false}
+            menuActionLabel="Archive"
+            menuAriaLabel="Actions"
+            onMenuAction={vi.fn()}
+            connectionsLabel="Group connections"
+            connectionSummary={summary}
+            onOpenConnections={vi.fn()}
+            onReorderSection={vi.fn()}
+            onSelectGroup={vi.fn()}
+            onClose={vi.fn()}
+          />,
+        ),
+      );
+    await render({ counts: { g_alpha: 7, g_beta: null }, expires_at: future });
+    // No connection control on the rows; each row has the same two trailing slots.
+    expect(host.querySelector('[aria-label^="groupConnections."]')).toBeNull();
+    const rows = [...host.querySelectorAll('[aria-current], button[role="button"]')];
+    expect(rows.map((row) => row.textContent)).toEqual(["Alpha", "Beta", "Gamma"]);
+    rows.forEach((row) => expect(row.parentElement?.children).toHaveLength(3));
+    expect(host.querySelector('button[aria-label="Actions · Alpha"]')!.className).toContain(
+      "pointer-coarse:min-w-[44px]",
+    );
+    const open = async (title: string) => {
+      await act(async () =>
+        host.querySelector<HTMLButtonElement>(`button[aria-label="Actions · ${title}"]`)!.click(),
+      );
+      return document.querySelector<HTMLButtonElement>('[role="menuitem"]')!;
+    };
+    const alpha = await open("Alpha");
+    expect(alpha.textContent).toBe("Group connections · 7");
+    expect(alpha.getAttribute("aria-label")).toBe("groupConnections.count");
+    alpha.focus();
+    // A new count while the menu is open updates the entry without replacing it.
+    await render({ counts: { g_alpha: 8, g_beta: null }, expires_at: future });
+    expect(document.activeElement).toBe(alpha);
+    expect(alpha.textContent).toBe("Group connections · 8");
+    await act(async () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })));
+    // Unknown and expired counts show "?"; a Group without connections keeps the plain entry.
+    expect((await open("Beta")).textContent).toBe("Group connections · ?");
+    await act(async () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })));
+    await render({ counts: { g_alpha: 7 }, expires_at: past });
+    expect((await open("Alpha")).textContent).toBe("Group connections · ?");
+    await act(async () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })));
+    const gamma = await open("Gamma");
+    expect(gamma.textContent).toBe("Group connections");
+    expect(gamma.hasAttribute("aria-label")).toBe(false);
+  });
+
   it("reorders within the section from the keyboard and clamps at the edges", async () => {
     const onReorderSection = vi.fn();
     await act(async () =>
