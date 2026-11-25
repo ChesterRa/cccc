@@ -28,6 +28,8 @@ export function GroupItemMenuTrigger({
         // Touch devices have no hover state to reveal the trigger from, so it
         // stays visible whenever the primary pointer is coarse.
         "pointer-events-none shrink-0 text-[var(--color-text-tertiary)] opacity-0 max-md:pointer-events-auto max-md:opacity-100 pointer-coarse:pointer-events-auto pointer-coarse:opacity-100 group-hover/item:pointer-events-auto group-hover/item:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100",
+        // As tall as a compact list row on desktop, so the trigger never sets the row height.
+        "md:h-7 md:w-7",
         touchTarget && "pointer-coarse:min-h-[44px] pointer-coarse:min-w-[44px]",
         open &&
           "pointer-events-auto opacity-100 bg-[var(--glass-tab-bg)] border-[var(--glass-border-subtle)] text-[var(--color-text-primary)] shadow-sm",

@@ -200,7 +200,7 @@ export function SortableGroupItem({
           aria-current={isActive ? "page" : undefined}
           aria-keyshortcuts={keyboardReorder ? "Alt+ArrowUp Alt+ArrowDown" : undefined}
           className={classNames(
-            "flex-1 min-w-0 min-h-[44px] md:min-h-8 pointer-coarse:min-h-[44px] flex items-center justify-between gap-2 text-left",
+            "flex-1 min-w-0 min-h-[44px] md:min-h-7 pointer-coarse:min-h-[44px] flex items-center justify-between gap-2 text-left",
             !dragDisabled && "!cursor-grab active:!cursor-grabbing",
           )}
           onClick={onSelect}
@@ -225,10 +225,10 @@ export function SortableGroupItem({
               for an expand or collapse control. */}
           <GroupStatusIndicator status={status} />
         </button>
-        {/* Fixed slots, present on every row, keep the status, pending count and menu
-            in the same columns whether or not a row has pending replies. The connection
+        {/* The pending count takes room only when a row has replies waiting, so the status
+            sits beside the menu otherwise. The menu keeps a fixed slot; the connection
             count is in the menu. */}
-        <div className="flex w-11 shrink-0 justify-end md:w-10 pointer-coarse:w-11">
+        <div className="flex shrink-0 justify-end empty:hidden">
           <GroupPendingIndicator groupId={gid} groupName={group.title || gid} />
         </div>
         <div className="flex w-8 shrink-0 justify-end pointer-coarse:w-[44px]">

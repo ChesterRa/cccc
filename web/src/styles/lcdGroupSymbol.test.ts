@@ -4,8 +4,8 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath, URL as NodeURL } from "node:url";
 const css = readFileSync(fileURLToPath(new NodeURL("./lcd.css", import.meta.url)), "utf8");
 
-// Only the run triangle takes a colour, defined for both themes; every other state is
-// told apart by its shape alone.
+// Only the run triangle takes a colour of its own, defined for both themes; every other
+// state is told apart by its shape alone.
 it("colours the run symbol alone, in both themes", () => {
   const style = document.createElement("style");
   style.textContent = css;
@@ -16,9 +16,11 @@ it("colours the run symbol alone, in both themes", () => {
     );
     const rule = (selector: string) => rules.find((item) => item.selectorText === selector);
     expect(rule(':root[data-ui-style="lcd"]')?.style.getPropertyValue("--lcd-run")).toBeTruthy();
+    // The running triangle is plain white in the dark theme, a step above the other
+    // symbols' ink, never a hue.
     expect(
-      rule(':root[data-ui-style="lcd"].dark')?.style.getPropertyValue("--lcd-run"),
-    ).toBeTruthy();
+      rule(':root[data-ui-style="lcd"].dark')?.style.getPropertyValue("--lcd-run").trim(),
+    ).toBe("#ffffff");
     const coloured = rules.filter(
       (item) => item.selectorText.includes(".lcd-group-symbol") && item.style.color,
     );

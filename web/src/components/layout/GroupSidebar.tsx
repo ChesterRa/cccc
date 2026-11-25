@@ -275,7 +275,9 @@ export function GroupSidebar({
         );
       }
       return (
-        <div className={classNames(isCollapsed ? "flex flex-col items-center gap-2" : "space-y-1")}>
+        <div
+          className={classNames(isCollapsed ? "flex flex-col items-center gap-2" : "space-y-0.5")}
+        >
           {groups.map((g) => {
             const gid = String(g.group_id || "");
             return (

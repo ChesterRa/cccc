@@ -37,4 +37,4 @@ export function groupSidebarScrollClass(isCollapsed: boolean): string {
 
 // Shared density for sortable and read-only rows; touch targets stay at least 44px.
 export const groupSidebarRowClass =
-  "w-full px-2 py-1.5 md:py-0.5 !rounded-lg transition-colors min-h-[44px] md:min-h-9 pointer-coarse:min-h-[44px] pointer-coarse:py-1.5 flex items-center gap-1.5 relative";
+  "w-full px-2 py-1.5 md:py-0 !rounded-lg transition-colors min-h-[44px] md:min-h-7 pointer-coarse:min-h-[44px] pointer-coarse:py-1.5 flex items-center gap-1.5 relative";
