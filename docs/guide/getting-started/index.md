@@ -4,7 +4,7 @@ Get CCCC running in 10 minutes.
 
 ## Choose Your Approach
 
-CCCC offers two ways to get started:
+CCCC offers three ways to get started:
 
 <div class="vp-card-container">
 
@@ -51,12 +51,13 @@ Macs.
   - [Codex CLI](https://github.com/openai/codex)
   - [GitHub Copilot CLI](https://docs.github.com/en/copilot/reference/copilot-cli-reference)
   - [Cursor CLI](https://cursor.com/docs/cli/overview)
-  - [Devin CLI](https://docs.devin.ai/ja/cli)
+  - [Devin CLI](https://docs.devin.ai/cli)
   - [Kiro CLI](https://kiro.dev/docs/cli/)
   - [Kilo Code CLI](https://kilo.ai/docs/code-with-ai/platforms/cli)
   - [Antigravity CLI](https://antigravity.google/docs/cli-overview)
   - [Kimi Code](https://github.com/MoonshotAI/kimi-code)
-- Or a ChatGPT account with remote MCP connector support for the ChatGPT Web Model runtime
+  - Plus Cline, Droid, Amp, Auggie, Grok Build, Hermes, OpenCode, Pi, DeepSeek Harness, and more — see [Supported Runtimes](../runtimes)
+- Or a supported Web model runtime (`web_model`, `chatgpt_dots`, `grok_web_model`)
 - Or a custom runtime command if you wire MCP manually
 
 The MCP JavaScript code mode (`cccc_code_exec` / `cccc_code_wait`) additionally

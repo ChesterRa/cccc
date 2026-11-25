@@ -208,7 +208,7 @@ Chet は CCCC インスタンス全体で 1 つのアシスタントで、どの
 | Web モデル | ChatGPT Web（`web_model`）、ChatGPT Dots（`chatgpt_dots`）、Grok Bot Web Model（`grok_web_model`） |
 | 任意のコマンド | `custom` |
 
-これらのランタイムの MCP は CCCC が自動で設定します。例外は 3 つです。Cursor のターミナルでは、`cccc setup --runtime cursor` が Cursor 内で実行するプロンプトを表示します。Web モデルはリモート MCP コネクターを使います。`custom` は手動で設定します。Antigravity の ACP モードでは、別に一度だけログインが必要です：`cccc setup --runtime antigravity --runtime-mode acp --login`。`cccc runtime list` で、この環境で使えるランタイムを確認できます（`--all` で `custom` も表示）。
+これらのランタイムの MCP は CCCC が自動で設定します。例外は 2 つです。Web モデルはリモート MCP コネクターを使い、`custom` は手動で設定します。Antigravity の ACP モードでは、別に一度だけログインが必要です：`cccc setup --runtime antigravity --runtime-mode acp --login`。`cccc runtime list` で、この環境で使えるランタイムを確認できます（`--all` で `custom` も表示）。
 
 Web モデルには、それぞれ専用の設定が必要です。ChatGPT Web は、ブラウザー経由の配信と、公開 HTTPS URL 上のリモート MCP コネクターを使います。実験的な **GPT Pro** モードでは、ごく小さな空白の PNG を添付します。ChatGPT Dots は、ChatGPT のイベントで起動するタスクを使います。Grok Bot Web Model は、既存の `https://grok.com/bot/<UUID>` の Webhook Routine を使います。[対応ランタイムのガイド](https://chesterra.github.io/cccc/guide/runtimes)、[ChatGPT Web](https://chesterra.github.io/cccc/guide/web-model-runtime)、[Dots](https://chesterra.github.io/cccc/guide/runtimes#chatgpt-dots)、[Grok Bot](https://chesterra.github.io/cccc/guide/grok-web-model-runtime) を参照してください。
 
@@ -274,6 +274,7 @@ cccc actor restart <agent_id>                   # ほかに start、stop。一�
 cccc sessions enable --runtime codex            # または claude、pi、opencode
 cccc sessions list
 cccc sessions join --group <group_id> --sources <source_id>
+cccc sessions node host                         # 別マシンのネイティブセッションをペアリング（ほかに connect、status、stop、revoke）
 
 cccc send "Please coordinate the next step." --to "@foreman"
 cccc tracked-send "Implement the feature." --to <agent_id> --title "Feature" --outcome "Done and validated"

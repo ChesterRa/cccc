@@ -72,9 +72,6 @@ impl AgentRuntimeSettings {
     }
 }
 
-/// Compatibility name for the first Codex-only settings implementation.
-pub type CodexVoiceAnalystSettings = AgentRuntimeSettings;
-
 #[derive(Debug, Clone, Default, Deserialize)]
 struct AgentRuntimeSettingsWire {
     #[serde(default)]

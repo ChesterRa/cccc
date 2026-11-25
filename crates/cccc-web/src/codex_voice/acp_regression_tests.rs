@@ -1,6 +1,6 @@
 //! Offline provider protocol and isolated launch state; no real calls or login.
 use super::*;
-use cccc_contracts::{ActorRuntime, CodexVoiceAnalystSettings, RuntimeMode};
+use cccc_contracts::{ActorRuntime, AgentRuntimeSettings, RuntimeMode};
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, os::unix::fs::PermissionsExt, time::Duration};
 
@@ -47,7 +47,7 @@ pub(super) async fn fixture() -> (
     tempfile::TempDir,
     HomeLayout,
     CodexVoiceSessions,
-    CodexVoiceAnalystSettings,
+    AgentRuntimeSettings,
     BTreeMap<String, String>,
 ) {
     fixture_with_source(include_str!(
@@ -62,7 +62,7 @@ async fn fixture_with_source(
     tempfile::TempDir,
     HomeLayout,
     CodexVoiceSessions,
-    CodexVoiceAnalystSettings,
+    AgentRuntimeSettings,
     BTreeMap<String, String>,
 ) {
     let (temp, home, sessions, settings, env) = cold_fixture_with_source(source);
@@ -86,7 +86,7 @@ fn cold_fixture_with_source(
     tempfile::TempDir,
     HomeLayout,
     CodexVoiceSessions,
-    CodexVoiceAnalystSettings,
+    AgentRuntimeSettings,
     BTreeMap<String, String>,
 ) {
     let temp = tempfile::tempdir().expect("fixture");
@@ -95,7 +95,7 @@ fn cold_fixture_with_source(
     let program = temp.path().join("devin");
     std::fs::write(&program, source).expect("protocol fixture");
     std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o700)).expect("executable");
-    let settings = CodexVoiceAnalystSettings {
+    let settings = AgentRuntimeSettings {
         runtime: ActorRuntime::Devin,
         runtime_mode: RuntimeMode::Acp,
         command: vec![program.to_string_lossy().into_owned()],
@@ -203,7 +203,7 @@ impl ChetHttpFixture {
         std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700))
             .expect("fixture executable");
         let root = self._temp.path().join("opencode-events");
-        let settings = CodexVoiceAnalystSettings {
+        let settings = AgentRuntimeSettings {
             runtime: ActorRuntime::Opencode,
             runtime_mode: RuntimeMode::Default,
             command: vec![executable.to_string_lossy().into_owned()],
@@ -2629,7 +2629,7 @@ async fn empty_acp_settings_replacement_and_rollback_do_not_load_unpersisted_ses
     profiles
         .replace_secrets("ap_fixture", env)
         .expect("profile env");
-    let linked = CodexVoiceAnalystSettings {
+    let linked = AgentRuntimeSettings {
         profile_id: "ap_fixture".into(),
         ..Default::default()
     };
@@ -2651,7 +2651,7 @@ async fn empty_acp_settings_replacement_and_rollback_do_not_load_unpersisted_ses
             .thread_id(),
         old_id
     );
-    let broken = CodexVoiceAnalystSettings {
+    let broken = AgentRuntimeSettings {
         command: vec![
             temp.path()
                 .join("missing/devin")

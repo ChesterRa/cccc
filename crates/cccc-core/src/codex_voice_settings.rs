@@ -1,7 +1,7 @@
 use crate::HomeLayout;
 use crate::fs::{read_json, with_exclusive_lock, write_secret_json};
 use crate::profiles::ProfileStore;
-use cccc_contracts::{ActorRuntime, CodexVoiceAnalystSettings};
+use cccc_contracts::{ActorRuntime, AgentRuntimeSettings};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -175,11 +175,11 @@ pub fn supports_structured_runtime(
         && (!runtime.supports_acp_mode() || mode == cccc_contracts::RuntimeMode::Acp)
 }
 
-pub fn load(home: &HomeLayout) -> io::Result<CodexVoiceAnalystSettings> {
+pub fn load(home: &HomeLayout) -> io::Result<AgentRuntimeSettings> {
     Ok(crate::settings::load(home)?.codex_voice.analyst)
 }
 
-pub fn save(home: &HomeLayout, value: &CodexVoiceAnalystSettings) -> io::Result<()> {
+pub fn save(home: &HomeLayout, value: &AgentRuntimeSettings) -> io::Result<()> {
     let value = normalize(value.clone())?;
     crate::settings::update(home, |settings| {
         settings.codex_voice.analyst = value;
@@ -187,14 +187,14 @@ pub fn save(home: &HomeLayout, value: &CodexVoiceAnalystSettings) -> io::Result<
     })
 }
 
-pub fn normalize(mut value: CodexVoiceAnalystSettings) -> io::Result<CodexVoiceAnalystSettings> {
+pub fn normalize(mut value: AgentRuntimeSettings) -> io::Result<AgentRuntimeSettings> {
     validation::normalize(&mut value)?;
     Ok(value)
 }
 
 pub fn resolve(
     home: &HomeLayout,
-    settings: &CodexVoiceAnalystSettings,
+    settings: &AgentRuntimeSettings,
     custom_environment: &BTreeMap<String, String>,
 ) -> io::Result<ResolvedAgentRuntime> {
     let settings = normalize(settings.clone())?;

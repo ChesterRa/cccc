@@ -42,9 +42,12 @@ pip install -U cccc-sdk
 
 # TypeScript
 npm install cccc-sdk
+
+# Rust
+cargo add cccc-sdk
 ```
 
-For the current Rust crate version and Cargo setup, see the
+For crate details and Cargo examples, see the
 [SDK repository](https://github.com/ChesterRa/cccc-sdk#quick-start-rust).
 
 ## Runtime Requirement
@@ -70,8 +73,8 @@ Typical production setup:
 
 - SDK and core are released independently, but should stay on the same major/minor line for best compatibility.
 - For protocol-level details, see:
-  - `docs/standards/CCCS_V1.md`
-  - `docs/standards/CCCC_DAEMON_IPC_V1.md`
+  - [CCCS v1](../standards/CCCS_V1.md)
+  - [Daemon IPC v1](../standards/CCCC_DAEMON_IPC_V1.md)
 
 ## Next
 

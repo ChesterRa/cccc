@@ -208,7 +208,7 @@ Each agent can use a different runtime:
 | Web models | ChatGPT Web (`web_model`), ChatGPT Dots (`chatgpt_dots`), Grok Bot Web Model (`grok_web_model`) |
 | Any command | `custom` |
 
-CCCC sets up MCP for these runtimes itself, with three exceptions: for Cursor's terminal, `cccc setup --runtime cursor` prints a prompt to run inside Cursor; the Web models use a remote MCP connector; and `custom` is configured by hand. Antigravity's ACP mode needs a separate login once: `cccc setup --runtime antigravity --runtime-mode acp --login`. `cccc runtime list` shows which runtimes are available here (`--all` adds `custom`).
+CCCC sets up MCP for these runtimes itself, with two exceptions: the Web models use a remote MCP connector, and `custom` is configured by hand. Antigravity's ACP mode needs a separate login once: `cccc setup --runtime antigravity --runtime-mode acp --login`. `cccc runtime list` shows which runtimes are available here (`--all` adds `custom`).
 
 The Web models need their own setup. ChatGPT Web uses browser delivery and a remote MCP connector at a public HTTPS URL; its experimental **GPT Pro** mode attaches a tiny blank PNG. ChatGPT Dots uses ChatGPT's event-triggered tasks. Grok Bot Web Model uses a Webhook Routine on an existing `https://grok.com/bot/<UUID>`. See the [Supported Runtimes guide](https://chesterra.github.io/cccc/guide/runtimes), [ChatGPT Web](https://chesterra.github.io/cccc/guide/web-model-runtime), [Dots](https://chesterra.github.io/cccc/guide/runtimes#chatgpt-dots) and [Grok Bot](https://chesterra.github.io/cccc/guide/grok-web-model-runtime).
 
@@ -274,6 +274,7 @@ cccc actor restart <agent_id>                   # also: start, stop; cccc actor 
 cccc sessions enable --runtime codex            # or claude, pi, opencode
 cccc sessions list
 cccc sessions join --group <group_id> --sources <source_id>
+cccc sessions node host                         # pair another computer's native sessions (also: connect, status, stop, revoke)
 
 cccc send "Please coordinate the next step." --to "@foreman"
 cccc tracked-send "Implement the feature." --to <agent_id> --title "Feature" --outcome "Done and validated"

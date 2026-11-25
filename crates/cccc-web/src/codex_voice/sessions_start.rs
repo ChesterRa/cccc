@@ -851,7 +851,7 @@ mod current_tests {
     #[tokio::test]
     async fn late_claude_start_problem_does_not_overwrite_intervening_runtime_switch() {
         use super::CodexVoiceSessions;
-        use cccc_contracts::{ActorRuntime, CodexVoiceAnalystSettings};
+        use cccc_contracts::{ActorRuntime, AgentRuntimeSettings};
         use cccc_core::HomeLayout;
         use serde_json::json;
         use std::collections::BTreeMap;
@@ -859,7 +859,7 @@ mod current_tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path()).expect("home");
         home.initialize().expect("initialize");
-        let claude = CodexVoiceAnalystSettings {
+        let claude = AgentRuntimeSettings {
             runtime: ActorRuntime::Claude,
             ..Default::default()
         };
@@ -882,7 +882,7 @@ mod current_tests {
 
         // A concurrent switch away from Claude clears the problem, and a late publication
         // from the prior failed Claude start must not write it back.
-        let codex = CodexVoiceAnalystSettings {
+        let codex = AgentRuntimeSettings {
             runtime: ActorRuntime::Codex,
             ..Default::default()
         };

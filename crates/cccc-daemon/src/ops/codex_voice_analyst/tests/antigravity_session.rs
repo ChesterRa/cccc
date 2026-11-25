@@ -54,7 +54,7 @@ async fn completion(
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn antigravity_voice_default_approves_and_drains_queue_on_new_and_resumed_sessions() {
     let (temp, home) = fixture();
-    let settings = cccc_contracts::CodexVoiceAnalystSettings {
+    let settings = cccc_contracts::AgentRuntimeSettings {
         runtime: ActorRuntime::Antigravity,
         runtime_mode: RuntimeMode::Acp,
         command: Vec::new(),

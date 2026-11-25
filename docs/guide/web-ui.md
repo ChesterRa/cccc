@@ -42,14 +42,17 @@ The Web UI has these main areas:
 
 The local Group list scrolls independently from the collapsible **CCCC Connect**
 section and the Voice dock below it. CCCC Connect starts collapsed; click its heading
-to expand or collapse the instance list. The section's information button opens the full
-local instance name and public address. Group rows are more compact, while their
+to expand or collapse the instance list. The product name in the sidebar header shows
+the local instance card with its full name and copyable public address (hover on
+desktop, or tap / press Enter or Space to toggle). Group rows are more compact, while their
 ordering stays unchanged. Each row ends with the Group's status, its pending-reply
 count and its **⋮** menu, each in a fixed column; menus are visible on touchscreens.
 A Group's connection count is in its **⋮** menu, on the **Group connections** entry.
 
 The composer uses one send control with an adjacent mode arrow. The primary action
-shows the selected mode; its tooltip includes the send shortcut. Recipient chips
+shows the selected mode; its tooltip includes the active send shortcut, and its menu
+also lets each browser choose between `Ctrl+Enter` / `Cmd+Enter` (default) and `Enter`
+to send. Recipient chips
 need no separate “To” caption. A message within the Group names its recipients in the header,
 and one addressed to you shows **You** (in a read-only exhibit, **User**); a message sent to
 another Group or instance shows its destination route.
@@ -217,7 +220,12 @@ sends Group messages, independently of terminal input. Maximize opens the existi
 using the same terminal instance; close the expanded view to return to the grid. Escape and Tab
 remain terminal keys while the terminal has focus. Existing access and single-writer rules apply:
 a read-only user cannot type. Opening a view leaves any existing writer in control; use
-**Take control** to take over explicitly. An ordinary reconnect does not take control away
+**Take control** to take over explicitly. When the session owner reports PTY size
+updates (`terminal_size_updates: true`), read-only terminal windows render at the
+active writer's PTY dimensions instead of resizing to their own container, reattaching
+from a fresh snapshot when the writer resizes the PTY, and fitting their own container
+again only after taking control; otherwise (such as an older session owner) they keep
+fitting their own container. An ordinary reconnect does not take control away
 from another writer. With no existing writer, the terminal accepts input immediately.
 A reconnect that resumes contiguous output keeps the existing screen visible while catching up.
 
@@ -1233,7 +1241,7 @@ environment overrides and the inherited environment.
 ### Sending Messages
 
 1. Type in the message input at the bottom
-2. Press `Ctrl+Enter` / `Cmd+Enter`, or click Send
+2. Press `Ctrl+Enter` / `Cmd+Enter`, or click Send. You can switch the send key to `Enter` in the send button's menu (remembered per browser; `Shift+Enter` or `Alt+Enter` inserts a newline, `Ctrl+Enter` / `Cmd+Enter` still sends, and IME composition or open mention/slash menus keep `Enter`).
 
 On desktop, the input grows with its contents up to a compact height by default.
 Drag the separator above the composer to set its actual height, including for an
@@ -1648,7 +1656,7 @@ run does not prove that nothing went out.
 
 ### IM Bridge
 
-Configure Telegram, Slack, Discord, Feishu, DingTalk, WeCom, or [Mattermost](./im-bridge/mattermost) integration.
+Configure Telegram, Slack, Discord, [Mattermost](./im-bridge/mattermost), Feishu, DingTalk, WeCom, or Weixin integration.
 
 ### Group Space
 
@@ -1658,7 +1666,7 @@ agent-facing tools or the CLI. The provider-backed memory notebook is separate f
 local Group memory files; CCCC no longer automatically uploads those files. Automatic two-way
 synchronization is retired.
 
-For end-to-end setup details, see: `Group Space + NotebookLM`.
+For end-to-end setup details, see [Group Space + NotebookLM](./group-space-notebooklm).
 
 ### Theme
 
@@ -1755,7 +1763,7 @@ Some records need offline review. Stop CCCC safely, then run
 followed by `retry --id <id> --version <version>` or
 `accept --id <id> --version <version> --accept-risk`. While CCCC Web is
 running, these commands refuse to change Web's records. Do not delete files
-under `CCCC_HOME` by hand. On Linux, an agent that CCCC could not confirm after its
+under `CCCC_HOME` by hand. On Linux and native arm64 macOS, an agent that CCCC could not confirm after its
 launch is reviewed with `--owner session`; see
 [When CCCC cannot confirm an agent](operations.md#when-cccc-cannot-confirm-an-agent).
 

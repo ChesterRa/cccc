@@ -1,13 +1,13 @@
 use super::*;
 use anyhow::{Context, Result, anyhow, bail};
-use cccc_contracts::CodexVoiceAnalystSettings;
+use cccc_contracts::AgentRuntimeSettings;
 use std::collections::BTreeMap;
 
 impl CodexVoiceSessions {
     pub(crate) async fn apply_analyst_settings(
         &self,
         home: &HomeLayout,
-        settings: CodexVoiceAnalystSettings,
+        settings: AgentRuntimeSettings,
         environment_set: BTreeMap<String, String>,
         environment_unset: Vec<String>,
         environment_clear: bool,
@@ -37,7 +37,7 @@ impl CodexVoiceSessions {
     async fn apply_analyst_settings_transaction(
         &self,
         home: &HomeLayout,
-        settings: CodexVoiceAnalystSettings,
+        settings: AgentRuntimeSettings,
         environment_set: BTreeMap<String, String>,
         environment_unset: Vec<String>,
         environment_clear: bool,
@@ -253,9 +253,9 @@ impl CodexVoiceSessions {
 
 fn save_configuration(
     home: &HomeLayout,
-    settings: &CodexVoiceAnalystSettings,
+    settings: &AgentRuntimeSettings,
     environment: &BTreeMap<String, String>,
-    previous_settings: &CodexVoiceAnalystSettings,
+    previous_settings: &AgentRuntimeSettings,
     previous_environment: &BTreeMap<String, String>,
 ) -> Result<()> {
     cccc_core::codex_voice_settings::save(home, settings)?;
@@ -273,7 +273,7 @@ fn save_configuration(
 
 fn restore_configuration(
     home: &HomeLayout,
-    settings: &CodexVoiceAnalystSettings,
+    settings: &AgentRuntimeSettings,
     environment: &BTreeMap<String, String>,
 ) -> Result<()> {
     cccc_core::codex_voice_settings::save(home, settings)?;
@@ -298,7 +298,7 @@ fn validate_replacement(
 #[cfg(test)]
 mod tests {
     use super::{CodexVoiceSessions, validate_replacement};
-    use cccc_contracts::{ActorRuntime, CodexVoiceAnalystSettings};
+    use cccc_contracts::{ActorRuntime, AgentRuntimeSettings};
     use cccc_core::HomeLayout;
     use serde_json::json;
     use std::collections::BTreeMap;
@@ -316,7 +316,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path()).expect("home");
         home.initialize().expect("initialize");
-        let claude = CodexVoiceAnalystSettings {
+        let claude = AgentRuntimeSettings {
             runtime: ActorRuntime::Claude,
             ..Default::default()
         };
@@ -346,7 +346,7 @@ mod tests {
         );
 
         // Editing unrelated Claude fields (--model / generic env) keeps the workspace trust problem.
-        let claude_tweaked = CodexVoiceAnalystSettings {
+        let claude_tweaked = AgentRuntimeSettings {
             command: vec!["claude".into(), "--model".into(), "sonnet".into()],
             ..claude
         };
@@ -367,7 +367,7 @@ mod tests {
         );
 
         // Switching away from Claude while Chet is stopped clears the stale problem immediately.
-        let codex = CodexVoiceAnalystSettings {
+        let codex = AgentRuntimeSettings {
             runtime: ActorRuntime::Codex,
             ..Default::default()
         };

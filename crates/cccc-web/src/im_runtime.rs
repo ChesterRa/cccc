@@ -318,9 +318,7 @@ impl ImWorkerRegistry {
                 .install(group_id, generation, worker(tasks, no_op_stopper()))
                 .await;
         }
-        Err(format!(
-            "Rust network adapter is not migrated for platform {platform}"
-        ))
+        Err(format!("Unsupported IM platform {platform}"))
     }
 
     async fn install(

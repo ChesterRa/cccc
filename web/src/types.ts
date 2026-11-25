@@ -1489,17 +1489,6 @@ export type GroupSpaceArtifact = {
 
 export type GroupSpaceQueueSummary = { pending: number; running: number; failed: number };
 
-export type GroupSpaceMemorySyncSummary = {
-  lane: "memory" | string;
-  manifest_path: string;
-  last_scan_at?: string | null;
-  last_success_at?: string | null;
-  pending_files: number;
-  running_files: number;
-  failed_files: number;
-  blocked_files: number;
-};
-
 export type GroupSpaceJobError = { code?: string; message?: string };
 
 export type GroupSpaceJob = {
@@ -1526,46 +1515,6 @@ export type GroupSpaceStatus = {
   provider: GroupSpaceProviderState;
   bindings: Record<string, GroupSpaceBinding>;
   queue_summary: Record<string, GroupSpaceQueueSummary>;
-  sync?: GroupSpaceSyncState;
-  memory_sync?: GroupSpaceMemorySyncSummary;
-  sync_result?: GroupSpaceSyncResult | Record<string, unknown>;
-};
-
-export type GroupSpaceSyncState = {
-  available?: boolean;
-  reason?: string;
-  space_root?: string;
-  group_id?: string;
-  provider?: string;
-  remote_space_id?: string;
-  last_run_at?: string;
-  converged?: boolean;
-  unsynced_count?: number;
-  uploaded?: number;
-  updated?: number;
-  deleted?: number;
-  reused?: number;
-  last_error?: string;
-  last_fingerprint?: Record<string, unknown>;
-  errors?: Array<Record<string, unknown>>;
-};
-
-export type GroupSpaceSyncResult = {
-  ok?: boolean;
-  group_id?: string;
-  provider?: string;
-  remote_space_id?: string;
-  space_root?: string;
-  skipped?: boolean;
-  reason?: string;
-  converged?: boolean;
-  unsynced_count?: number;
-  local_files?: number;
-  uploaded?: number;
-  updated?: number;
-  deleted?: number;
-  reused?: number;
-  errors?: Array<Record<string, unknown>>;
 };
 
 export type AutomationRuleTriggerInterval = {

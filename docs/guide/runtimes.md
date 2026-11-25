@@ -902,6 +902,11 @@ fails explicitly; CCCC does not overwrite it or ask the model to repair it.
 The global entry uses `cccc mcp` on the agent's PATH and inherits instance and
 agent identity, so different installations do not pin each other to one launcher.
 
+New Antigravity native PTY launches do not install lifecycle hooks into the
+user's global Antigravity hooks configuration and use the ordinary Mail notice
+delay. A retained PTY that already carries a matching hook binding continues
+reporting its hook state until its process restarts.
+
 The complete CCCC bootstrap accompanies the first native task in one submission,
 including after a process restart. Antigravity allows a brief, cancellable
 settling interval before writing that first payload: its paste-mode signal can

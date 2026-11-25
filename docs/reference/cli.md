@@ -132,7 +132,19 @@ cccc runtime list --all # Also include the custom runtime
 
 `cccc sessions enable|disable --runtime codex|claude|pi|opencode` installs or removes the same-user native integration; `/setup` in the terminal interface runs the same enable step for the apps you pick. Use `cccc sessions list [--include-offline]`, `send --to <source_id> --text <text>`, and `create --sources <ids...>` to collaborate without pairwise invitations.
 
-Use `cccc sessions join --group <group_id> --sources <ids...>` to add sources to an existing Group, or `leave --group <group_id> --from <source_id>` to pause one source's access without stopping its native process. `recovery --group <group_id> --actor <actor_id>` reads local recovery instructions; adding `--refresh` explicitly rechecks Codex's existing receive channel. Neither form starts or resumes the native application or replays messages. See [Native sessions](../guide/local-sessions) for requirements, reload steps and lifecycle semantics.
+Use `cccc sessions join --group <group_id> --sources <ids...>` to add sources to an existing Group, or `leave --group <group_id> --from <source_id>` to pause one source's access without stopping its native process. `recovery --group <group_id> --actor <actor_id>` reads local recovery instructions; adding `--refresh` explicitly rechecks Codex's existing receive channel. Neither form starts or resumes the native application or replays messages.
+
+To pair and connect native sessions from another computer through the daemon's encrypted device-session gateway, use `cccc sessions node`:
+
+```bash
+cccc sessions node host                                     # Open the device-session gateway and print one pairing ticket
+cccc sessions node connect --runtime codex --ticket-stdin   # First-time pairing (omit --ticket-stdin to reconnect later)
+cccc sessions node status                                   # Inspect paired devices without exposing keys or secrets
+cccc sessions node stop                                     # Stop the gateway until the next pairing ticket (devices stay enrolled)
+cccc sessions node revoke --node-id <id>                    # Revoke a paired device's hub access
+```
+
+See [Native sessions](../guide/local-sessions) for requirements, pairing, reload steps and lifecycle semantics.
 
 ## Daemon Commands
 
@@ -172,6 +184,33 @@ The token-bearing Web URL is shown here; keep it private. ChatGPT/Web Model
 connector credentials are agent-specific and are managed from that agent's Web
 Model settings. Windows helper installation is not included in this release
 candidate, so Reach is unavailable there.
+
+### `cccc connect`
+
+Read cached same-account and Group connection directories without initiating a
+connection or starting agents.
+
+```bash
+cccc connect                                       # List accessible connections for the current Group
+cccc connect --instance <id> --target-group <gid>  # Inspect a specific remote target
+```
+
+### `cccc direct`
+
+Manage standalone Group connections without a CCCC account or an exposed Web UI.
+
+```bash
+cccc direct listen --bind 0.0.0.0:8847 --address 192.168.1.10:8847  # Enable the encrypted collaboration listener
+cccc direct stop                                                     # Stop the standalone collaboration listener
+cccc direct invite <group_id>                                        # Create a single-use invitation valid for 30 minutes
+cccc direct join <group_id>                                          # Read an invitation from stdin (kept out of shell history)
+cccc direct status <group_id>                                        # Show standalone connections for a Group
+cccc direct approve <group_id> <connection_id>                       # Approve a pending standalone connection
+cccc direct revoke <group_id> <connection_id>                        # Revoke a standalone invitation or approval
+cccc direct remove <group_id> <connection_id>                        # Remove a standalone Group connection
+```
+
+See [CCCC Connect](../guide/connect) for account-based and Direct connection workflows.
 
 ## Group Commands
 
@@ -508,6 +547,7 @@ cccc setup --runtime pi            # Report CCCC-owned RPC session MCP
 cccc setup --runtime kilo          # Report CCCC-owned per-session MCP for Kilo Code CLI
 cccc setup --runtime deepseek      # Install or repair the pinned DeepSeek Harness
 cccc setup --runtime antigravity   # Auto-configure for Antigravity CLI
+cccc setup --runtime antigravity --runtime-mode acp --login  # One-time login for Antigravity ACP mode
 ```
 
 Without `--runtime`, setup changes nothing. For each supported runtime it reports how members

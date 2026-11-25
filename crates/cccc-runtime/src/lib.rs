@@ -73,9 +73,9 @@ pub use manager::{
     PtyHandoff, PtyHandoffReason, reap, release_startup_input, reset_exited_startup_input, resize,
     start, start_actor_with_history, start_with_history, start_with_history_isolated_environment,
     status, stop, stop_all, stop_if_started_at, submit, submit_interruptible,
-    submit_sequence_for_new_kilo_viewer, submit_sequence_for_session_interruptible,
-    submit_sequence_for_session_with_evidence_interruptible, submit_sequence_interruptible,
-    wait_for_input_ready, wait_for_new_kilo_composer, write, write_to_session_within,
+    submit_sequence_for_new_kilo_viewer, submit_sequence_for_session_with_evidence_interruptible,
+    submit_sequence_interruptible, wait_for_input_ready, wait_for_new_kilo_composer, write,
+    write_to_session_within,
 };
 pub use output::HistoryPage;
 pub use path_form::compatible_path;

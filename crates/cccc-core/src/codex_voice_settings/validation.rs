@@ -1,4 +1,4 @@
-use cccc_contracts::CodexVoiceAnalystSettings;
+use cccc_contracts::AgentRuntimeSettings;
 use std::collections::BTreeMap;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -8,7 +8,7 @@ const MAX_COMMAND_BYTES: usize = 64 * 1024;
 const MAX_ENV_KEYS: usize = 256;
 const MAX_ENV_VALUE_CHARS: usize = 200_000;
 
-pub(super) fn normalize(value: &mut CodexVoiceAnalystSettings) -> io::Result<()> {
+pub(super) fn normalize(value: &mut AgentRuntimeSettings) -> io::Result<()> {
     if value.command.len() > MAX_COMMAND_ARGS {
         return invalid("runtime command has too many arguments");
     }

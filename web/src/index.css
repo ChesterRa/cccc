@@ -1020,54 +1020,6 @@ select {
   }
 }
 
-@keyframes shine-border-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-@keyframes shine-border-drift {
-  0% {
-    transform: rotate(0deg) scale(0.992);
-    opacity: 0.62;
-  }
-  35% {
-    transform: rotate(110deg) scale(1.02);
-    opacity: 0.94;
-  }
-  62% {
-    transform: rotate(228deg) scale(0.998);
-    opacity: 0.78;
-  }
-  100% {
-    transform: rotate(360deg) scale(0.992);
-    opacity: 0.62;
-  }
-}
-
-@keyframes shine-border-top-glow {
-  0%,
-  100% {
-    opacity: 0.36;
-    transform: translateY(-2px) scale(0.96);
-  }
-  28% {
-    opacity: 0.96;
-    transform: translateY(0) scale(1.04);
-  }
-  58% {
-    opacity: 0.52;
-    transform: translateY(1px) scale(0.985);
-  }
-  100% {
-    opacity: 0.36;
-    transform: translateY(-2px) scale(0.96);
-  }
-}
-
 .glow-pulse {
   animation: none;
 }
@@ -1215,19 +1167,6 @@ select {
   animation: subtle-pulse 2s ease-in-out infinite;
 }
 
-@keyframes stream-text-blur-in-up {
-  from {
-    opacity: 0;
-    filter: blur(7px);
-    transform: translateY(0.35em);
-  }
-  to {
-    opacity: 1;
-    filter: blur(0);
-    transform: translateY(0);
-  }
-}
-
 @keyframes voice-transcript-level {
   from {
     opacity: 0.48;
@@ -1239,33 +1178,11 @@ select {
   }
 }
 
-.stream-text-animate {
-  display: inline;
-}
-
-.stream-text-animate-segment {
-  display: inline-block;
-  opacity: 0;
-  transform: translateY(0.35em);
-  filter: blur(7px);
-  animation: stream-text-blur-in-up var(--stream-text-duration, 260ms) cubic-bezier(0.16, 1, 0.3, 1)
-    forwards;
-  animation-delay: var(--stream-text-delay, 0ms);
-  will-change: opacity, filter, transform;
-}
-
 @media (prefers-reduced-motion: reduce) {
   [style*="voice-transcript-level"] {
     animation: none !important;
     opacity: 0.72;
     transform: scaleY(0.72);
-  }
-
-  .stream-text-animate-segment {
-    opacity: 1;
-    filter: none;
-    transform: none;
-    animation: none;
   }
 }
 

@@ -4,7 +4,7 @@ use crate::api::{ApiError, ApiResult, success};
 use crate::routes::codex_voice::payload;
 use axum::Json;
 use axum::extract::State;
-use cccc_contracts::CodexVoiceAnalystSettings;
+use cccc_contracts::AgentRuntimeSettings;
 use cccc_daemon::experimental_codex_voice::{DEFAULT_REALTIME_VOICE, RealtimeCallConfig};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -199,7 +199,7 @@ pub(in crate::routes::codex_voice) async fn update_analyst_settings(
     })))
 }
 
-fn parse_analyst_settings(mut value: Value) -> anyhow::Result<CodexVoiceAnalystSettings> {
+fn parse_analyst_settings(mut value: Value) -> anyhow::Result<AgentRuntimeSettings> {
     if let Some(command) = value
         .as_object_mut()
         .and_then(|settings| settings.get_mut("command"))

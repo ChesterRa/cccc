@@ -14,7 +14,6 @@ use std::time::Duration;
 mod submission;
 pub use submission::{
     PtyHandoff, PtyHandoffReason, submit_sequence_for_new_kilo_viewer,
-    submit_sequence_for_session_interruptible,
     submit_sequence_for_session_with_evidence_interruptible, submit_sequence_interruptible,
 };
 

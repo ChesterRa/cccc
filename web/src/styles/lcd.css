@@ -1623,14 +1623,6 @@
   animation: none;
 }
 
-/* Streamed text lands at once, as on a terminal: the reduced-motion presentation. */
-:root[data-ui-style="lcd"] [data-lcd-scope] .stream-text-animate-segment {
-  opacity: 1;
-  filter: none;
-  transform: none;
-  animation: none;
-}
-
 /* Sidebar: the open Group is set in reverse; status is a shape, never only a colour. */
 :root[data-ui-style="lcd"] [data-lcd-scope] .glass-group-item-active {
   border-color: var(--lcd-sel-bg);

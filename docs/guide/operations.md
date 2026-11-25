@@ -98,7 +98,7 @@ yourself keep running. On Linux and Apple Silicon Macs running the native arm64 
 | Groups, messages, tasks, context, automation rules | Kept; they are files in `CCCC_HOME`. Each Group keeps its state, and the agents of a stopped Group are not started. |
 | Message delivery | Delivery, read and reply records are kept. Send messages not yet handed over are delivered. A handoff without a recorded result becomes uncertain and is not resent; see [Delivery and recovery](runtimes.md#delivery-and-recovery). |
 | Agents CCCC manages | CCCC tries to start the enabled agents of a running Group again; in a paused Group, headless agents are not started. The live terminal, its input mode and its output buffer are not carried over, and a turn that was running does not continue. Whether an agent picks up its previous conversation depends on its [runtime](runtimes.md). With durable persistence on, earlier terminal output stays readable ([Terminal history](terminal-history.md#cursor-and-restart-boundaries)). |
-| [Sessions you started](local-sessions.md) | They keep running, but CCCC tool calls fail while the daemon is down. Their receive channel reconnects after start, and messages waiting for them are delivered. |
+| [Sessions you started](local-sessions.md) | They keep running, but CCCC tool calls fail while the daemon is down. Their receive channel reconnects after start, and messages waiting for them are delivered. Paired remote device sessions are hosted by the daemon: restarting only Web keeps direct device connections up, while restarting the daemon closes the gateway on shutdown and restores a configured gateway with enabled devices once the daemon listener is ready. |
 | Automation | Rules and their schedule clocks are kept. An enabled rule whose clock fell due while the daemon was down fires once, on the first scheduler tick that can carry it out: nothing runs while its Group is paused or stopped, and a notification with no enabled recipient waits. Resuming a paused Group resets the clocks, so runs missed while it was paused are skipped. |
 | [Voice secretary](voice-secretary.md) | Its shared conversation is not restored. |
 | [CCCC Connect](connect.md) | Pairing, queued messages and bounded retries continue. |
@@ -296,7 +296,7 @@ first; the installer refuses `pip-v1` ownership even when
 ```bash
 cccc doctor
 cccc daemon status
-cccc mcp
+cccc runtime list
 ```
 
 Run a small end-to-end smoke:

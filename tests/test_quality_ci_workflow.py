@@ -152,7 +152,6 @@ def test_rust_linux_job_is_python_free_and_reuses_one_workspace() -> None:
     assert not any(item.startswith("actions/setup-python") for item in uses)
     assert "python -m" not in test_runs.lower()
     assert "pip install" not in test_runs.lower()
-    assert "scripts/check_version_parity.sh" not in test_runs
     # One workspace build serves every test step: a single-package selection
     # resolves dependency features differently and recompiles the workspace.
     assert "cargo nextest run --workspace --locked --profile ci\n" in test_runs

@@ -4,7 +4,7 @@ layout: home
 hero:
   name: CCCC
   text: Coordinate coding agents like a group chat
-  tagline: Read receipts, delivery tracking, and phone-side ops across 17 first-class runtimes, including Claude Code, Cline, Codex, and ChatGPT Web — local-first, one native product
+  tagline: Read receipts, delivery tracking, and phone-side ops across 21 first-class runtimes, including Claude Code, Cline, Codex, and ChatGPT Web — local-first, one native product
   image:
     src: /logo.svg
     alt: CCCC
@@ -37,5 +37,5 @@ features:
     details: Combine reminders, one-time operational actions, and policy guardrails to keep groups moving.
   - icon: 🔌
     title: Remote-Ready by Design
-    details: Bridge to Telegram, Slack, Discord, Feishu, DingTalk, and WeCom for mobile ops and out-of-band intervention.
+    details: Bridge to Telegram, Slack, Discord, Mattermost, Feishu, DingTalk, WeCom, and Weixin for mobile ops and out-of-band intervention.
 ---

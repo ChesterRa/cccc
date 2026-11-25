@@ -24,12 +24,12 @@ async fn antigravity_voice_readiness_reports_setup_without_creating_runtime_stat
                     None,
                 )
                 .expect("save profile");
-            cccc_contracts::CodexVoiceAnalystSettings {
+            cccc_contracts::AgentRuntimeSettings {
                 profile_id: "agy-acp".into(),
                 ..Default::default()
             }
         } else {
-            cccc_contracts::CodexVoiceAnalystSettings {
+            cccc_contracts::AgentRuntimeSettings {
                 runtime: cccc_contracts::ActorRuntime::Antigravity,
                 runtime_mode: cccc_contracts::RuntimeMode::Acp,
                 command: vec!["agy".into()],
@@ -82,7 +82,7 @@ async fn antigravity_voice_readiness_reports_setup_without_creating_runtime_stat
 #[cfg(unix)]
 #[tokio::test]
 async fn optional_acp_voice_readiness_uses_the_selected_cli_for_empty_commands() {
-    use cccc_contracts::{ActorRuntime, CodexVoiceAnalystSettings, RuntimeMode};
+    use cccc_contracts::{ActorRuntime, AgentRuntimeSettings, RuntimeMode};
     use std::{collections::BTreeMap, os::unix::fs::PermissionsExt};
 
     for (runtime, name, program) in [
@@ -109,7 +109,7 @@ async fn optional_acp_voice_readiness_uses_the_selected_cli_for_empty_commands()
             .expect("owned CLI fixture");
             std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700))
                 .expect("executable fixture");
-            let settings = CodexVoiceAnalystSettings {
+            let settings = AgentRuntimeSettings {
                 runtime,
                 runtime_mode: RuntimeMode::Acp,
                 command: vec![],
@@ -447,7 +447,7 @@ async fn admin_can_recover_from_a_deleted_runtime_profile_binding() {
     home.initialize().expect("initialize");
     cccc_core::codex_voice_settings::save(
         &home,
-        &cccc_contracts::CodexVoiceAnalystSettings {
+        &cccc_contracts::AgentRuntimeSettings {
             profile_id: "deleted-profile".into(),
             ..Default::default()
         },

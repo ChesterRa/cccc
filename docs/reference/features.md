@@ -297,6 +297,7 @@ Progressive rendering is never the durability boundary. Every platform falls bac
 | Telegram | ✅ Complete | `token_env` |
 | Slack | ✅ Complete | `bot_token_env` + `app_token_env` |
 | Discord | ✅ Complete | `token_env` |
+| Mattermost | ✅ Complete | `mattermost_url` + `bot_token_env` |
 | Feishu/Lark | ✅ Complete | `feishu_app_id_env` + `feishu_app_secret_env` |
 | DingTalk | ✅ Complete | `dingtalk_app_key_env` + `dingtalk_app_secret_env` (+ optional `dingtalk_robot_code_env`) |
 | WeCom | ✅ Complete | Web-configured Bot ID / Secret flow |
@@ -523,28 +524,27 @@ cccc_automation(action=run_now, rule_id=..., expected_version=...)
 
 ## Web UI
 
-### Agent-as-Tab Mode
+### Views and Layout
 
-- Each agent is a tab
-- Chat tab + Agent tabs
-- Click tab to switch view
-- Mobile: swipe to switch
+- **Messages** and **Terminals** views in the Group header (Terminals shows up to four agents per page with direct keyboard input and explicit single-writer control)
+- **Waiting for you**, **All**, **Pinned**, and **User-related** message tabs
+- **Chet** global assistant dock below the Group list (with optional Voice and experimental Unattended mode)
+- Mobile responsive layout with touch-friendly menus
 
 ### Main Features
 
-- Group management (create/edit/delete)
-- Actor management (add/start/stop/edit/delete)
-- Message sending (@mention autocomplete)
-- Message reply (quote display)
-- Embedded terminal (xterm.js)
-- Context panel (vision/sketch/tasks)
-- Settings panel (automation config)
-- IM Bridge configuration
+- Group management (create/edit/delete, Copy Groups export/import, CCCC Connect)
+- Agent management (add/start/stop/restart/edit/delete, plus **Add existing sessions** from local or paired computers)
+- Message sending (`@` agent mentions, `#` Group mentions, configurable send key, reply/quote, forward, pin, audio chip playback)
+- Embedded terminals (xterm.js with single-writer control and owner-reported PTY sizing for read-only views)
+- **Project Context** (**Tasks** + repository **Backlog**, **AGENTS.md**, **Agent State**, **Skills**)
+- **Files** browser/editor and **Presentation** (four pinned slots)
+- **Settings** (This group: Guidance, Automation, Delivery, Messaging, IM Bridge; This instance: Account, Web Access, Session access, Notifications, Voice)
 
 ### Theme System
 
-- Light / Dark / System
-- CSS variables define all colors
+- Light / Dark / Auto (follows the system setting)
+- Body font (Sans, Mono, Pixel), message area width, motion, and text size controls
 - Terminal colors adapt automatically
 
 ### Remote Access
@@ -574,6 +574,7 @@ Recommended options:
 | codex | `codex` | Codex CLI |
 | copilot | `copilot` | GitHub Copilot CLI |
 | cursor | `cursor-agent` | Cursor CLI |
+| deepseek | `dsh` | DeepSeek Harness (developer preview) |
 | devin | `devin` | Devin CLI |
 | kiro | `kiro-cli` | Kiro CLI |
 | kilo | `kilo` | Kilo Code CLI |
@@ -583,6 +584,7 @@ Recommended options:
 | hermes | `hermes` | Hermes Agent |
 | kimi | `kimi` | Kimi Code |
 | opencode | `opencode` | OpenCode |
+| pi | `pi` | Pi (structured RPC session, no terminal) |
 | grok_web_model | Grok Bot conversation | Shared Grok login and connector, per-Actor Bot URL and per-call routing credential; no pairing handshake |
 | web_model | ChatGPT Web conversation | ChatGPT Web conversation with CCCC MCP access; optional experimental GPT Pro delivery attaches a tiny blank PNG but does not select the model or guarantee connector availability |
 | chatgpt_dots | ChatGPT Dots | One Dot bound to one Actor/Group; asynchronous MCP Events delivery and task-scoped remote MCP, using the shared ChatGPT connector |
@@ -598,16 +600,22 @@ CCCC first-class runtime support is the named runtimes above. `custom` remains t
 cccc setup --runtime claude   # Report CCCC-owned per-session MCP
 cccc setup --runtime cline
 cccc setup --runtime codex
+cccc setup --runtime copilot
+cccc setup --runtime cursor
+cccc setup --runtime deepseek     # Install or repair the pinned DeepSeek Harness
+cccc setup --runtime devin
 cccc setup --runtime droid
 cccc setup --runtime amp
 cccc setup --runtime auggie
 cccc setup --runtime grok
 cccc setup --runtime hermes       # Report session-owned MCP
 cccc setup --runtime kimi
+cccc setup --runtime kiro
 cccc setup --runtime opencode
-cccc setup --runtime cursor
+cccc setup --runtime pi           # Report CCCC-owned RPC session MCP
 cccc setup --runtime kilo         # Report CCCC-owned per-session MCP
 cccc setup --runtime antigravity
+cccc setup --runtime antigravity --runtime-mode acp --login
 cccc setup --runtime custom
 ```
 

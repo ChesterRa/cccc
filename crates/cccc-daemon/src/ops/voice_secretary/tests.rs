@@ -1955,7 +1955,7 @@ fn profiles_match_analyst_structured_runtimes_and_exclude_native_tui() {
         // Reuse the existing Analyst resolver to enforce alignment.
         let analyst = cccc_core::codex_voice_settings::resolve(
             &fixture.home,
-            &cccc_contracts::CodexVoiceAnalystSettings {
+            &cccc_contracts::AgentRuntimeSettings {
                 profile_id: profile["id"].as_str().expect("id").into(),
                 ..Default::default()
             },

@@ -207,7 +207,7 @@ Chet 是整个 CCCC 实例共用的一个助手，不在任何工作组的成员
 | Web 模型 | ChatGPT Web（`web_model`）、ChatGPT Dots（`chatgpt_dots`）、Grok Bot Web Model（`grok_web_model`） |
 | 任意命令 | `custom` |
 
-这些运行时的 MCP 由 CCCC 自动配置，只有三个例外：Cursor 的终端模式需要运行 `cccc setup --runtime cursor`，它会输出一段提示词，供你在 Cursor 中执行；Web 模型使用远程 MCP 连接器；`custom` 需要手动配置。Antigravity 的 ACP 模式需要单独登录一次：`cccc setup --runtime antigravity --runtime-mode acp --login`。`cccc runtime list` 列出本机可用的运行时（加 `--all` 会包括 `custom`）。
+这些运行时的 MCP 由 CCCC 自动配置，只有两个例外：Web 模型使用远程 MCP 连接器，`custom` 需要手动配置。Antigravity 的 ACP 模式需要单独登录一次：`cccc setup --runtime antigravity --runtime-mode acp --login`。`cccc runtime list` 列出本机可用的运行时（加 `--all` 会包括 `custom`）。
 
 Web 模型需要单独设置。ChatGPT Web 使用浏览器投递，以及一个位于公网 HTTPS URL 的远程 MCP 连接器；它的实验性 **GPT Pro** 模式会附带一张极小的空白 PNG。ChatGPT Dots 使用 ChatGPT 的事件触发任务。Grok Bot Web Model 在一个已有的 `https://grok.com/bot/<UUID>` 上使用 Webhook Routine。详见[支持的运行时指南](https://chesterra.github.io/cccc/guide/runtimes)、[ChatGPT Web](https://chesterra.github.io/cccc/guide/web-model-runtime)、[Dots](https://chesterra.github.io/cccc/guide/runtimes#chatgpt-dots) 和 [Grok Bot](https://chesterra.github.io/cccc/guide/grok-web-model-runtime)。
 
@@ -273,6 +273,7 @@ cccc actor restart <agent_id>                   # 另有：start、stop；cccc a
 cccc sessions enable --runtime codex            # 或 claude、pi、opencode
 cccc sessions list
 cccc sessions join --group <group_id> --sources <source_id>
+cccc sessions node host                         # 配对另一台电脑的原生会话（另有：connect、status、stop、revoke）
 
 cccc send "Please coordinate the next step." --to "@foreman"
 cccc tracked-send "Implement the feature." --to <agent_id> --title "Feature" --outcome "Done and validated"

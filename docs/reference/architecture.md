@@ -300,6 +300,7 @@ The authoritative shape and validation rules live in
 |-------|-----------|
 | omitted / `[]` | Materialize the group's `default_send_to` as `@foreman` or `@all` before append |
 | `user` / `@user` | The human user |
+| `@chet` | The instance's global assistant Chet (must be the sole recipient; Send or Send + Reply only, not Mail) |
 | `@all` | All actors |
 | `@peers` | All peers |
 | `@foreman` | Foreman |
@@ -403,6 +404,7 @@ crates/
 ├── cccc-core/             # Durable state and kernel
 ├── cccc-daemon/           # Control plane, delivery and managed provider adapters
 ├── cccc-runtime/          # Native process and terminal mechanisms
+├── cccc-session-node/     # Encrypted device-session gateway and remote node connector
 ├── cccc-client/           # Daemon IPC transport
 ├── cccc-web/              # Web API, embedded UI and integration hosts
 ├── cccc-mcp/              # MCP server

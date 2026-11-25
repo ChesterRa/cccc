@@ -1,18 +1,18 @@
 use super::*;
-use cccc_contracts::{ActorRuntime, CodexVoiceAnalystSettings};
+use cccc_contracts::{ActorRuntime, AgentRuntimeSettings};
 use serde_json::json;
 
 #[test]
 fn rejects_invalid_runtime_inputs() {
     assert!(
-        normalize(CodexVoiceAnalystSettings {
+        normalize(AgentRuntimeSettings {
             command: vec!["codex".into(), "".into()],
             ..Default::default()
         })
         .is_err()
     );
     assert!(
-        normalize(CodexVoiceAnalystSettings {
+        normalize(AgentRuntimeSettings {
             profile_id: "bad/profile".into(),
             ..Default::default()
         })
@@ -45,7 +45,7 @@ fn rejects_invalid_runtime_inputs() {
 
 #[test]
 fn normalizes_the_shared_runtime_command() {
-    let normalized = normalize(CodexVoiceAnalystSettings {
+    let normalized = normalize(AgentRuntimeSettings {
         command: vec![" codex ".into(), " --search ".into()],
         ..Default::default()
     })
@@ -195,7 +195,7 @@ fn kilo_identity_tracks_its_own_storage_not_transient_server_credentials() {
         .insert("KILO_DB".into(), "/tmp/kilo-b.db".into());
     assert!(runtime_identity_changed(&baseline, &changed));
     assert!(
-        normalize(CodexVoiceAnalystSettings {
+        normalize(AgentRuntimeSettings {
             runtime: ActorRuntime::Kilo,
             ..Default::default()
         })
@@ -359,7 +359,7 @@ fn resolves_the_same_runtime_profile_shape_used_by_actors() {
         .expect("profile secrets");
     let resolved = resolve(
         &home,
-        &CodexVoiceAnalystSettings {
+        &AgentRuntimeSettings {
             profile_id: "voice-codex".into(),
             ..Default::default()
         },
@@ -394,7 +394,7 @@ fn rejects_a_profile_until_its_runtime_has_a_voice_adapter() {
         .expect("save profile");
     let error = resolve(
         &home,
-        &CodexVoiceAnalystSettings {
+        &AgentRuntimeSettings {
             profile_id: "cline".into(),
             ..Default::default()
         },
@@ -416,7 +416,7 @@ fn antigravity_profiles_admit_only_acp_and_use_the_managed_provider_home() {
             None,
         ).expect("save profile");
     };
-    let settings = CodexVoiceAnalystSettings {
+    let settings = AgentRuntimeSettings {
         profile_id: "agy".into(),
         ..Default::default()
     };
@@ -467,7 +467,7 @@ fn native_acp_voice_profiles_resolve_mode_and_preserve_private_configuration() {
                     None,
                 )
                 .expect("save");
-            let settings = CodexVoiceAnalystSettings {
+            let settings = AgentRuntimeSettings {
                 profile_id: "native-acp".into(),
                 ..Default::default()
             };

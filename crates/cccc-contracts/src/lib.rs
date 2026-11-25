@@ -23,7 +23,7 @@ pub use actor::{
     Actor, ActorRole, ActorRuntime, ActorSubmit, GroupState, RunnerKind, RuntimeMode,
     RuntimeStateSource,
 };
-pub use codex_voice::{AgentRuntimeSettings, CodexVoiceAnalystSettings, CodexVoiceSettings};
+pub use codex_voice::{AgentRuntimeSettings, CodexVoiceSettings};
 pub use deepseek::{
     DEEPSEEK_ACP_SDK_VERSION, DEEPSEEK_DEFAULT_MODEL, DEEPSEEK_MAX_OUTPUT_TOKENS,
     DEEPSEEK_MODEL_ENV, DEEPSEEK_NODE_RANGE, DEEPSEEK_NPM_BEFORE, DEEPSEEK_PACKAGE,

@@ -64,27 +64,6 @@ pub fn submit_sequence_interruptible(
     .into_legacy()
 }
 
-/// Return false on cancellation or a changed terminal; this does not report
-/// whether an earlier part of the submission was written.
-pub fn submit_sequence_for_session_interruptible(
-    expected: &SessionStatus,
-    payload: &[u8],
-    submits: &[&[u8]],
-    initial_delay: Duration,
-    repeat_delay: Duration,
-    cancelled: &AtomicBool,
-) -> Result<bool, RuntimeError> {
-    submit_sequence_for_session_with_evidence_interruptible(
-        expected,
-        payload,
-        submits,
-        initial_delay,
-        repeat_delay,
-        cancelled,
-    )
-    .into_legacy()
-}
-
 /// Submit to one observed PTY and retain evidence when cancellation or I/O interrupts it.
 pub fn submit_sequence_for_session_with_evidence_interruptible(
     expected: &SessionStatus,

@@ -11,7 +11,7 @@ Native teams give you the smoothest experience inside one vendor and one session
 
 - **Cross-vendor groups** — Claude Code, Codex CLI, Grok Build, Kimi Code, ChatGPT Web, and more in one group, so you can route work to whichever model or subscription fits each role.
 - **Durable state** — groups, messages, delivery/read/reply facts, and tasks live in an append-only ledger owned by a daemon. Restarting a terminal (or your machine) does not dissolve the team.
-- **Remote operations** — check, pause, resume, and redirect a running group from Telegram, Slack, Discord, Feishu, DingTalk, WeCom, or Weixin.
+- **Remote operations** — check, pause, resume, and redirect a running group from Telegram, Slack, Discord, Mattermost, Feishu, DingTalk, WeCom, or Weixin.
 - **An audit trail** — every message and its delivery state is replayable for review and debugging.
 
 **vs. parallel task runners (worktree/task-board tools).**
@@ -211,6 +211,7 @@ fails browser startup when Xvfb is missing instead of silently falling back to t
 - Codex CLI (`codex`)
 - GitHub Copilot CLI (`copilot`)
 - Cursor CLI (`cursor-agent`)
+- DeepSeek Harness (`deepseek` / `dsh`, developer preview)
 - Devin CLI (`devin`)
 - Kiro CLI (`kiro-cli`)
 - Kilo Code CLI (`kilo`)
@@ -220,9 +221,15 @@ fails browser startup when Xvfb is missing instead of silently falling back to t
 - Hermes Agent (`hermes`)
 - Kimi Code (`kimi`)
 - OpenCode (`opencode`)
+- Pi (`pi`)
 - Amp (`amp`)
 - Auggie (`auggie`)
+- ChatGPT Web Model (`web_model`)
+- ChatGPT Dots (`chatgpt_dots`)
+- Grok Bot Web Model (`grok_web_model`)
 - Custom (manual fallback; provide your own command and MCP wiring)
+
+See [Supported Runtimes](runtimes.md) for setup details and runtime modes.
 
 ### What's the difference between Foreman and Peer?
 
@@ -320,9 +327,12 @@ CCCC supports snapshot/compaction. Large blobs are stored separately in the `blo
 
 ### What does a daemon restart keep?
 
-Groups, messages and tasks are kept. Agents that CCCC started stop with the daemon, and CCCC tries
-to start a running Group's agents again, but a turn that was running does not continue. Sessions you
-started yourself keep running. See [What a daemon restart keeps](operations.md#what-a-daemon-restart-keeps).
+Groups, messages and tasks are kept. With a normal `cccc daemon stop`, agents that CCCC started stop
+with the daemon, and CCCC tries to start a running Group's agents again, though a turn that was running
+does not continue. On Linux and Apple Silicon Macs running the native arm64 build, `cccc daemon stop --keep-agents`
+(or **Keep agents running** on restart/update) keeps managed agents and active turns running across the
+restart. Sessions you started yourself always keep running. See
+[What a daemon restart keeps](operations.md#what-a-daemon-restart-keeps).
 
 ### Why do git worktrees remain after an agent stops? {#why-do-git-worktrees-remain-after-an-actor-stops}
 
