@@ -707,6 +707,24 @@ export function AgentTab({
     return attachTerminalTouchScroll(term, canSendInput);
   }, [actor.id, groupId, isHeadless, isRunning, activated, canSendInput]);
 
+  // Size xterm's wrapper to the full followed PTY grid only while read-only,
+  // clip stale out-of-grid helper textarea coords after shrink/refit,
+  // and clear both those styles and any scroll offset when taking control.
+  useEffect(() => {
+    const termElement = terminalRef.current?.element;
+    if (termElement) {
+      termElement.style.minWidth = terminalWritable ? "" : "100%";
+      termElement.style.width = terminalWritable ? "" : "fit-content";
+      // Use `clip` (not `hidden`) so stale out-of-grid helper textarea coords do not inflate
+      // termRef's scroll size, without making `.xterm` a scroll container that traps wheel chaining.
+      termElement.style.overflow = terminalWritable ? "" : "clip";
+    }
+    if (terminalWritable && termRef.current) {
+      termRef.current.scrollLeft = 0;
+      termRef.current.scrollTop = 0;
+    }
+  }, [actor.id, groupId, isHeadless, isRunning, activated, terminalWritable]);
+
   // Fit terminal on visibility change and resize (with debounce to reduce jitter)
   useEffect(() => {
     if (!isVisible || !fitAddonRef.current) return;
@@ -1193,7 +1211,9 @@ export function AgentTab({
               className="h-full w-full transition-opacity duration-100"
               style={{
                 contain: "layout paint",
-                overflow: "hidden",
+                overflow: terminalWritable ? "hidden" : "auto",
+                overscrollBehavior: terminalWritable ? undefined : "contain",
+                backgroundColor: terminalWritable ? undefined : getTerminalTheme().background,
                 opacity: terminalReady ? 1 : 0,
               }}
             />

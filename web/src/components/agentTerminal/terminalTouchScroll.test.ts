@@ -5,13 +5,123 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import { attachTerminalTouchScroll } from "./terminalTouchScroll";
 
-function dispatchTouch(element: HTMLElement, type: string, clientY?: number): Event {
+function dispatchTouch(element: HTMLElement, type: string, clientY?: number, clientX = 120): Event {
   const event = new Event(type, { bubbles: true, cancelable: true });
   Object.defineProperty(event, "touches", {
-    value: clientY === undefined ? [] : [{ clientY, clientX: 120 }],
+    value: clientY === undefined ? [] : [{ clientY, clientX }],
   });
   element.dispatchEvent(event);
   return event;
+}
+
+function setupScrollableFollower(options: {
+  clientWidth: number;
+  scrollWidth: number;
+  clientHeight: number;
+  scrollHeight: number;
+  overflow?: string;
+  mouseTrackingMode?: string;
+  bufferType?: "normal" | "alternate";
+  baseY?: number;
+  viewportY?: number;
+  writable?: boolean;
+}) {
+  const container = document.createElement("div");
+  container.style.overflow = options.overflow ?? "auto";
+  Object.defineProperty(container, "clientWidth", {
+    value: options.clientWidth,
+    configurable: true,
+  });
+  Object.defineProperty(container, "scrollWidth", {
+    value: options.scrollWidth,
+    configurable: true,
+  });
+  Object.defineProperty(container, "clientHeight", {
+    value: options.clientHeight,
+    configurable: true,
+  });
+  Object.defineProperty(container, "scrollHeight", {
+    value: options.scrollHeight,
+    configurable: true,
+  });
+  let scrollLeft = 0;
+  let scrollTop = 0;
+  Object.defineProperty(container, "scrollLeft", {
+    get: () => scrollLeft,
+    set: (v: number) => {
+      scrollLeft = v;
+    },
+    configurable: true,
+  });
+  Object.defineProperty(container, "scrollTop", {
+    get: () => scrollTop,
+    set: (v: number) => {
+      scrollTop = v;
+    },
+    configurable: true,
+  });
+
+  const element = document.createElement("div");
+  const screen = document.createElement("div");
+  screen.className = "xterm-screen";
+  screen.getBoundingClientRect = () =>
+    ({
+      width: options.scrollWidth,
+      height: options.scrollHeight,
+      top: 0,
+      right: options.scrollWidth,
+      bottom: options.scrollHeight,
+      left: 0,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    }) as DOMRect;
+  element.appendChild(screen);
+  container.appendChild(element);
+
+  const baseY = options.baseY ?? 0;
+  let viewportY = options.viewportY ?? baseY;
+  const scrollLines = vi.fn((lines: number) => {
+    viewportY = Math.max(0, Math.min(baseY, viewportY + lines));
+  });
+  const focus = vi.fn();
+  const activeBuffer = {
+    type: options.bufferType ?? "normal",
+    get baseY() {
+      return baseY;
+    },
+    get viewportY() {
+      return viewportY;
+    },
+  };
+  const term = {
+    element,
+    rows: Math.max(1, Math.round(options.scrollHeight / 18)),
+    scrollLines,
+    focus,
+    modes: { mouseTrackingMode: options.mouseTrackingMode ?? "none" },
+    buffer: { active: activeBuffer },
+    options: { disableStdin: false },
+  } as unknown as Terminal;
+
+  let writable = options.writable ?? false;
+  const elementWheels: WheelEvent[] = [];
+  element.addEventListener("wheel", (event) => elementWheels.push(event));
+  const dispose = attachTerminalTouchScroll(term, () => writable);
+  return {
+    container,
+    element,
+    screen,
+    scrollLines,
+    focus,
+    dispose,
+    elementWheels,
+    term,
+    getViewportY: () => viewportY,
+    setWritable: (value: boolean) => {
+      writable = value;
+    },
+  };
 }
 
 function setupTerminal(mouseTrackingMode = "none", bufferType = "normal", writable = true) {
@@ -186,5 +296,153 @@ describe("terminal touch scroll", () => {
     dispose();
     expect(element.style.touchAction).toBe("");
     expect(element.style.overscrollBehavior).toBe("");
+  });
+
+  it("pans a narrow read-only follower horizontally without triggering focus or vertical jitter", () => {
+    const { container, element, scrollLines, focus } = setupScrollableFollower({
+      clientWidth: 390,
+      scrollWidth: 1017,
+      clientHeight: 691,
+      scrollHeight: 540,
+      baseY: 50,
+    });
+
+    dispatchTouch(element, "touchstart", 200, 320);
+    dispatchTouch(element, "touchmove", 185, 120);
+    dispatchTouch(element, "touchmove", 170, -400);
+    dispatchTouch(element, "touchend");
+
+    expect(container.scrollLeft).toBe(627);
+    expect(scrollLines).not.toHaveBeenCalled();
+    expect(focus).not.toHaveBeenCalled();
+  });
+
+  it("pans both axes in an overflowing read-only alternate-buffer follower without sending wheel input", () => {
+    const { container, element, scrollLines, elementWheels } = setupScrollableFollower({
+      clientWidth: 572,
+      scrollWidth: 1017,
+      clientHeight: 300,
+      scrollHeight: 540,
+      bufferType: "alternate",
+      mouseTrackingMode: "vt200",
+    });
+
+    dispatchTouch(element, "touchstart", 240, 300);
+    dispatchTouch(element, "touchmove", 60, 40);
+    dispatchTouch(element, "touchmove", -40, -260);
+    dispatchTouch(element, "touchend");
+
+    expect(container.scrollLeft).toBe(445);
+    expect(container.scrollTop).toBe(240);
+    expect(scrollLines).not.toHaveBeenCalled();
+    expect(elementWheels).toHaveLength(0);
+  });
+
+  it("bridges normal-buffer scrollback and vertical container overflow seamlessly on touch", () => {
+    const { container, element, scrollLines, getViewportY } = setupScrollableFollower({
+      clientWidth: 572,
+      scrollWidth: 1017,
+      clientHeight: 300,
+      scrollHeight: 540,
+      bufferType: "normal",
+      baseY: 10,
+      viewportY: 10,
+    });
+
+    // At live bottom: swiping up pans container down to reveal bottom rows.
+    dispatchTouch(element, "touchstart", 250, 200);
+    dispatchTouch(element, "touchmove", 150, 200);
+    expect(container.scrollTop).toBe(100);
+    expect(scrollLines).not.toHaveBeenCalled();
+
+    // Swiping down unwinds container scrollTop first, then scrolls up into scrollback.
+    dispatchTouch(element, "touchmove", 286, 200);
+    expect(container.scrollTop).toBe(0);
+    expect(scrollLines).toHaveBeenCalledWith(-2);
+    expect(getViewportY()).toBe(8);
+
+    // Swiping up again returns to live bottom first, then pans container down with leftover pixels.
+    dispatchTouch(element, "touchmove", 196, 200);
+    expect(getViewportY()).toBe(10);
+    expect(container.scrollTop).toBe(54);
+  });
+
+  it("stops wheel propagation before xterm cancels it when a read-only follower overflows", () => {
+    const { container, screen, elementWheels, dispose, setWritable } = setupScrollableFollower({
+      clientWidth: 572,
+      scrollWidth: 1017,
+      clientHeight: 300,
+      scrollHeight: 540,
+      bufferType: "alternate",
+      mouseTrackingMode: "vt200",
+    });
+
+    // Vertical and horizontal wheel in read-only alternate/mouse-tracking mode bypass xterm.
+    screen.dispatchEvent(new WheelEvent("wheel", { deltaY: 120, bubbles: true, cancelable: true }));
+    screen.dispatchEvent(new WheelEvent("wheel", { deltaX: 80, bubbles: true, cancelable: true }));
+    screen.dispatchEvent(
+      new WheelEvent("wheel", { deltaY: 120, shiftKey: true, bubbles: true, cancelable: true }),
+    );
+    expect(elementWheels).toHaveLength(0);
+
+    // Once writable, wheel events reach xterm normally.
+    setWritable(true);
+    screen.dispatchEvent(new WheelEvent("wheel", { deltaY: 120, bubbles: true, cancelable: true }));
+    expect(elementWheels).toHaveLength(1);
+
+    // After cleanup, capture listener is removed.
+    setWritable(false);
+    dispose();
+    screen.dispatchEvent(new WheelEvent("wheel", { deltaY: 120, bubbles: true, cancelable: true }));
+    expect(elementWheels).toHaveLength(2);
+    expect(container.scrollTop).toBe(0);
+  });
+
+  it("keeps normal-buffer wheel scrollback working while letting overflow edges scroll the container", () => {
+    const { container, screen, elementWheels } = setupScrollableFollower({
+      clientWidth: 572,
+      scrollWidth: 1017,
+      clientHeight: 300,
+      scrollHeight: 540,
+      bufferType: "normal",
+      baseY: 20,
+      viewportY: 20,
+    });
+
+    // At live bottom (viewportY === baseY): wheeling down bypasses xterm to scroll container.
+    screen.dispatchEvent(new WheelEvent("wheel", { deltaY: 120, bubbles: true, cancelable: true }));
+    expect(elementWheels).toHaveLength(0);
+
+    // At scrollTop === 0: wheeling up reaches xterm to scroll up into history.
+    screen.dispatchEvent(
+      new WheelEvent("wheel", { deltaY: -120, bubbles: true, cancelable: true }),
+    );
+    expect(elementWheels).toHaveLength(1);
+
+    // When scrolled down in container (scrollTop > 0): wheeling up unwinds container first.
+    container.scrollTop = 120;
+    screen.dispatchEvent(
+      new WheelEvent("wheel", { deltaY: -120, bubbles: true, cancelable: true }),
+    );
+    expect(elementWheels).toHaveLength(1);
+  });
+
+  it("ignores container overflow when container overflow is hidden", () => {
+    const { container, element, screen, elementWheels, scrollLines } = setupScrollableFollower({
+      clientWidth: 390,
+      scrollWidth: 1017,
+      clientHeight: 300,
+      scrollHeight: 540,
+      overflow: "hidden",
+    });
+
+    dispatchTouch(element, "touchstart", 200, 300);
+    dispatchTouch(element, "touchmove", 128, 100);
+    expect(container.scrollLeft).toBe(0);
+    expect(container.scrollTop).toBe(0);
+    expect(scrollLines).toHaveBeenCalledWith(4);
+
+    screen.dispatchEvent(new WheelEvent("wheel", { deltaY: 120, bubbles: true, cancelable: true }));
+    expect(elementWheels).toHaveLength(1);
   });
 });

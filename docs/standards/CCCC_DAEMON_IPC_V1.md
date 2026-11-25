@@ -8039,8 +8039,11 @@ Args:
 
 Result:
 ```ts
-{ terminal_writable: boolean }
+{ terminal_writable: boolean; cols?: number; rows?: number }
 ```
+
+When the holder can report the current PTY size, `cols` and `rows` are present
+together. A retained owner without size reporting can still report writer ownership.
 
 #### `term_attach` (streaming upgrade)
 
@@ -8066,6 +8069,7 @@ Result (handshake):
   attachment_id?: number
   terminal_mode: "control" | "viewer"
   terminal_writable: boolean
+  terminal_size_updates?: boolean
   writer_replaced: boolean
   replay_cursor: number
   replay_end_cursor: number
@@ -8090,6 +8094,11 @@ Notes:
   `ping.capabilities.term_attach_snapshot_v1` before depending on them. The
   baseline handshake always provides replay cursors and streams retained output
   from `replay_cursor` through `replay_end_cursor` before live PTY bytes.
+- `terminal_size_updates=true` means the holder of this attachment supports
+  current PTY size reporting. A controller forwarding an attach from a retained
+  owner MUST preserve that owner's field. The WebSocket bridge passes it through
+  in opcode `3`. A missing or false field selects local viewport fitting after
+  snapshot parsing.
 - A successful `term_attach` owns a dedicated connection and MUST NOT be returned
   to an NDJSON request pool. Rust daemon and Web implementations use this raw
   stream directly; terminal output is not transported through polling RPCs.
@@ -8109,9 +8118,16 @@ Notes:
   another controller's dimensions.
 - The WebSocket bridge maps a negotiated snapshot to opcode `7` in one binary frame. The browser
   MUST resize its local xterm parser to the advertised snapshot `cols`/`rows` when present, reset
-  xterm, parse that frame, and only then commit/ack `initial_output.cursor`. It MAY refit the local
-  viewport after parsing, but a viewer MUST NOT resize the shared PTY. Opcode `1` remains raw
+  xterm, parse that frame, and only then commit/ack `initial_output.cursor`. A
+  non-writing browser with size updates enabled keeps the PTY's grid after
+  parsing. A viewer MUST NOT resize the shared PTY. Opcode `1` remains raw
   replay/live output, and its payload length advances the raw cursor.
+- With size updates enabled the WebSocket bridge sends server-to-browser
+  opcode `2` with `{cols, rows}` on an observed size change, or when it first
+  reads a size without snapshot dimensions to compare against. This frame does
+  not advance the raw output cursor. The browser accepts columns in
+  `10..=4096` and rows in `2..=4096` for this frame. Client-to-server opcode
+  `2` requests a resize under the writer checks on `term_resize`.
 - A WebSocket bridge MAY negotiate `output_flow=ack_v1`. The attach frame then advertises
   `output_flow_control.protocol="ack_v1"` and a bounded `window_bytes`. After xterm has parsed an
   output frame, the browser sends opcode `5` with `{cursor}`. The bridge MUST bound unacknowledged

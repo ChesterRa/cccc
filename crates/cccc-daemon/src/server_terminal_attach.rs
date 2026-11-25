@@ -41,6 +41,7 @@ where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     let prepare_guard = guard.clone();
+    let size_updates = request.op == "term_attach";
     let mut attachment = match tokio::task::spawn_blocking(move || {
         if prepare_guard.as_ref().is_some_and(|guard| !guard()) {
             return Err(DaemonResponse::failure(
@@ -65,7 +66,7 @@ where
             return Ok(());
         }
     };
-    let response = attach_response(&attachment);
+    let response = attach_response(&attachment, size_updates);
     write_response(stream.get_mut(), &response).await?;
 
     let input = attachment.input();
@@ -168,7 +169,7 @@ fn runtime_error(error: cccc_runtime::RuntimeError) -> DaemonResponse {
     }
 }
 
-fn attach_response(attachment: &TerminalAttachment) -> DaemonResponse {
+fn attach_response(attachment: &TerminalAttachment, size_updates: bool) -> DaemonResponse {
     let mut result = json!({
         "group_id": attachment.group_id(),
         "actor_id": attachment.actor_id(),
@@ -180,6 +181,9 @@ fn attach_response(attachment: &TerminalAttachment) -> DaemonResponse {
         "replay_cursor": attachment.replay_cursor(),
         "replay_end_cursor": attachment.replay_end_cursor(),
     });
+    if size_updates {
+        result["terminal_size_updates"] = json!(true);
+    }
     let mut initial = json!({
         "kind": attachment.initial_output_kind().as_str(),
         "bytes": attachment.initial_output_bytes(),

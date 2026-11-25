@@ -326,10 +326,9 @@ async fn viewers_follow_the_size_the_writer_gives_the_pty() {
     let (mut viewer, _) = tokio_tungstenite::connect_async(terminal_url("viewer"))
         .await
         .expect("connect viewer");
-    assert_eq!(
-        read_attach_payload(&mut viewer).await["terminal_writable"],
-        false
-    );
+    let viewer_attach = read_attach_payload(&mut viewer).await;
+    assert_eq!(viewer_attach["terminal_writable"], false);
+    assert_eq!(viewer_attach["terminal_size_updates"], true);
     assert_eq!(read_size_payload(&mut viewer, (100, 30)).await, (100, 30));
 
     writer

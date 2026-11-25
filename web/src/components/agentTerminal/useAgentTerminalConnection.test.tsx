@@ -402,7 +402,7 @@ it("closes a terminal while the embedded frame is paused and reconnects only aft
   }
 });
 
-it("shows a non-writing window at the PTY's size and redraws it from a fresh snapshot", async () => {
+async function mountSizeProbe(fitBeforeAttach?: () => void) {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   vi.useFakeTimers();
   const sockets: SizeSocket[] = [];
@@ -423,15 +423,28 @@ it("shows a non-writing window at the PTY's size and redraws it from a fresh sna
     close() {
       this.readyState = 3;
     }
-    attach(writable: boolean) {
+    attach(writable: boolean, sizeUpdates = true) {
       this.readyState = 1;
       this.onopen?.();
       this.onmessage?.({
         data: JSON.stringify({
           type: "terminal.attach",
           ok: true,
-          result: { replay_cursor: 0, replay_end_cursor: 0, terminal_writable: writable },
+          result: {
+            replay_cursor: 0,
+            replay_end_cursor: 0,
+            terminal_writable: writable,
+            ...(sizeUpdates ? { terminal_size_updates: true } : {}),
+          },
         }),
+      });
+    }
+    writable(value: boolean) {
+      this.onmessage?.({
+        data: new Uint8Array([
+          54,
+          ...new TextEncoder().encode(JSON.stringify({ terminal_writable: value })),
+        ]).buffer,
       });
     }
     ptySize(cols: number, rows: number) {
@@ -473,6 +486,7 @@ it("shows a non-writing window at the PTY's size and redraws it from a fresh sna
       setReconnectTrigger,
       terminalRef,
       followSizeRef,
+      fitBeforeAttach,
       inspectActorTail: false,
       takeoverOnAttach: false,
       setTerminalSignal: vi.fn(),
@@ -483,9 +497,20 @@ it("shows a non-writing window at the PTY's size and redraws it from a fresh sna
   const host = document.createElement("div");
   document.body.appendChild(host);
   const root = createRoot(host);
+  await act(async () => root.render(<Probe />));
+  const unmount = () => {
+    act(() => root.unmount());
+    host.remove();
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  };
   const resizeFrames = (socket: SizeSocket) => socket.sent.filter((frame) => frame[0] === 50);
+  return { sockets, terminal, followSizeRef, resizeFrames, unmount };
+}
+
+it("shows a non-writing window at the PTY's size and redraws it from a fresh snapshot", async () => {
+  const { sockets, terminal, followSizeRef, resizeFrames, unmount } = await mountSizeProbe();
   try {
-    await act(async () => root.render(<Probe />));
     // Another window writes; this one only watches.
     await act(async () => sockets[0].attach(false));
     await act(async () => sockets[0].ptySize(145, 42));
@@ -505,20 +530,42 @@ it("shows a non-writing window at the PTY's size and redraws it from a fresh sna
     expect(terminal.resize).toHaveBeenCalledTimes(1);
 
     // Once it writes, it fits its own window again and ignores reported sizes.
-    await act(async () => {
-      sockets[1].onmessage?.({
-        data: new Uint8Array([54, ...new TextEncoder().encode('{"terminal_writable":true}')])
-          .buffer,
-      });
-    });
+    await act(async () => sockets[1].writable(true));
     expect(followSizeRef.current).toBeNull();
     await act(async () => sockets[1].ptySize(90, 30));
     expect([terminal.cols, terminal.rows]).toEqual([145, 42]);
     expect(sockets).toHaveLength(2);
+
+    // A former writer keeps its size until the new writer's size arrives.
+    await act(async () => sockets[1].writable(false));
+    expect(followSizeRef.current).toEqual({ cols: 145, rows: 42 });
   } finally {
-    act(() => root.unmount());
-    host.remove();
-    vi.unstubAllGlobals();
-    vi.useRealTimers();
+    unmount();
+  }
+});
+
+it("keeps fitting its own window when the PTY owner does not report size changes", async () => {
+  const fit = vi.fn();
+  const { sockets, terminal, followSizeRef, unmount } = await mountSizeProbe(fit);
+  // Left over from an attachment whose owner did report sizes.
+  followSizeRef.current = { cols: 145, rows: 42 };
+  try {
+    fit.mockClear();
+    // A retained owner from an older version: the handshake lacks the capability.
+    // This raw replay has no snapshot to refit after, so the handshake fits at once.
+    await act(async () => sockets[0].attach(false, false));
+    expect(followSizeRef.current).toBeNull();
+    expect(fit).toHaveBeenCalledOnce();
+    await act(async () => sockets[0].ptySize(145, 42));
+    expect(terminal.resize).not.toHaveBeenCalled();
+    expect(followSizeRef.current).toBeNull();
+    expect(sockets).toHaveLength(1);
+
+    // Losing control does not freeze the window at its current size either.
+    await act(async () => sockets[0].writable(true));
+    await act(async () => sockets[0].writable(false));
+    expect(followSizeRef.current).toBeNull();
+  } finally {
+    unmount();
   }
 });

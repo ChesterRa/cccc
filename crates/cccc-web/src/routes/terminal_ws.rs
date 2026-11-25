@@ -132,6 +132,10 @@ async fn serve(
         return;
     }
     let mut attach_result = Value::Object(response.result);
+    let size_updates = attach_result
+        .get("terminal_size_updates")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     let mut writable = !state.web_mode.is_read_only()
         && attach_result
             .get("terminal_writable")
@@ -223,7 +227,7 @@ async fn serve(
                     break;
                 }
             }
-            _ = writable_poll.tick() => {
+            _ = writable_poll.tick(), if mode == "control" || size_updates => {
                 let Some(status) = terminal_attachment_status(
                     &state,
                     &group_id,
@@ -237,7 +241,9 @@ async fn serve(
                         break;
                     }
                 }
-                if let Some(size) = status.size.filter(|size| Some(*size) != shown_size) {
+                if size_updates
+                    && let Some(size) = status.size.filter(|size| Some(*size) != shown_size)
+                {
                     shown_size = Some(size);
                     if socket.send(Message::Binary(terminal_size_frame(size).into())).await.is_err() {
                         break;

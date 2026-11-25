@@ -267,6 +267,8 @@ export function useAgentTerminalConnection(args: AgentTerminalConnectionArgs) {
 
         const ws = new WebSocket(withAuthToken(wsUrl));
         let serverOwnsTerminalResponses = false;
+        // Per attachment: the PTY owner says in its handshake whether it reports size changes.
+        let ptySizeUpdates = false;
         ws.binaryType = "arraybuffer";
         wsRef.current = ws;
 
@@ -365,8 +367,9 @@ export function useAgentTerminalConnection(args: AgentTerminalConnectionArgs) {
             updateTerminalWritable(writable);
             const term = terminalRef.current;
             // The writer sizes the PTY from its own window; a former writer keeps
-            // that size until the new writer's size arrives.
-            if (followSizeRef && !resizeReadOnly) {
+            // that size until the new writer's size arrives. An owner that does
+            // not report size changes would leave it there, so it fits instead.
+            if (followSizeRef && !resizeReadOnly && ptySizeUpdates) {
               if (gainedControl) followSizeRef.current = null;
               else if (lostControl && term)
                 followSizeRef.current = { cols: term.cols, rows: term.rows };
@@ -396,6 +399,15 @@ export function useAgentTerminalConnection(args: AgentTerminalConnectionArgs) {
           scheduleReady: scheduleTerminalReady,
           fitAfterSnapshot: () => {
             if (visibleRef.current) fitBeforeAttach?.();
+          },
+          setPtySizeUpdates: (supported) => {
+            ptySizeUpdates = supported;
+            // A size followed on an earlier attachment would otherwise stay on
+            // screen: a raw replay brings no snapshot to refit after.
+            if (!supported && followSizeRef?.current) {
+              followSizeRef.current = null;
+              if (visibleRef.current) fitBeforeAttach?.();
+            }
           },
           onServerSize: (size, fromSnapshot) => {
             if (!followSizeRef) return;

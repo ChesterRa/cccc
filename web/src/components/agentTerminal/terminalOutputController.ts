@@ -32,10 +32,19 @@ export function createTerminalOutputController(args: {
   resetReady: () => void;
   scheduleReady: () => void;
   fitAfterSnapshot?: () => void;
-  /** The PTY's size, from a snapshot (drawn at that size) or a later size frame. */
+  /**
+   * Whether this attachment's PTY owner reports later size changes. Called on
+   * every attach, before `setWritable`.
+   */
+  setPtySizeUpdates?: (supported: boolean) => void;
+  /**
+   * The PTY's size, from a snapshot (drawn at that size) or a later size frame.
+   * Reported only when the owner reports size changes.
+   */
   onServerSize?: (size: TerminalSize, fromSnapshot: boolean) => void;
 }) {
   let outputFlowProtocol = "";
+  let ptySizeUpdates = false;
   let pendingSnapshot: TerminalSnapshotMetadata | null = null;
 
   const acknowledge = (cursor: number) => {
@@ -71,6 +80,8 @@ export function createTerminalOutputController(args: {
       flow && typeof flow === "object"
         ? String((flow as Record<string, unknown>).protocol || "")
         : String(flow || "");
+    ptySizeUpdates = result.terminal_size_updates === true;
+    args.setPtySizeUpdates?.(ptySizeUpdates);
     const writable = Boolean(result.terminal_writable);
     args.setWritable(writable);
     args.setServerResponseOwnership?.(result.terminal_response_owner === "server_v1");
@@ -96,10 +107,13 @@ export function createTerminalOutputController(args: {
       return;
     }
     try {
-      if (snapshot.cols !== null && snapshot.rows !== null) {
+      if (ptySizeUpdates && snapshot.cols !== null && snapshot.rows !== null) {
         args.onServerSize?.({ cols: snapshot.cols, rows: snapshot.rows }, true);
       }
-      const refitAfterSnapshot = prepareTerminalForSnapshot(terminal, snapshot);
+      // The snapshot is parsed at its own size. Without later size reports the
+      // window cannot follow the PTY, so it fits its container again afterwards,
+      // even when the two sizes happen to match.
+      const refitAfterSnapshot = prepareTerminalForSnapshot(terminal, snapshot) || !ptySizeUpdates;
       args.outputWriter.write(payload, true, () => {
         if (!args.isCurrentGeneration()) return;
         args.cursors.deliveredCursor = snapshot.cursor;
@@ -155,7 +169,9 @@ export function createTerminalOutputController(args: {
       onInputError: (message) => args.onDecoded(`\r\n[terminal] ${message}\r\n`),
       onWritable: args.setWritable,
       onLegacyOutput: handleOutputPayload,
-      onSize: (size) => args.onServerSize?.(size, false),
+      onSize: (size) => {
+        if (ptySizeUpdates) args.onServerSize?.(size, false);
+      },
     });
   };
 
