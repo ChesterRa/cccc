@@ -58,6 +58,8 @@
     "avatar_too_large": "アバター画像が {{limit}} の上限を超えています。{{limit}} 以下の画像を選んでください（{{code}}）。",
     "branding_asset_too_large": "ブランド画像が {{limit}} の上限を超えています。{{limit}} 以下の画像を選んでください（{{code}}）。",
     "group_copy_too_large": "グループコピーパッケージが {{limit}} の上限を超えています。サイズを減らしてから再試行してください（{{code}}）。",
+    "branding_asset_unsupported_type": "このファイル形式はここでは使えません。{{types}} 形式の画像を選んでください（{{code}}）。",
+    "group_copy_invalid_package": "このファイルはグループコピーパッケージではありません。「グループをエクスポート」でダウンロードした .zip を選んでください（{{code}}）。",
     "actor_browser_busy": "ブラウザーでメッセージを送信中です。完了してから再試行してください（{{code}}）。",
     "actor_switch_pending": "前回の切り替えを先に完了してください。ページを更新して、メンバーの「処理を再試行」を選んでください（{{code}}）。"
   }

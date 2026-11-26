@@ -221,7 +221,18 @@ async fn run_copy_task<T: Send + 'static>(
     })
     .await
     .map_err(|error| ApiError::unavailable("group_copy_task_failed", error.to_string()))?
-    .map_err(|error| ApiError::bad(error.to_string()))
+    .map_err(copy_error)
+}
+
+fn copy_error(error: std::io::Error) -> ApiError {
+    let invalid_package = error
+        .get_ref()
+        .is_some_and(|inner| inner.is::<group_copy::InvalidPackage>());
+    if invalid_package {
+        ApiError::bad_code("group_copy_invalid_package", error.to_string(), json!({}))
+    } else {
+        ApiError::bad(error.to_string())
+    }
 }
 
 fn upload_path(state: &AppState, upload_id: &str) -> Result<PathBuf, ApiError> {

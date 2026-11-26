@@ -58,6 +58,8 @@
     "avatar_too_large": "Avatar image exceeds {{limit}}. Choose an image up to {{limit}} ({{code}}).",
     "branding_asset_too_large": "Branding image exceeds {{limit}}. Choose an image up to {{limit}} ({{code}}).",
     "group_copy_too_large": "Group copy package exceeds {{limit}}. Reduce its size and try again ({{code}}).",
+    "branding_asset_unsupported_type": "This file type cannot be used here. Choose an image in a supported format: {{types}} ({{code}}).",
+    "group_copy_invalid_package": "This file is not a group copy package. Choose a .zip downloaded with Export Group ({{code}}).",
     "actor_browser_busy": "The browser is delivering work. Wait for it to finish, then try again ({{code}}).",
     "actor_switch_pending": "Finish the previous switch first. Refresh the page, then choose Retry completion on the member ({{code}})."
   }

@@ -7,6 +7,39 @@ use crate::RequestContext;
 use serde_json::{Map, Value, json};
 
 #[tokio::test]
+async fn bound_headless_calls_reject_a_different_actor() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = cccc_core::HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let client = cccc_client::DaemonClient::new(home.clone());
+    let context = Some(RequestContext {
+        group_id: "g_fixture",
+        actor_id: "foreman",
+        binding: None,
+        native_binding: None,
+    });
+    for action in [
+        None,
+        Some("status"),
+        Some("get"),
+        Some("set_status"),
+        Some("set"),
+    ] {
+        let mut args = Map::from_iter([
+            ("actor_id".into(), json!("worker")),
+            ("status".into(), json!("waiting")),
+        ]);
+        if let Some(action) = action {
+            args.insert("action".into(), json!(action));
+        }
+        let error = super::call_with_context(&home, &client, "cccc_headless", args, context, false)
+            .await
+            .expect_err("a bound call must reject another actor before IPC");
+        assert_eq!(error.error_value()["code"], "invalid_args", "{error}");
+        assert!(error.to_string().contains("cccc_actor(action=\"list\")"));
+    }
+}
+
+#[tokio::test]
 async fn message_tools_reject_model_supplied_im_provenance() {
     if crate::lib_tests::isolate_embedded_daemon_test(concat!(
         module_path!(),

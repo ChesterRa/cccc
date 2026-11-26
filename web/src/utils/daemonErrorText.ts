@@ -17,6 +17,8 @@ const DAEMON_ERROR_KEY_BY_CODE: Record<string, string> = {
   avatar_too_large: "common:daemonErrors.avatar_too_large",
   branding_asset_too_large: "common:daemonErrors.branding_asset_too_large",
   group_copy_too_large: "common:daemonErrors.group_copy_too_large",
+  branding_asset_unsupported_type: "common:daemonErrors.branding_asset_unsupported_type",
+  group_copy_invalid_package: "common:daemonErrors.group_copy_invalid_package",
   actor_browser_busy: "common:daemonErrors.actor_browser_busy",
   actor_switch_pending: "common:daemonErrors.actor_switch_pending",
 };
@@ -39,6 +41,15 @@ function formatByteLimit(value: unknown): string {
   if (value % mib === 0) return `${value / mib} MiB`;
   if (value % 1024 === 0) return `${value / 1024} KiB`;
   return `${Math.trunc(value)} bytes`;
+}
+
+function readAcceptedTypes(details: unknown): string {
+  if (!details || typeof details !== "object") return "";
+  const accepted = (details as { accepted?: unknown }).accepted;
+  if (!Array.isArray(accepted)) return "";
+  return accepted
+    .filter((item): item is string => typeof item === "string" && item !== "")
+    .join(", ");
 }
 
 function readMaxBytesLimit(details: unknown): string {
@@ -64,6 +75,11 @@ export function formatDaemonError(
       const limit = readMaxBytesLimit(error?.details);
       if (limit) {
         return i18n.t(key, { code, limit });
+      }
+    } else if (code === "branding_asset_unsupported_type") {
+      const types = readAcceptedTypes(error?.details);
+      if (types) {
+        return i18n.t(key, { code, types });
       }
     } else {
       return i18n.t(key, { code });

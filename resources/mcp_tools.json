@@ -2895,7 +2895,7 @@
   },
   {
     "name": "cccc_headless",
-    "description": "Headless runner control: action=status|set_status.",
+    "description": "Headless runner control: action=status|set_status. A bound session reads or updates only its own status. To check another member, use cccc_actor(action=\"list\") and look at that member's effective_working_state and effective_working_reason.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -2905,7 +2905,7 @@
         },
         "actor_id": {
           "type": "string",
-          "description": "Actor whose headless state to read or update; leave it out for your own."
+          "description": "Actor whose headless state to read or update. In a bound session, leave it out or use your own Actor ID."
         },
         "action": {
           "type": "string",

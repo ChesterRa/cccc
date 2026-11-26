@@ -104,6 +104,16 @@ async fn call_scoped(
     }
     crate::tools::apply_default_action(name, &mut arguments);
     remove_untrusted_authority(&mut arguments);
+    if name == "cccc_headless"
+        && let Some(context) = context
+        && arguments
+            .get("actor_id")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .is_some_and(|target| !target.is_empty() && target != context.actor_id)
+    {
+        return Err("invalid_args: A bound session can only use this tool for itself. Use cccc_actor(action=\"list\") to check another member.".into());
+    }
     // The bound identity replaces `actor_id` below. A read of another member's state names
     // that member in the same field, so keep the target the caller gave for the projection,
     // before the runtime environment fills an omitted one.

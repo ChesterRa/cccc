@@ -37,7 +37,7 @@ Repeated enable and disable keep their ownership checks, but are not free of eff
 
 An enable command configures the integration; it does not confirm that an existing session has loaded it. Run `cccc sessions list` after the native reload and prompt to check which sources can receive. If a source is absent, check the CLI version, native MCP/hooks/plugin loading, Codex hook trust and Claude Monitor availability. Use the same OS user and `CCCC_HOME` for both runtimes and the daemon.
 
-Ordinary `cccc setup` preserves a recognized Codex native MCP registration, including its enabled state, additional arguments and original `CCCC_HOME`. It can still repair a known ordinary/obsolete entry; a failed or unreadable registry query leaves configuration unchanged. Use `cccc sessions disable --runtime codex` to explicitly return to ordinary MCP mode; rerunning setup is not a disable operation.
+`cccc setup --runtime codex` preserves a recognized Codex native MCP registration, including its enabled state, additional arguments and original `CCCC_HOME`. It can still repair a known ordinary/obsolete entry; a failed or unreadable registry query leaves configuration unchanged. Use `cccc sessions disable --runtime codex` to explicitly return to ordinary MCP mode; rerunning setup is not a disable operation.
 
 Availability means **able to receive**, not proof that a terminal window is open. Codex can keep its native app-server running after its TUI closes. It may still receive CCCC work and use model credits even with all Codex windows closed. To pause deliveries to that agent from this Group, select **Pause CCCC access**; work already started may continue. Plain MCP registration alone does not establish a receive channel.
 

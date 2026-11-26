@@ -33,6 +33,30 @@ pub struct Payload {
     pub updated_at: Option<String>,
 }
 
+/// The uploaded file's type is not one this branding slot accepts.
+#[derive(Debug)]
+pub struct UnsupportedAssetType {
+    pub kind: String,
+    pub mime: String,
+}
+
+impl std::fmt::Display for UnsupportedAssetType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "unsupported {} type: {}", self.kind, self.mime)
+    }
+}
+
+impl std::error::Error for UnsupportedAssetType {}
+
+/// File types the branding slot accepts, named as users see them.
+pub fn accepted_type_names(kind: &str) -> &'static [&'static str] {
+    if kind == "logo_icon" {
+        &["PNG", "SVG", "ICO", "JPEG", "WebP", "GIF", "AVIF"]
+    } else {
+        &["PNG", "SVG", "ICO"]
+    }
+}
+
 pub fn store(
     home: &HomeLayout,
     kind: &str,
@@ -49,7 +73,13 @@ pub fn store(
     }
     let mime = normalize_mime(content_type, filename);
     if !allowed(kind, &mime) {
-        return Err(io::Error::other(format!("unsupported {kind} type: {mime}")));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            UnsupportedAssetType {
+                kind: kind.into(),
+                mime,
+            },
+        ));
     }
     let sha256 = format!("{:x}", Sha256::digest(data));
     let extension = extension(&mime);

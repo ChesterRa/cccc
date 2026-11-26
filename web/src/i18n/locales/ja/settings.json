@@ -113,7 +113,7 @@
     "globalScopeTitle": "このインスタンス",
     "globalScopeContent": "CCCC インスタンス全体 (daemon + Web) に適用されます。これらの設定は、オーバーライドしない限り、すべてのグループに影響します。",
     "globalLockedTitle": "管理者権限が必要です",
-    "globalLockedContent": "グローバル設定は管理者専用です。グループ設定を変更したい場合は対象グループから Settings を開き、グローバル設定を管理したい場合は管理者アクセストークンでサインインしてください。"
+    "globalLockedContent": "「このインスタンス」の設定は管理者専用です。グループ設定を変更したい場合は対象グループから Settings を開き、「このインスタンス」の設定を管理したい場合は管理者アクセストークンでサインインしてください。"
   },
   "account": {
     "title": "CCCC アカウント",
@@ -1454,7 +1454,7 @@
     }
   },
   "developer": {
-    "title": "開発者モード (グローバル)",
+    "title": "開発者モード (このインスタンス)",
     "description": "これらの設定は、CCCC インスタンス全体 (daemon + Web) に適用されます。これはデバッグ時にのみ使用してください。",
     "runtimeInfoTitle": "ランタイム情報",
     "runtimeInfoHint": "現在の Web パッケージと接続中 daemon のバージョンをすばやく確認します。",
@@ -1565,9 +1565,9 @@
     "adminTokenLabel": "管理者アクセストークン",
     "firstTokenAdminHint": "最初のアクセストークンは管理者である必要があります。そうしないと自分を締め出します。",
     "remoteAdminTokenRequiredHint": "先に管理者アクセストークンを作成してください。作成するまで、リモート設定の保存・適用とリモートエンドポイントのコピーはできません。",
-    "adminTokenHint": "管理者アクセストークンはグローバル設定と他のアクセストークンを管理できます。",
+    "adminTokenHint": "管理者アクセストークンは「このインスタンス」の設定と他のアクセストークンを管理できます。",
     "scopedTokenGroupsTitle": "スコープ付きトークンの対象グループ",
-    "scopedTokenGroupsHint": "スコープ付きアクセストークンは 1 つ以上のグループに割り当てる必要があります。グローバル設定は常に管理者専用です。",
+    "scopedTokenGroupsHint": "スコープ付きアクセストークンは 1 つ以上のグループに割り当てる必要があります。「このインスタンス」の設定は常に管理者専用です。",
     "groupScopeTitle": "許可するグループ",
     "noGroups": "利用可能なグループがありません。",
     "customTokenLabel": "カスタムトークン値（任意）",
@@ -1799,7 +1799,7 @@
     "currentBrowserCheckingHint": "ログインは有効です。このページは現在のブラウザセッション状態を更新中です。",
     "currentBrowserVerifyHint": "シークレットウィンドウでリモートアドレスを開くとログイン画面を確認できます。localhost への直接アクセスはログイン不要です。",
     "managementLockedTitle": "管理者ログインが必要です",
-    "managementLockedHint": "このブラウザには現在管理者権限がありません。アクセストークンを含むグローバル設定は、管理者トークンでサインインするまでロックされます。",
+    "managementLockedHint": "このブラウザには現在管理者権限がありません。アクセストークンを含む「このインスタンス」の設定は、管理者トークンでサインインするまでロックされます。",
     "signOut": "サインアウト",
     "signOutHint": "このブラウザを現在のトークンセッションからサインアウトし、アクセストークンのログイン画面に戻ります。",
     "signOutSuccess": "このブラウザをサインアウトしています...",
@@ -1966,7 +1966,7 @@
     "lastTask": "最近のタスク",
     "noTask": "完了したタスクはありません",
     "connectorStep": "1. CCCC に接続",
-    "connectorHint": "この Bot に共有 CCCC MCP コネクターを追加します。アドレスと認証情報は全体設定で管理します。",
+    "connectorHint": "この Bot に共有 CCCC MCP コネクターを追加します。アドレスと認証情報は「このインスタンス」の設定で管理します。",
     "botStep": "2. Bot を選択",
     "routineStep": "3. Webhook Routine を設定",
     "connectionSettings": "接続設定",

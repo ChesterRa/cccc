@@ -16,6 +16,7 @@ const MAPPED_CODES = [
   "file_too_large",
   "actor_browser_busy",
   "actor_switch_pending",
+  "group_copy_invalid_package",
 ] as const;
 
 const LIMIT_MAPPED_CODES = [
@@ -85,6 +86,32 @@ describe("formatDaemonError", () => {
         formatDaemonError({ code, message: "raw limit text", details: { max_bytes: "2 MiB" } }),
       ).toBe(`${code}: raw limit text`);
     }
+  });
+
+  it.each(["en", "zh", "ja"] as const)(
+    "names the accepted branding image types from details.accepted for %s",
+    async (lang) => {
+      await i18n.changeLanguage(lang);
+      const code = "branding_asset_unsupported_type";
+      const formatted = formatDaemonError({
+        code,
+        message: "unsupported favicon type: text/plain",
+        details: { accepted: ["PNG", "SVG", "ICO"] },
+      });
+      expect(formatted).not.toContain("text/plain");
+      expect(formatted).not.toContain("{{types}}");
+      expect(formatted).toContain("PNG, SVG, ICO");
+      expect(formatted).toContain(lang === "en" ? `(${code})` : `（${code}）`);
+    },
+  );
+
+  it("falls back to the raw message when the accepted types are missing", async () => {
+    await i18n.changeLanguage("zh");
+    const code = "branding_asset_unsupported_type";
+    expect(formatDaemonError({ code, message: "raw type text" }, "failed")).toBe("raw type text");
+    expect(formatDaemonError({ code, message: "raw type text", details: { accepted: [] } })).toBe(
+      `${code}: raw type text`,
+    );
   });
 
   it("preserves raw message or fallback for unmapped errors when a fallback is supplied", async () => {

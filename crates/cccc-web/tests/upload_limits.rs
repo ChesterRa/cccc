@@ -192,3 +192,58 @@ async fn branding_asset_exceeding_limit_maps_to_branding_asset_too_large() {
     assert_eq!(json["error"]["code"], "branding_asset_too_large", "{json}");
     assert_eq!(json["error"]["details"]["max_bytes"], branding::MAX_BYTES);
 }
+
+fn small_file_multipart(boundary: &str, filename: &str, content_type: &str, data: &str) -> Body {
+    Body::from(format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\nContent-Type: {content_type}\r\n\r\n{data}\r\n--{boundary}--\r\n"
+    ))
+}
+
+#[tokio::test]
+async fn branding_asset_of_wrong_type_names_the_accepted_types() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let app = auth_support::authenticated_app(home);
+
+    for (kind, accepted) in [
+        (
+            "logo_icon",
+            serde_json::json!(["PNG", "SVG", "ICO", "JPEG", "WebP", "GIF", "AVIF"]),
+        ),
+        ("favicon", serde_json::json!(["PNG", "SVG", "ICO"])),
+    ] {
+        let (status, json) = post_multipart(
+            &app,
+            &format!("/api/v1/branding/assets/{kind}"),
+            "branding-type-boundary",
+            small_file_multipart("branding-type-boundary", "notes.txt", "text/plain", "hello"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{kind}: {json}");
+        assert_eq!(
+            json["error"]["code"], "branding_asset_unsupported_type",
+            "{kind}: {json}"
+        );
+        assert_eq!(json["error"]["details"]["accepted"], accepted, "{kind}");
+    }
+}
+
+#[tokio::test]
+async fn group_copy_preview_of_a_non_package_says_so() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let app = auth_support::authenticated_app(home);
+
+    let (status, json) = post_multipart(
+        &app,
+        "/api/v1/groups/copy/preview_import",
+        "copy-type-boundary",
+        small_file_multipart("copy-type-boundary", "notes.txt", "text/plain", "hello"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{json}");
+    assert_eq!(
+        json["error"]["code"], "group_copy_invalid_package",
+        "{json}"
+    );
+}

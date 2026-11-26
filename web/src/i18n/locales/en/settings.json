@@ -113,7 +113,7 @@
     "globalScopeTitle": "This instance",
     "globalScopeContent": "Applies to your whole CCCC instance (daemon + Web). These settings affect all groups unless overridden.",
     "globalLockedTitle": "Admin access required",
-    "globalLockedContent": "Global settings are admin-only. Open Settings from a group to manage group-scoped settings, or sign in with an admin Access Token."
+    "globalLockedContent": "This instance's settings are admin-only. Open Settings from a group to manage group-scoped settings, or sign in with an admin Access Token."
   },
   "account": {
     "title": "CCCC Account",
@@ -1454,7 +1454,7 @@
     }
   },
   "developer": {
-    "title": "Developer Mode (Global)",
+    "title": "Developer Mode (This instance)",
     "description": "These settings apply to the whole CCCC instance (daemon + Web). Use this only when debugging.",
     "runtimeInfoTitle": "Runtime Info",
     "runtimeInfoHint": "Quick version check for the current Web package and the connected daemon.",
@@ -1565,9 +1565,9 @@
     "adminTokenLabel": "Admin Access Token",
     "firstTokenAdminHint": "The first access token must be admin so you do not lock yourself out.",
     "remoteAdminTokenRequiredHint": "Create an administrator Access Token first. Until then, remote settings cannot be saved or applied, and the remote endpoint cannot be copied.",
-    "adminTokenHint": "Admin access tokens can manage global settings and other access tokens.",
+    "adminTokenHint": "Admin access tokens can manage this instance's settings and other access tokens.",
     "scopedTokenGroupsTitle": "Scoped token groups",
-    "scopedTokenGroupsHint": "Scoped access tokens must be assigned to one or more groups. Global settings stay admin-only.",
+    "scopedTokenGroupsHint": "Scoped access tokens must be assigned to one or more groups. This instance's settings stay admin-only.",
     "groupScopeTitle": "Allowed groups",
     "noGroups": "No groups available.",
     "customTokenLabel": "Custom token value (optional)",
@@ -1799,7 +1799,7 @@
     "currentBrowserCheckingHint": "Login is active. This page is still refreshing the current browser session state.",
     "currentBrowserVerifyHint": "Use the remote address in an incognito window to check its sign-in page. Direct localhost access remains passwordless.",
     "managementLockedTitle": "Admin sign-in required",
-    "managementLockedHint": "This browser does not currently have admin access. Global settings, including Access Tokens, are locked until you sign in with an admin token.",
+    "managementLockedHint": "This browser does not currently have admin access. This instance's settings, including Access Tokens, are locked until you sign in with an admin token.",
     "signOut": "Sign out",
     "signOutHint": "Sign out this browser and return to the Access Token login screen.",
     "signOutSuccess": "Signing out this browser...",
@@ -1966,7 +1966,7 @@
     "lastTask": "Last task",
     "noTask": "No completed task yet",
     "connectorStep": "1. Connect CCCC",
-    "connectorHint": "Add the shared CCCC MCP connector to this Bot. Manage its address and credentials in global settings.",
+    "connectorHint": "Add the shared CCCC MCP connector to this Bot. Manage its address and credentials in this instance's settings.",
     "botStep": "2. Select the Bot",
     "routineStep": "3. Set up its Webhook Routine",
     "connectionSettings": "Connection settings",

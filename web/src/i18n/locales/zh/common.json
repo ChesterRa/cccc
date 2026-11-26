@@ -58,6 +58,8 @@
     "avatar_too_large": "头像图片超出 {{limit}} 上限。请换一张不超过 {{limit}} 的图片（{{code}}）。",
     "branding_asset_too_large": "品牌图片超出 {{limit}} 上限。请换一张不超过 {{limit}} 的图片（{{code}}）。",
     "group_copy_too_large": "工作组复制包超出 {{limit}} 上限。请减小文件体积后重试（{{code}}）。",
+    "branding_asset_unsupported_type": "这里不能用这种文件类型。请选择 {{types}} 格式的图片（{{code}}）。",
+    "group_copy_invalid_package": "这个文件不是工作组复制包。请选择用「导出工作组」下载的 .zip 文件（{{code}}）。",
     "actor_browser_busy": "浏览器正在投递消息，请等当前投递结束后重试（{{code}}）。",
     "actor_switch_pending": "请先完成上一次切换：刷新页面后，在成员上点「重试收尾」（{{code}}）。"
   }

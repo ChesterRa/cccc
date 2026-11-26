@@ -353,11 +353,31 @@ struct Package {
     uncompressed_bytes: u64,
 }
 
+/// The uploaded file is not a CCCC group copy package at all: not a zip
+/// archive, or a zip without a group copy manifest.
+#[derive(Debug)]
+pub struct InvalidPackage(String);
+
+impl InvalidPackage {
+    fn error(message: impl Into<String>) -> io::Error {
+        io::Error::new(io::ErrorKind::InvalidData, Self(message.into()))
+    }
+}
+
+impl std::fmt::Display for InvalidPackage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "not a group copy package: {}", self.0)
+    }
+}
+
+impl std::error::Error for InvalidPackage {}
+
 fn read_package(bytes: &[u8]) -> io::Result<Package> {
     if bytes.is_empty() || bytes.len() > MAX_PACKAGE_BYTES {
         return Err(io::Error::other("invalid group copy package size"));
     }
-    let mut archive = ZipArchive::new(Cursor::new(bytes)).map_err(io::Error::other)?;
+    let mut archive = ZipArchive::new(Cursor::new(bytes))
+        .map_err(|error| InvalidPackage::error(format!("not a zip archive: {error}")))?;
     if archive.len() > MAX_FILE_COUNT {
         return Err(io::Error::other("group copy package has too many entries"));
     }
@@ -423,7 +443,7 @@ fn read_package(bytes: &[u8]) -> io::Result<Package> {
     if total_compressed > 0 && total as f64 / total_compressed as f64 > MAX_COMPRESSION_RATIO {
         return Err(io::Error::other("suspicious group copy compression ratio"));
     }
-    let manifest = manifest.ok_or_else(|| io::Error::other("manifest.json missing"))?;
+    let manifest = manifest.ok_or_else(|| InvalidPackage::error("manifest.json missing"))?;
     validate_manifest(&manifest)?;
     if !content_digest_matches(&manifest.content_digest, &files) {
         return Err(io::Error::other("group copy content digest mismatch"));
@@ -1019,6 +1039,30 @@ fn slug(value: &str) -> String {
 mod tests {
     use super::*;
     use std::fs::File;
+
+    #[test]
+    fn files_that_are_not_group_copies_are_marked_invalid_package() {
+        let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+        writer
+            .start_file("notes.txt", SimpleFileOptions::default())
+            .expect("entry");
+        writer.write_all(b"hello").expect("entry data");
+        let unrelated_zip = writer.finish().expect("archive").into_inner();
+        for (label, bytes) in [
+            ("text", b"hello".to_vec()),
+            ("zip without manifest", unrelated_zip),
+        ] {
+            let error = read_package(&bytes)
+                .err()
+                .expect("not a group copy package");
+            assert!(
+                error
+                    .get_ref()
+                    .is_some_and(|inner| inner.is::<InvalidPackage>()),
+                "{label}: {error}"
+            );
+        }
+    }
 
     fn history_identity() -> HistoryIdentityRewrite<'static> {
         HistoryIdentityRewrite {

@@ -31,6 +31,21 @@ fn branding_asset_too_large() -> ApiError {
     .with_details(json!({"max_bytes": cccc_core::branding::MAX_BYTES}))
 }
 
+fn store_error(kind: &str, error: std::io::Error) -> ApiError {
+    let unsupported = error
+        .get_ref()
+        .is_some_and(|inner| inner.is::<cccc_core::branding::UnsupportedAssetType>());
+    if unsupported {
+        ApiError::bad_code(
+            "branding_asset_unsupported_type",
+            error.to_string(),
+            json!({"accepted": cccc_core::branding::accepted_type_names(kind)}),
+        )
+    } else {
+        ApiError::bad(error.to_string())
+    }
+}
+
 async fn get_asset(
     State(state): State<AppState>,
     Path(kind): Path<String>,
@@ -97,7 +112,7 @@ async fn upload_asset(
         &mime,
         &filename,
     )
-    .map_err(|error| crate::api::ApiError::bad(error.to_string()))?;
+    .map_err(|error| store_error(&kind, error))?;
     let key = format!("{kind}_asset_path");
     let old = before
         .branding

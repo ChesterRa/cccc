@@ -110,7 +110,7 @@
     "globalScopeTitle": "整个实例",
     "globalScopeContent": "应用于整个 CCCC 实例（守护进程 + Web）。这些设置影响所有工作组，除非被覆盖。",
     "globalLockedTitle": "需要管理员权限",
-    "globalLockedContent": "全局设置仅限管理员使用。若要调整工作组内设置，请从某个工作组打开设置；若要管理全局设置，请使用管理员访问令牌登录。"
+    "globalLockedContent": "「整个实例」的设置仅限管理员使用。若要调整工作组内设置，请从某个工作组打开设置；若要管理「整个实例」的设置，请使用管理员访问令牌登录。"
   },
   "account": {
     "title": "CCCC 账户",
@@ -684,7 +684,7 @@
   "assistants": {
     "openFromGroup": "请从工作组中打开此标签页。",
     "title": "语音",
-    "description": "配置本组的识别方式与秘书工作流，共享服务在全局设置中管理。",
+    "description": "配置本组的识别方式与秘书工作流，共享服务在「整个实例」的设置中管理。",
     "refresh": "刷新",
     "refreshing": "刷新中...",
     "loadFailed": "加载助手状态失败。",
@@ -1451,7 +1451,7 @@
     }
   },
   "developer": {
-    "title": "开发者模式（全局）",
+    "title": "开发者模式（整个实例）",
     "description": "这些设置应用于整个 CCCC 实例（守护进程 + Web）。仅在调试时使用。",
     "runtimeInfoTitle": "运行时信息",
     "runtimeInfoHint": "快速查看当前 Web 包和已连接 daemon 的版本。",
@@ -1562,9 +1562,9 @@
     "adminTokenLabel": "管理员访问令牌",
     "firstTokenAdminHint": "第一个访问令牌必须是管理员，否则你会把自己锁在门外。",
     "remoteAdminTokenRequiredHint": "请先在“访问令牌”中创建管理员令牌；创建前不能保存或应用远程设置，也不能复制远程入口。",
-    "adminTokenHint": "管理员访问令牌可以管理全局设置以及其它访问令牌。",
+    "adminTokenHint": "管理员访问令牌可以管理「整个实例」的设置以及其它访问令牌。",
     "scopedTokenGroupsTitle": "受限令牌的工作组",
-    "scopedTokenGroupsHint": "受限访问令牌必须绑定到一个或多个工作组。全局设置始终仅限管理员。",
+    "scopedTokenGroupsHint": "受限访问令牌必须绑定到一个或多个工作组。「整个实例」的设置始终仅限管理员。",
     "groupScopeTitle": "允许访问的工作组",
     "noGroups": "暂无工作组。",
     "customTokenLabel": "自定义令牌值（可选）",
@@ -1796,7 +1796,7 @@
     "currentBrowserCheckingHint": "当前已经启用登录，这个页面正在刷新当前浏览器的会话状态。",
     "currentBrowserVerifyHint": "请在无痕窗口中使用远程地址检查登录页面；通过本机地址直接访问仍免登录。",
     "managementLockedTitle": "需要管理员登录",
-    "managementLockedHint": "当前浏览器没有管理员权限。包括访问令牌在内的全局设置都会被锁定，直到你使用管理员令牌登录。",
+    "managementLockedHint": "当前浏览器没有管理员权限。包括访问令牌在内的「整个实例」设置都会被锁定，直到你使用管理员令牌登录。",
     "signOut": "退出登录",
     "signOutHint": "让当前浏览器退出当前令牌会话，并返回访问令牌登录页。",
     "signOutSuccess": "正在让当前浏览器退出登录...",
@@ -1963,7 +1963,7 @@
     "lastTask": "最近任务",
     "noTask": "暂无已完成任务",
     "connectorStep": "1. 连接 CCCC",
-    "connectorHint": "为此 Bot 添加共享的 CCCC MCP 连接器。地址与凭据在全局设置中管理。",
+    "connectorHint": "为此 Bot 添加共享的 CCCC MCP 连接器。地址与凭据在「整个实例」的设置中管理。",
     "botStep": "2. 选择 Bot",
     "routineStep": "3. 设置 Webhook Routine",
     "connectionSettings": "连接设置",
@@ -2048,7 +2048,7 @@
     "confirmHandoff": "将此消息转交给本组的 {{target}}？\n\n{{text}}",
     "forwarded": "已转交",
     "forwardProposal": "确认并转交",
-    "profileUsage": "全局 · 语音秘书",
+    "profileUsage": "整个实例 · 语音秘书",
     "sourcesDeferred": "{{count}} 条输入已保存，正在等待处理空位，将自动进入队列。",
     "sourcesUnconfigured": "{{count}} 条输入已保存。请在语音设置中配置全局秘书以进行处理。",
     "sourcesUnprocessed": "{{count}} 条文档输入尚未提交，请检查下方中断、取消或失败的任务。",

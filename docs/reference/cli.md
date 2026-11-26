@@ -493,7 +493,7 @@ Prepare or report the MCP integration for an agent runtime.
 ```bash
 cccc setup                         # List how each runtime gets CCCC's MCP; writes nothing
 cccc setup --runtime claude        # Report CCCC-owned per-session MCP for Claude Code
-cccc setup --runtime codex         # Auto-configure for Codex
+cccc setup --runtime codex         # Register `cccc` for Codex sessions you start yourself
 cccc setup --runtime copilot       # Register `cccc` for Copilot sessions you start yourself
 cccc setup --runtime cursor        # Configure native Cursor CLI MCP
 cccc setup --runtime devin         # Auto-configure for Devin CLI
