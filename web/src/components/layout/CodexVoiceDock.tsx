@@ -6,6 +6,7 @@ import {
 } from "../../features/codexVoice/codexVoiceControllerText";
 import { classNames } from "../../utils/classNames";
 import { ChetHead } from "../../features/chet/ChetHead";
+import { ChetWaitingBadge } from "../../features/chet/ChetReplyInbox";
 import { AlertIcon, StopIcon, VoiceWaveformIcon } from "../Icons";
 import { IconButton } from "../ui/icon-button";
 import type { CodexVoiceDockProps } from "./codexVoiceDockTypes";
@@ -137,6 +138,7 @@ export function CodexVoiceDock({
         >
           {attention ? <AlertIcon size={18} /> : <ChetHead size={32} working={working} />}
           {chetUnread ? <UnreadMark className="left-1.5 top-1.5" /> : null}
+          <ChetWaitingBadge className="absolute -right-1 -top-1" />
         </IconButton>
         {callControl}
       </div>
@@ -156,6 +158,7 @@ export function CodexVoiceDock({
           status={chetState}
           label={openLabel}
         />
+        <ChetWaitingBadge className="flex-none" />
         {callControl}
       </div>
     </div>

@@ -1,8 +1,5 @@
-import { useContext } from "react";
-import { useVisiblePendingSummary } from "./useVisiblePendingSummary";
 import { useTranslation } from "react-i18next";
-import { PendingReplyNavigationContext } from "./context";
-import { pendingIndicator, type PendingIndicator as Indicator } from "./indicator";
+import type { PendingIndicator as Indicator } from "./indicator";
 
 export function PendingIndicatorText({ indicator }: { indicator: Indicator }) {
   const { t } = useTranslation("layout");
@@ -23,54 +20,5 @@ export function PendingIndicatorText({ indicator }: { indicator: Indicator }) {
     >
       {indicator.text}
     </span>
-  );
-}
-
-/** A separate target from the row prevents a badge click starting a reorder. */
-export function GroupPendingIndicator({
-  groupId,
-  groupName,
-  collapsed = false,
-}: {
-  groupId: string;
-  groupName?: string;
-  collapsed?: boolean;
-}) {
-  const context = useVisiblePendingSummary();
-  const open = useContext(PendingReplyNavigationContext);
-  const { t } = useTranslation("layout");
-  if (!context) return null;
-  const indicator = pendingIndicator(context.summaries[groupId]);
-  if (!indicator) return null;
-  if (collapsed || !open)
-    return (
-      <span className="absolute -right-1 -top-1">
-        <PendingIndicatorText indicator={indicator} />
-      </span>
-    );
-  const actionLabel =
-    indicator.state === "fresh"
-      ? t("openPendingRepliesCount", { value: indicator.text })
-      : indicator.state === "stale"
-        ? t("openPendingRepliesStale")
-        : indicator.daemonUnsupported
-          ? t("openPendingRepliesDaemonUnsupported")
-          : t("openPendingRepliesUnknown");
-  const label = `${groupName || groupId} · ${actionLabel}`;
-  return (
-    <button
-      type="button"
-      className="flex h-[44px] min-w-[44px] shrink-0 items-center justify-center rounded-md md:h-8 md:min-w-0 pointer-coarse:h-[44px] pointer-coarse:min-w-[44px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--color-accent-primary)]"
-      aria-label={label}
-      title={label}
-      onPointerDown={(event) => event.stopPropagation()}
-      onKeyDown={(event) => event.stopPropagation()}
-      onClick={(event) => {
-        event.stopPropagation();
-        open(groupId);
-      }}
-    >
-      <PendingIndicatorText indicator={indicator} />
-    </button>
   );
 }

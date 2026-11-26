@@ -52,7 +52,7 @@ const header: AppHeaderProps = {
   onOpenMobileMenu: noop,
 };
 
-it("hides pending summaries on the sidebar, collapsed rail and phone entry without hiding the archived Group count", async () => {
+it("counts waiting replies on the phone entry, never on Group rows, and hides it with the setting", async () => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   const host = document.createElement("div");
   document.body.append(host);
@@ -78,7 +78,8 @@ it("hides pending summaries on the sidebar, collapsed rail and phone entry witho
     await render(false);
     const aside = host.querySelector("aside")!;
     const phone = host.querySelector('[data-sidebar-toggle="true"]')!;
-    expect(aside.querySelectorAll("[data-pending-state]")).toHaveLength(2);
+    // Replies waiting for the user are gathered beside Chet, not counted per Group.
+    expect(aside.querySelectorAll("[data-pending-state]")).toHaveLength(0);
     expect(phone.querySelector("[data-pending-state]")).not.toBeNull();
     expect(phone.getAttribute("aria-label")).toContain("pendingRepliesIndicator");
     const archived = [...aside.querySelectorAll("button")].find((button) =>
@@ -93,7 +94,8 @@ it("hides pending summaries on the sidebar, collapsed rail and phone entry witho
     await render(true);
     expect(host.querySelector("[data-pending-state]")).toBeNull();
     await act(async () => useUIStore.getState().setShowPendingPrompts(true));
-    expect(host.querySelectorAll("[data-pending-state]").length).toBeGreaterThanOrEqual(2);
+    expect(host.querySelector("aside")!.querySelector("[data-pending-state]")).toBeNull();
+    expect(phone.querySelector("[data-pending-state]")).not.toBeNull();
   } finally {
     await act(async () => root.unmount());
     useUIStore.setState({ showPendingPrompts: true });

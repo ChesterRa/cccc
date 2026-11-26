@@ -179,17 +179,12 @@ describe("GroupSidebarSortableList mobile controls", () => {
         ),
       );
     await render({ counts: { g_alpha: 7, g_beta: null }, expires_at: future });
-    // No connection control on the rows; each row has the same two trailing slots.
+    // No connection control on the rows; each row is its button and a menu slot. Replies
+    // waiting for the user are counted beside Chet, not on the rows.
     expect(host.querySelector('[aria-label^="groupConnections."]')).toBeNull();
     const rows = [...host.querySelectorAll('[aria-current], button[role="button"]')];
     expect(rows.map((row) => row.textContent)).toEqual(["Alpha", "Beta", "Gamma"]);
-    rows.forEach((row) => {
-      expect(row.parentElement?.children).toHaveLength(3);
-      const pendingSlot = row.parentElement?.children[1];
-      expect(pendingSlot?.className).toContain("md:w-10");
-      expect(pendingSlot?.className).toContain("pointer-coarse:w-11");
-      expect(pendingSlot?.className).not.toContain("empty:hidden");
-    });
+    rows.forEach((row) => expect(row.parentElement?.children).toHaveLength(2));
     expect(host.querySelector('button[aria-label="Actions · Alpha"]')!.className).toContain(
       "pointer-coarse:min-w-[44px]",
     );

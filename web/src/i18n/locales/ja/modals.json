@@ -1018,6 +1018,11 @@
       "invalid": "メッセージは受け付けられませんでした（{{detail}}）。"
     },
     "activity": "作業状況",
-    "runtime": "ランタイム"
+    "runtime": "ランタイム",
+    "waitingTitle": "返信待ち",
+    "waitingSummary_other": "{{groups}} 個のグループから {{count}} 件の質問",
+    "waitingEmpty": "返信待ちの質問はありません。メンバーが返信を求めるとここに表示されます。",
+    "waitingFrom": "{{sender}} からの質問",
+    "waitingOpenInGroup": "グループで開く"
   }
 }

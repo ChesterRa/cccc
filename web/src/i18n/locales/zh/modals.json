@@ -1018,6 +1018,11 @@
       "invalid": "消息没有被接受（{{detail}}）。"
     },
     "activity": "工作过程",
-    "runtime": "运行环境"
+    "runtime": "运行环境",
+    "waitingTitle": "待你回复",
+    "waitingSummary_other": "{{count}} 个需要你回复的问题，来自 {{groups}} 个工作组",
+    "waitingEmpty": "没有等你回复的问题。成员请你回复时会出现在这里。",
+    "waitingFrom": "{{sender}} 问你",
+    "waitingOpenInGroup": "在工作组中查看"
   }
 }

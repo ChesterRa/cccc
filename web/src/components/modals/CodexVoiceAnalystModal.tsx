@@ -41,6 +41,7 @@ import { useChatObscuringView } from "../../hooks/useChatObscuringView";
 import { ProcessRecoveryDialog } from "./ProcessRecoveryDialog";
 import { VoiceProviderSelect } from "../../features/codexVoice/VoiceProviderSelect";
 import { SpeakingVoiceSelect } from "../../features/codexVoice/SpeakingVoiceSelect";
+import { ChetInboxLayout, ChetReplyInbox } from "../../features/chet/ChetReplyInbox";
 
 type Props = {
   isOpen: boolean;
@@ -282,7 +283,8 @@ export function CodexVoiceAnalystModal({
       closeAriaLabel={t("chet.minimize")}
       closeIcon={<ChevronDownIcon size={18} aria-hidden="true" />}
       headerClassName="!gap-2 !px-3 !py-2 sm:!px-4 [&>div:first-child]:pr-0 [&>div:last-child]:gap-1"
-      panelClassName="h-full w-full overflow-hidden sm:h-[min(820px,92vh)] sm:w-[min(1180px,97vw)]"
+      fullPage
+      panelClassName="overflow-hidden"
       modalRef={modalRef}
       title={
         <div className="flex min-w-0 flex-wrap items-baseline gap-x-2">
@@ -509,43 +511,45 @@ export function CodexVoiceAnalystModal({
             enabled={splitLayout && analystExpanded}
             active={isOpen}
             conversation={
-              <ChetConversationPane
-                controller={controller}
-                chet={chet}
-                isDark={isDark}
-                visible={splitLayout || mobilePane === "conversation"}
-                analystExpanded={analystExpanded}
-                onToggleAnalyst={() => setAnalystExpanded((expanded) => !expanded)}
-                onReviewRecovery={setRecoveryOwners}
-                onOpenGroupMessage={openSource}
-                voiceStatus={voiceStatus}
-                voiceActions={voiceActions}
-                analystBar={
-                  analystExpanded ? null : (
-                    <CodexVoiceAnalystSummaryBar
-                      controller={controller}
-                      analystPhase={analystPhase}
-                      notReady={Boolean(analystProblem)}
-                      attentionCount={attentionCount}
-                      errorText={analystErrorText}
-                      hasNewResult={hasNewResult}
-                      onExpand={() => setAnalystExpanded(true)}
-                      actions={
-                        controller.analystWorking ? (
-                          <ChetStopWorkButton controller={controller} />
-                        ) : null
-                      }
+              <ChetInboxLayout inbox={<ChetReplyInbox onOpenGroupMessage={openSource} />}>
+                <ChetConversationPane
+                  controller={controller}
+                  chet={chet}
+                  isDark={isDark}
+                  visible={splitLayout || mobilePane === "conversation"}
+                  analystExpanded={analystExpanded}
+                  onToggleAnalyst={() => setAnalystExpanded((expanded) => !expanded)}
+                  onReviewRecovery={setRecoveryOwners}
+                  onOpenGroupMessage={openSource}
+                  voiceStatus={voiceStatus}
+                  voiceActions={voiceActions}
+                  analystBar={
+                    analystExpanded ? null : (
+                      <CodexVoiceAnalystSummaryBar
+                        controller={controller}
+                        analystPhase={analystPhase}
+                        notReady={Boolean(analystProblem)}
+                        attentionCount={attentionCount}
+                        errorText={analystErrorText}
+                        hasNewResult={hasNewResult}
+                        onExpand={() => setAnalystExpanded(true)}
+                        actions={
+                          controller.analystWorking ? (
+                            <ChetStopWorkButton controller={controller} />
+                          ) : null
+                        }
+                      />
+                    )
+                  }
+                  sources={
+                    <CodexVoiceMessageSources
+                      active={isOpen}
+                      outputStatus={controller.owned ? controller.outputStatus : undefined}
+                      onOpenSource={openSource}
                     />
-                  )
-                }
-                sources={
-                  <CodexVoiceMessageSources
-                    active={isOpen}
-                    outputStatus={controller.owned ? controller.outputStatus : undefined}
-                    onOpenSource={openSource}
-                  />
-                }
-              />
+                  }
+                />
+              </ChetInboxLayout>
             }
             analyst={
               <div className={splitLayout && !analystExpanded ? "hidden" : "contents"}>

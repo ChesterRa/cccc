@@ -35,10 +35,6 @@ import { SidebarMobileOverlay } from "./SidebarMobileOverlay";
 import { ConnectSidebar } from "../../features/connect/ConnectSidebar";
 import type { ConnectWorkbench } from "../../features/connect/useConnectWorkbench";
 
-import { useVisiblePendingSummary } from "../../features/pendingReplies/useVisiblePendingSummary";
-import { aggregatePendingIndicator } from "../../features/pendingReplies/indicator";
-import { PendingIndicatorText } from "../../features/pendingReplies/PendingIndicator";
-
 export interface GroupSidebarProps {
   connect?: ConnectWorkbench;
   orderedGroups: GroupMeta[];
@@ -94,7 +90,6 @@ export function GroupSidebar({
   onDeleteGroup,
 }: GroupSidebarProps) {
   const { t } = useTranslation("layout");
-  const pending = useVisiblePendingSummary();
   const controlsBusy = useUIStore((state) => state.busy.startsWith("group-"));
   const branding = useBrandingStore((s) => s.branding);
   const logoSrc = resolveThemeAwareLogoUrl(branding.logo_icon_url, isDark);
@@ -110,18 +105,6 @@ export function GroupSidebar({
     () => orderedGroups.filter((g) => archivedSet.has(String(g.group_id || "").trim())),
     [archivedSet, orderedGroups],
   );
-  const archivedPending = pending
-    ? aggregatePendingIndicator(
-        pending.summaries,
-        archivedGroups.map((group) => group.group_id),
-      )
-    : null;
-  const totalPending = pending
-    ? aggregatePendingIndicator(
-        pending.summaries,
-        orderedGroups.map((group) => group.group_id),
-      )
-    : null;
   const collapsedGroups = useMemo(() => {
     if (!isCollapsed) return workingGroups;
     const selectedArchived = archivedGroups.find(
@@ -433,18 +416,9 @@ export function GroupSidebar({
               size="touch"
               className="relative text-[var(--color-text-primary)]"
               onClick={onToggleCollapse}
-              label={
-                totalPending
-                  ? `${t("expandSidebar")} · ${t("pendingRepliesIndicator", { value: totalPending.text })}`
-                  : t("expandSidebar")
-              }
+              label={t("expandSidebar")}
             >
               <ChevronRightIcon size={18} />
-              {totalPending && (
-                <span className="absolute -right-1 -top-1">
-                  <PendingIndicatorText indicator={totalPending} />
-                </span>
-              )}
             </IconButton>
             {!readOnly && onCreateGroup && (
               <IconButton
@@ -481,7 +455,6 @@ export function GroupSidebar({
                   <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-[var(--glass-panel-bg)] text-[var(--color-text-secondary)]">
                     {archivedGroups.length}
                   </span>
-                  {archivedPending && <PendingIndicatorText indicator={archivedPending} />}
                 </div>
                 <ChevronDownIcon
                   size={16}

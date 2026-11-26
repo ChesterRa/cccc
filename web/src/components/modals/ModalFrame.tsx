@@ -13,6 +13,8 @@ interface ModalFrameProps {
   closeAriaLabel: string;
   closeDisabled?: boolean;
   panelClassName: string;
+  /** A page of its own: the whole window, over the sidebar, with no frame around it. */
+  fullPage?: boolean;
   headerActions?: ReactNode;
   headerClassName?: string;
   /** Phone layouts read close → title → actions, like a navigation bar. */
@@ -36,6 +38,7 @@ export function ModalFrame({
   closeAriaLabel,
   closeDisabled = false,
   panelClassName,
+  fullPage = false,
   headerActions,
   headerClassName = "",
   closeFirstOnMobile = false,
@@ -66,7 +69,7 @@ export function ModalFrame({
       className={
         inline
           ? `relative flex h-full min-h-0 min-w-0 flex-col ${isOpen ? "" : "hidden"}`
-          : `fixed inset-0 z-50 flex items-stretch justify-center p-0 duration-200 sm:items-center sm:p-4 ${
+          : `fixed inset-0 z-50 flex items-stretch justify-center p-0 duration-200 ${fullPage ? "" : "sm:items-center sm:p-4"} ${
               // A window shows at once, so focus can enter it on the frame it opens;
               // it stays visible while it fades out.
               isOpen
@@ -88,7 +91,7 @@ export function ModalFrame({
         className={
           inline
             ? "relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden"
-            : `relative flex flex-col rounded-none border shadow-2xl transition-[opacity,transform] duration-200 ${surface === "solid" ? "sm:rounded-2xl overflow-hidden border-[var(--glass-border-subtle)] bg-[var(--color-bg-primary)]" : "sm:rounded-[28px] glass-modal"} ${panelClassName} ${
+            : `relative flex flex-col rounded-none border shadow-2xl transition-[opacity,transform] duration-200 ${surface === "solid" ? "sm:rounded-2xl overflow-hidden border-[var(--glass-border-subtle)] bg-[var(--color-bg-primary)]" : "sm:rounded-[28px] glass-modal"} ${fullPage ? "h-full w-full border-0 sm:rounded-none" : ""} ${panelClassName} ${
                 isOpen
                   ? "opacity-100 animate-scale-in"
                   : "pointer-events-none translate-y-2 scale-[0.985] opacity-0"
