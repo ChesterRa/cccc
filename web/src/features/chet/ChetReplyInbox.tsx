@@ -126,12 +126,38 @@ export function ChetReplyInbox({
   );
 }
 
-/** Places the inbox beside Chet's conversation where there is room for both. */
-export function ChetInboxLayout({ inbox, children }: { inbox: ReactNode; children: ReactNode }) {
+/**
+ * Places the inbox beside Chet's conversation where there is room for both. On a narrow
+ * screen one of them fills the page, chosen from Chet's pane switch.
+ */
+export function ChetInboxLayout({
+  inbox,
+  phoneShowsInbox,
+  children,
+}: {
+  inbox: ReactNode;
+  phoneShowsInbox: boolean;
+  children: ReactNode;
+}) {
   return (
-    <div className="flex min-h-0 flex-1">
-      <div className="hidden min-h-0 lg:flex">{inbox}</div>
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col">{children}</div>
+    <div
+      className="flex min-h-0 flex-1"
+      data-chet-phone-pane={phoneShowsInbox ? "waiting" : "conversation"}
+    >
+      <div
+        data-chet-inbox-slot
+        className={`min-h-0 lg:flex lg:flex-none ${
+          phoneShowsInbox ? "flex flex-1 [&>section]:w-full lg:[&>section]:w-[340px]" : "hidden"
+        }`}
+      >
+        {inbox}
+      </div>
+      <div
+        data-chet-conversation-slot
+        className={`min-h-0 min-w-0 flex-1 flex-col lg:flex ${phoneShowsInbox ? "hidden" : "flex"}`}
+      >
+        {children}
+      </div>
     </div>
   );
 }

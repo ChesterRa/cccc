@@ -1024,6 +1024,7 @@
     "waitingSummary_other": "{{count}} questions from {{groups}} Groups",
     "waitingEmpty": "Nothing is waiting for you. Questions members ask you to answer show here.",
     "waitingFrom": "{{sender}} asks you",
-    "waitingOpenInGroup": "Open in its Group"
+    "waitingOpenInGroup": "Open in its Group",
+    "waitingTab": "Waiting"
   }
 }

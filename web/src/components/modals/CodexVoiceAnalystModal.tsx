@@ -42,6 +42,7 @@ import { ProcessRecoveryDialog } from "./ProcessRecoveryDialog";
 import { VoiceProviderSelect } from "../../features/codexVoice/VoiceProviderSelect";
 import { SpeakingVoiceSelect } from "../../features/codexVoice/SpeakingVoiceSelect";
 import { ChetInboxLayout, ChetReplyInbox } from "../../features/chet/ChetReplyInbox";
+import { useChetWaitingTotal } from "../../features/chet/chetWaiting";
 
 type Props = {
   isOpen: boolean;
@@ -53,7 +54,7 @@ type Props = {
   onOpenSource?: (groupId: string, eventId: string) => void;
 };
 
-type MobilePane = "conversation" | "analyst";
+type MobilePane = "conversation" | "waiting" | "analyst";
 const VOICE_CONSOLE_SPLIT_MEDIA_QUERY = "(min-width: 1024px)";
 const IN_CALL_PHASES = new Set(["listening", "responding", "speaking", "analysing"]);
 
@@ -82,6 +83,7 @@ export function CodexVoiceAnalystModal({
   const openSettings = useModalStore((state) => state.openCodexVoiceSettings);
   const openSettingsTarget = useModalStore((state) => state.openSettingsTarget);
   const [mobilePane, setMobilePane] = useState<MobilePane>("conversation");
+  const waitingCount = useChetWaitingTotal();
   const unattended = useUnattendedStore((state) => state.unattended);
   const unattendedSaving = useUnattendedStore((state) => state.saving);
   const unattendedError = useUnattendedStore((state) => state.error);
@@ -477,8 +479,11 @@ export function CodexVoiceAnalystModal({
             data-voice-pane-switch
             className="flex flex-none border-b border-[var(--glass-border-subtle)] lg:hidden"
           >
-            {(["conversation", "analyst"] as const).map((pane) => {
-              const label = t(pane === "conversation" ? "chet.conversation" : "chet.activity");
+            {(["conversation", "waiting", "analyst"] as const).map((pane) => {
+              const label =
+                pane === "waiting"
+                  ? `${t("chet.waitingTab")}${waitingCount > 0 ? ` · ${waitingCount}` : ""}`
+                  : t(pane === "conversation" ? "chet.conversation" : "chet.activity");
               const marked = pane === "analyst" && analystNeedsLook && mobilePane !== "analyst";
               return (
                 <button
@@ -511,7 +516,10 @@ export function CodexVoiceAnalystModal({
             enabled={splitLayout && analystExpanded}
             active={isOpen}
             conversation={
-              <ChetInboxLayout inbox={<ChetReplyInbox onOpenGroupMessage={openSource} />}>
+              <ChetInboxLayout
+                inbox={<ChetReplyInbox onOpenGroupMessage={openSource} />}
+                phoneShowsInbox={mobilePane === "waiting"}
+              >
                 <ChetConversationPane
                   controller={controller}
                   chet={chet}

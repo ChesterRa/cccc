@@ -1023,6 +1023,7 @@
     "waitingSummary_other": "{{count}} 个需要你回复的问题，来自 {{groups}} 个工作组",
     "waitingEmpty": "没有等你回复的问题。成员请你回复时会出现在这里。",
     "waitingFrom": "{{sender}} 问你",
-    "waitingOpenInGroup": "在工作组中查看"
+    "waitingOpenInGroup": "在工作组中查看",
+    "waitingTab": "待回复"
   }
 }
