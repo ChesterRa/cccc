@@ -123,7 +123,7 @@ In terminal mode, Amp, Auggie, Cline, Copilot, Cursor, Devin, Droid, Kimi Code a
 
 #### Native session validation
 
-On 2026-11-18, Kilo 7.8.27 was checked on Linux with the native CLI, isolated
+On 2026-11-26, Kilo 7.8.32 was checked on Linux x86-64 with the native CLI, isolated
 provider homes and a loopback test model. The shared agent/Chet probe covers idle startup,
 empty and populated session resume, consecutive results, native TUI cancellation,
 and a busy-state follow-up exceeding 16,000 characters. A second probe checks
@@ -154,8 +154,8 @@ additional Hub/session lifecycle work, not simply the existing ACP adapter.
 CCCC keeps its current terminal agent support instead of creating a synthetic
 startup prompt or a second Chet-only session path.
 
-Linux CI checks empty-session recovery with Codex 0.170.0 and Claude Code
-2.1.327. It also runs both native Kilo probes with version 7.8.27. To repeat
+Linux CI checks empty-session recovery with Codex 0.172.0 and Claude Code
+2.1.332. It also runs both native Kilo probes with version 7.8.32. To repeat
 the Kilo checks locally after building the current `cccc` binary:
 
 ```bash
@@ -366,7 +366,7 @@ When a Kilo terminal opens or reopens, CCCC waits for its empty chat input befor
 sending the first queued message. If it stays queued, open the member's terminal,
 return to its session, close any menu, and finish or clear your draft. Leave the
 cursor in the empty chat input. CCCC retries the queued message automatically.
-This input check has been verified with Kilo 7.8.27.
+This input check passed on Linux with Kilo 7.8.32 at 120×40 and 40×20.
 CCCC marks the first delivery accepted when that session records the message.
 If delivery is uncertain, check Kilo's history before choosing **Retry**.
 
