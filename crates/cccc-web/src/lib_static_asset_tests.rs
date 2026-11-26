@@ -1,5 +1,8 @@
 use super::*;
 use axum::http::Request;
+use flate2::read::GzDecoder;
+use http_body_util::BodyExt;
+use std::io::Read;
 use tower::ServiceExt;
 
 #[tokio::test]
@@ -25,7 +28,7 @@ async fn static_assets_negotiate_gzip_compression() {
         .oneshot(
             Request::builder()
                 .uri("/ui/logo.svg")
-                .header(header::ACCEPT_ENCODING, "gzip")
+                .header(header::ACCEPT_ENCODING, "gzip, deflate, br, zstd")
                 .body(Body::empty())
                 .expect("request"),
         )
@@ -37,6 +40,18 @@ async fn static_assets_negotiate_gzip_compression() {
         response.headers().get(header::CONTENT_ENCODING),
         Some(&header::HeaderValue::from_static("gzip")),
     );
+    let compressed = response
+        .into_body()
+        .collect()
+        .await
+        .expect("compressed body")
+        .to_bytes();
+    let mut decoded = Vec::new();
+    GzDecoder::new(compressed.as_ref())
+        .read_to_end(&mut decoded)
+        .expect("decode gzip body");
+    let expected = WebAssets::get("logo.svg").expect("embedded logo.svg");
+    assert_eq!(decoded, expected.data.as_ref());
 }
 
 #[tokio::test]

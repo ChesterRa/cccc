@@ -1143,7 +1143,7 @@ intend to restart the dedicated browser; its saved profile and delivery target a
   successful catch-up can retrieve missed messages.
 - Hover-prefetched group data is reused when that group is selected; group bootstrap does not issue
   a second agents read for the same transition.
-- Production Web responses negotiate Brotli or gzip compression. Voice Secretary code and locale
+- Production Web responses use gzip when the browser accepts it. Voice Secretary code and locale
   resources are loaded on demand instead of being part of every initial page load.
 
 ## Managing Groups
