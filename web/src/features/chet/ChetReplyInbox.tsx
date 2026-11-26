@@ -8,19 +8,22 @@ import { PendingIndicatorText } from "../pendingReplies/PendingIndicator";
 import { PendingSummaryContext } from "../pendingReplies/context";
 import { usePendingPages } from "../pendingReplies/usePendingPages";
 import { useVisiblePendingSummary } from "../pendingReplies/useVisiblePendingSummary";
-import { waitingGroups, waitingTotal } from "./chetWaiting";
+import { waitingGroups, waitingIndicator } from "./chetWaiting";
 
 function GroupRequests({
   groupId,
   title,
+  active,
   onOpenGroupMessage,
 }: {
   groupId: string;
   title: string;
+  /** Reads only while the inbox is on screen; a closed Chet reads nothing. */
+  active: boolean;
   onOpenGroupMessage?: (groupId: string, eventId: string) => void;
 }) {
   const { t, i18n } = useTranslation("modals");
-  const pages = usePendingPages(groupId, true);
+  const pages = usePendingPages(groupId, active);
   const open = (event: LedgerEvent) => {
     if (event.id) onOpenGroupMessage?.(groupId, event.id);
   };
@@ -71,6 +74,43 @@ function GroupRequests({
           </article>
         );
       })}
+      {pages.error || pages.daemonUnsupported ? (
+        <p
+          role="status"
+          data-chet-waiting-problem={groupId}
+          className="flex min-w-0 items-center gap-2 border border-dashed border-[var(--glass-border-subtle)] px-3 py-2 text-xs text-[var(--color-text-tertiary)]"
+        >
+          <span className="min-w-0 flex-1">
+            {t(pages.daemonUnsupported ? "chet.waitingUnsupported" : "chet.waitingLoadFailed", {
+              group: title,
+            })}
+          </span>
+          {pages.daemonUnsupported ? null : (
+            <button
+              type="button"
+              className="shrink-0 hover:text-[var(--color-text-primary)]"
+              onClick={() => pages.refresh()}
+            >
+              {t("chet.waitingRetry")}
+            </button>
+          )}
+        </p>
+      ) : pages.loading && !pages.loaded ? (
+        <p role="status" className="px-3 py-2 text-xs text-[var(--color-text-tertiary)]">
+          {t("chet.waitingLoading", { group: title })}
+        </p>
+      ) : null}
+      {pages.hasMore ? (
+        <button
+          type="button"
+          disabled={pages.loading}
+          data-chet-waiting-more={groupId}
+          className="justify-self-start px-1 text-xs text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] disabled:opacity-50"
+          onClick={() => pages.loadMore()}
+        >
+          {t("chet.waitingLoadMore", { group: title })}
+        </button>
+      ) : null}
     </>
   );
 }
@@ -80,8 +120,11 @@ function GroupRequests({
  * user answers them in one place. Each answer goes back to its own Group and asker.
  */
 export function ChetReplyInbox({
+  active,
   onOpenGroupMessage,
 }: {
+  /** Whether the inbox is on screen; it reads Groups only then. */
+  active: boolean;
   onOpenGroupMessage?: (groupId: string, eventId: string) => void;
 }) {
   const { t } = useTranslation("modals");
@@ -93,7 +136,7 @@ export function ChetReplyInbox({
   );
   if (!summary) return null;
   const waiting = waitingGroups(summary.summaries);
-  const total = waitingTotal(summary.summaries);
+  const indicator = waitingIndicator(summary.summaries);
   return (
     <section
       aria-label={t("chet.waitingTitle")}
@@ -105,18 +148,21 @@ export function ChetReplyInbox({
           {t("chet.waitingTitle")}
         </h2>
         <p className="mt-0.5 text-xs text-[var(--color-text-tertiary)]">
-          {total > 0
-            ? t("chet.waitingSummary", { count: total, groups: waiting.length })
-            : t("chet.waitingEmpty")}
+          {!indicator
+            ? t("chet.waitingEmpty")
+            : indicator.state === "fresh"
+              ? t("chet.waitingSummary", { count: indicator.count ?? 0, groups: waiting.length })
+              : t("chet.waitingUncertain", { value: indicator.text })}
         </p>
       </header>
-      {total > 0 ? (
+      {indicator ? (
         <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)] content-start gap-2 overflow-y-auto overflow-x-hidden p-2">
           {waiting.map((groupId) => (
             <GroupRequests
               key={groupId}
               groupId={groupId}
               title={titles.get(groupId) ?? groupId}
+              active={active}
               onOpenGroupMessage={onOpenGroupMessage}
             />
           ))}
@@ -165,11 +211,12 @@ export function ChetInboxLayout({
 /** The one place the sidebar counts what is waiting for the user: beside Chet, who holds it. */
 export function ChetWaitingBadge({ className }: { className?: string }) {
   const summary = useVisiblePendingSummary();
-  const total = summary ? waitingTotal(summary.summaries) : 0;
-  if (total <= 0) return null;
+  // A count that could not be read shows as uncertain, never as zero or as an exact number.
+  const indicator = summary ? waitingIndicator(summary.summaries) : null;
+  if (!indicator) return null;
   return (
-    <span className={className} data-chet-waiting-total={total}>
-      <PendingIndicatorText indicator={{ state: "fresh", text: String(total), count: total }} />
+    <span className={className} data-chet-waiting-total={indicator.text}>
+      <PendingIndicatorText indicator={indicator} />
     </span>
   );
 }

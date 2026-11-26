@@ -42,7 +42,8 @@ import { ProcessRecoveryDialog } from "./ProcessRecoveryDialog";
 import { VoiceProviderSelect } from "../../features/codexVoice/VoiceProviderSelect";
 import { SpeakingVoiceSelect } from "../../features/codexVoice/SpeakingVoiceSelect";
 import { ChetInboxLayout, ChetReplyInbox } from "../../features/chet/ChetReplyInbox";
-import { useChetWaitingTotal } from "../../features/chet/chetWaiting";
+import { useChetWaitingIndicator } from "../../features/chet/chetWaiting";
+import { useMediaQuery } from "../../hooks/useMediaQuery";
 
 type Props = {
   isOpen: boolean;
@@ -83,7 +84,8 @@ export function CodexVoiceAnalystModal({
   const openSettings = useModalStore((state) => state.openCodexVoiceSettings);
   const openSettingsTarget = useModalStore((state) => state.openSettingsTarget);
   const [mobilePane, setMobilePane] = useState<MobilePane>("conversation");
-  const waitingCount = useChetWaitingTotal();
+  const waiting = useChetWaitingIndicator();
+  const wide = useMediaQuery("(min-width: 1024px)");
   const unattended = useUnattendedStore((state) => state.unattended);
   const unattendedSaving = useUnattendedStore((state) => state.saving);
   const unattendedError = useUnattendedStore((state) => state.error);
@@ -482,7 +484,7 @@ export function CodexVoiceAnalystModal({
             {(["conversation", "waiting", "analyst"] as const).map((pane) => {
               const label =
                 pane === "waiting"
-                  ? `${t("chet.waitingTab")}${waitingCount > 0 ? ` · ${waitingCount}` : ""}`
+                  ? `${t("chet.waitingTab")}${waiting ? ` · ${waiting.text}` : ""}`
                   : t(pane === "conversation" ? "chet.conversation" : "chet.activity");
               const marked = pane === "analyst" && analystNeedsLook && mobilePane !== "analyst";
               return (
@@ -517,7 +519,12 @@ export function CodexVoiceAnalystModal({
             active={isOpen}
             conversation={
               <ChetInboxLayout
-                inbox={<ChetReplyInbox onOpenGroupMessage={openSource} />}
+                inbox={
+                  <ChetReplyInbox
+                    active={isOpen && (wide || mobilePane === "waiting")}
+                    onOpenGroupMessage={openSource}
+                  />
+                }
                 phoneShowsInbox={mobilePane === "waiting"}
               >
                 <ChetConversationPane

@@ -1024,6 +1024,12 @@
     "waitingEmpty": "没有等你回复的问题。成员请你回复时会出现在这里。",
     "waitingFrom": "{{sender}} 问你",
     "waitingOpenInGroup": "在工作组中查看",
-    "waitingTab": "待回复"
+    "waitingTab": "待回复",
+    "waitingUncertain": "有工作组暂时无法确认，待回复：{{value}}",
+    "waitingLoadFailed": "没能读取 {{group}} 的待回复问题。",
+    "waitingUnsupported": "当前运行的 CCCC daemon 无法列出 {{group}} 的待回复问题。",
+    "waitingRetry": "重试",
+    "waitingLoading": "正在读取 {{group}}…",
+    "waitingLoadMore": "显示 {{group}} 更早的问题"
   }
 }

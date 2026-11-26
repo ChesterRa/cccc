@@ -1025,6 +1025,12 @@
     "waitingEmpty": "Nothing is waiting for you. Questions members ask you to answer show here.",
     "waitingFrom": "{{sender}} asks you",
     "waitingOpenInGroup": "Open in its Group",
-    "waitingTab": "Waiting"
+    "waitingTab": "Waiting",
+    "waitingUncertain": "Some Groups could not be checked; waiting: {{value}}",
+    "waitingLoadFailed": "Could not load what {{group}} is waiting on.",
+    "waitingUnsupported": "The running CCCC daemon cannot list what {{group}} is waiting on.",
+    "waitingRetry": "Try again",
+    "waitingLoading": "Loading {{group}}…",
+    "waitingLoadMore": "Show earlier questions from {{group}}"
   }
 }

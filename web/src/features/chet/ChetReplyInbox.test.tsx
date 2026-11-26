@@ -92,7 +92,7 @@ it("gathers what every Group asked the user in one column, the longest-waiting G
       g_old: { state: "fresh", pending: 1, oldestTs: "2026-11-24T00:00:00Z" },
       g_none: { state: "fresh", pending: 0 },
     },
-    <ChetReplyInbox onOpenGroupMessage={open} />,
+    <ChetReplyInbox active onOpenGroupMessage={open} />,
   );
   try {
     await act(async () => {});
@@ -120,7 +120,7 @@ it("gathers what every Group asked the user in one column, the longest-waiting G
 it("says plainly when nothing is waiting, without listing any Group", async () => {
   const view = await mount(
     { g: { state: "fresh", pending: 0 } },
-    <ChetReplyInbox onOpenGroupMessage={vi.fn()} />,
+    <ChetReplyInbox active onOpenGroupMessage={vi.fn()} />,
   );
   try {
     expect(view.host.querySelector("[data-chet-waiting-request]")).toBeNull();
@@ -135,7 +135,6 @@ it("counts the total once beside Chet and follows the waiting-prompts setting", 
   const summaries: Record<string, Summary> = {
     a: { state: "fresh", pending: 2 },
     b: { state: "fresh", pending: 3 },
-    unknown: { state: "unknown", pending: null },
   };
   useUIStore.setState({ showPendingPrompts: true });
   const view = await mount(summaries, <ChetWaitingBadge />);
@@ -155,5 +154,109 @@ it("counts the total once beside Chet and follows the waiting-prompts setting", 
     expect(none.host.querySelector("[data-chet-waiting-total]")).toBeNull();
   } finally {
     await none.unmount();
+  }
+});
+
+it("reads no Group while the inbox is off screen, as when Chet is closed", async () => {
+  mocks.page.mockReset();
+  const view = await mount(
+    { g: { state: "fresh", pending: 3, oldestTs: "2026-11-24T00:00:00Z" } },
+    <ChetReplyInbox active={false} onOpenGroupMessage={vi.fn()} />,
+  );
+  try {
+    await act(async () => {});
+    expect(mocks.page).not.toHaveBeenCalled();
+  } finally {
+    await view.unmount();
+  }
+});
+
+it("never turns a count it could not read into zero, and still reads that Group", async () => {
+  mocks.page.mockReset();
+  mocks.statuses.mockResolvedValue({ ok: true, result: { statuses: {} } });
+  mocks.page.mockImplementation(async (group: string) =>
+    pageOf(group, [request(`e_${group}`, group, "peer")]),
+  );
+  const summaries: Record<string, Summary> = {
+    fresh: { state: "fresh", pending: 2, oldestTs: "2026-11-24T00:00:00Z" },
+    lost: { state: "unknown", pending: null },
+  };
+  useUIStore.setState({ showPendingPrompts: true });
+  const badge = await mount(summaries, <ChetWaitingBadge />);
+  try {
+    // An exact-looking "2" would hide the Group that could not be counted.
+    expect(badge.host.textContent).toBe("2+?");
+  } finally {
+    await badge.unmount();
+  }
+  const onlyLost = await mount({ lost: { state: "unknown", pending: null } }, <ChetWaitingBadge />);
+  try {
+    expect(onlyLost.host.textContent).toBe("?");
+  } finally {
+    await onlyLost.unmount();
+  }
+  const inbox = await mount(summaries, <ChetReplyInbox active onOpenGroupMessage={vi.fn()} />);
+  try {
+    await act(async () => {});
+    expect(inbox.host.textContent).toContain('chet.waitingUncertain:{"value":"2+?"}');
+    expect(inbox.host.textContent).not.toContain("chet.waitingEmpty");
+    const ids = [...inbox.host.querySelectorAll("[data-chet-waiting-request]")].map((card) =>
+      card.getAttribute("data-chet-waiting-request"),
+    );
+    expect(ids).toEqual(["e_fresh", "e_lost"]);
+  } finally {
+    await inbox.unmount();
+  }
+});
+
+it("offers a Group's earlier questions past the first page, and a retry when reading fails", async () => {
+  mocks.page.mockReset();
+  mocks.statuses.mockResolvedValue({ ok: true, result: { statuses: {} } });
+  const first = pageOf("g", [request("e_2", "g", "peer")]);
+  first.result.has_more = true;
+  (first.result as { before: string | null }).before = "e_2";
+  mocks.page
+    .mockResolvedValueOnce(first)
+    .mockResolvedValueOnce(pageOf("g", [request("e_1", "g", "peer")]));
+  const view = await mount(
+    { g: { state: "fresh", pending: 2, oldestTs: "2026-11-24T00:00:00Z" } },
+    <ChetReplyInbox active onOpenGroupMessage={vi.fn()} />,
+  );
+  try {
+    await act(async () => {});
+    const more = view.host.querySelector<HTMLButtonElement>('[data-chet-waiting-more="g"]')!;
+    expect(more).not.toBeNull();
+    await act(async () => more.click());
+    await act(async () => {});
+    expect(mocks.page).toHaveBeenLastCalledWith("g", "e_2", expect.anything());
+    const ids = [...view.host.querySelectorAll("[data-chet-waiting-request]")].map((card) =>
+      card.getAttribute("data-chet-waiting-request"),
+    );
+    expect(ids.sort()).toEqual(["e_1", "e_2"]);
+  } finally {
+    await view.unmount();
+  }
+
+  mocks.page.mockReset();
+  mocks.page
+    .mockRejectedValueOnce(new Error("offline"))
+    .mockResolvedValueOnce(pageOf("h", [request("e_h", "h", "peer")]));
+  const failing = await mount(
+    { h: { state: "fresh", pending: 1, oldestTs: "2026-11-24T00:00:00Z" } },
+    <ChetReplyInbox active onOpenGroupMessage={vi.fn()} />,
+  );
+  try {
+    await act(async () => {});
+    const problem = failing.host.querySelector('[data-chet-waiting-problem="h"]')!;
+    expect(problem.textContent).toContain("chet.waitingLoadFailed");
+    const retry = [...problem.querySelectorAll("button")].find(
+      (button) => button.textContent === "chet.waitingRetry",
+    )!;
+    await act(async () => retry.click());
+    await act(async () => {});
+    expect(failing.host.querySelector('[data-chet-waiting-request="e_h"]')).not.toBeNull();
+    expect(failing.host.querySelector('[data-chet-waiting-problem="h"]')).toBeNull();
+  } finally {
+    await failing.unmount();
   }
 });

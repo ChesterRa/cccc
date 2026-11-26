@@ -1024,6 +1024,12 @@
     "waitingEmpty": "返信待ちの質問はありません。メンバーが返信を求めるとここに表示されます。",
     "waitingFrom": "{{sender}} からの質問",
     "waitingOpenInGroup": "グループで開く",
-    "waitingTab": "返信待ち"
+    "waitingTab": "返信待ち",
+    "waitingUncertain": "確認できないグループがあります。返信待ち：{{value}}",
+    "waitingLoadFailed": "{{group}} の返信待ちを読み込めませんでした。",
+    "waitingUnsupported": "実行中の CCCC daemon は {{group}} の返信待ちを一覧できません。",
+    "waitingRetry": "再試行",
+    "waitingLoading": "{{group}} を読み込み中…",
+    "waitingLoadMore": "{{group}} の以前の質問を表示"
   }
 }
