@@ -7,6 +7,8 @@ import type { CodexVoiceSessionController } from "../../features/codexVoice/useC
 import { controlCodexVoiceAnalyst, fetchActiveCodexVoiceCall } from "../../services/api/codexVoice";
 import { CodexVoiceAnalystModal } from "./CodexVoiceAnalystModal";
 import { chetConversationStub } from "../../features/chet/chetTestSupport";
+import { PendingSummaryContext } from "../../features/pendingReplies/context";
+import { fetchPendingReplies } from "../../services/api/pendingReplies";
 
 const backend = vi.hoisted(() => ({ analyst: null as CodexVoiceAnalystInfo | null }));
 vi.mock("../../services/api/chet", async (original) => ({
@@ -22,6 +24,12 @@ vi.mock("../../features/codexVoice/CodexVoiceMessageSources", () => ({
 }));
 vi.mock("../../features/codexVoice/VoiceAnalystTerminal", () => ({
   VoiceAnalystTerminal: () => <div>native-terminal</div>,
+}));
+vi.mock("../../services/api/pendingReplies", () => ({
+  fetchPendingReplies: vi.fn(async () => ({
+    ok: true,
+    result: { events: [], statuses: {}, has_more: false, before: null, total: 0 },
+  })),
 }));
 vi.mock("../../services/api/codexVoice", () => ({
   fetchActiveCodexVoiceCall: vi.fn(async () => ({
@@ -168,6 +176,46 @@ describe("Voice ACP console in the complete modal", () => {
     expect(host.querySelector("[data-codex-voice-analyst-bar]")).toBeNull();
     expect(fetchActiveCodexVoiceCall).toHaveBeenCalledTimes(1);
     expect(host.textContent).toContain("Run search_web?");
+  });
+
+  it("reads what is waiting only once the narrow Waiting pane is chosen", async () => {
+    vi.mocked(fetchPendingReplies).mockClear();
+    const waiting = (isOpen: boolean) =>
+      act(async () =>
+        root.render(
+          <PendingSummaryContext.Provider
+            value={{
+              summaries: { g: { state: "fresh", pending: 3, oldestTs: "2026-11-24T00:00:00Z" } },
+              refresh: () => {},
+            }}
+          >
+            <CodexVoiceAnalystModal
+              isOpen={isOpen}
+              isDark={false}
+              isSmallScreen
+              controller={controller}
+              chet={chetConversationStub()}
+              onClose={vi.fn()}
+            />
+          </PendingSummaryContext.Provider>,
+        ),
+      );
+    vi.stubGlobal("matchMedia", () => ({
+      matches: false,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }));
+    await waiting(false);
+    // A closed Chet reads nothing, though it stays mounted.
+    expect(fetchPendingReplies).not.toHaveBeenCalled();
+    await waiting(true);
+    // Open on the conversation: the list is off screen on a phone.
+    expect(fetchPendingReplies).not.toHaveBeenCalled();
+    const tab = button("chet.waitingTab · 3");
+    expect(tab.getAttribute("aria-pressed")).toBe("false");
+    await act(async () => tab.click());
+    expect(tab.getAttribute("aria-pressed")).toBe("true");
+    expect(fetchPendingReplies).toHaveBeenCalledWith("g", undefined, expect.anything());
   });
 
   it("marks the narrow Analyst tab without switching to it", async () => {
