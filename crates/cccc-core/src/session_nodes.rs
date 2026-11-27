@@ -9,7 +9,8 @@ mod store;
 mod tests;
 
 pub use client::{
-    ClientDescriptor, clear_client, client, saved_client, set_client, update_memberships,
+    ClientDescriptor, clear_client, client, disconnect_client, replace_memberships, saved_client,
+    set_client, upsert_membership,
 };
 pub use grants::{pair, revoke, set_connected};
 pub use invitations::create_invite;

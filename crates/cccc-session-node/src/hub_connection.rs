@@ -56,7 +56,8 @@ impl Hub {
 
     async fn session(self: &Arc<Self>, connection: Connection) -> Result<()> {
         let node_id = connection.remote_id().to_string();
-        connection.set_max_concurrent_bi_streams(8u32.into());
+        let concurrency = 8u32;
+        connection.set_max_concurrent_bi_streams(concurrency.into());
         let (mut send, mut recv) =
             tokio::time::timeout(std::time::Duration::from_secs(10), connection.accept_bi())
                 .await??;
@@ -102,17 +103,14 @@ impl Hub {
         .await?;
         let receivers = Arc::new(Mutex::new(HashMap::new()));
         let mut calls = JoinSet::new();
-        let permits = Arc::new(Semaphore::new(8));
         loop {
             tokio::select! {
                 _ = connection.closed() => break,
                 Some(_) = calls.join_next(), if !calls.is_empty() => {},
-                incoming = connection.accept_bi() => {
+                incoming = connection.accept_bi(), if calls.len() < concurrency as usize => {
                     let Ok((mut send, mut recv)) = incoming else { break; };
-                    let Ok(permit) = Arc::clone(&permits).try_acquire_owned() else { break; };
                     let hub = Arc::clone(self); let id = node_id.clone(); let epoch = epoch.clone(); let receivers = Arc::clone(&receivers); let conn = connection.clone();
                     calls.spawn(async move {
-                        let _permit = permit;
                         let response = match protocol::read(&mut recv).await {
                             Ok(request) => hub.request(&id, &epoch, request, &conn, receivers).await,
                             Err(error) => Err(error),

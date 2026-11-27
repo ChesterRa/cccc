@@ -1889,6 +1889,147 @@ fn device_directory_keeps_separate_authority_and_requires_a_live_receiver() {
 }
 
 #[test]
+fn device_member_replies_stay_in_the_group_it_was_added_to() {
+    use cccc_contracts::local_session::LocalSessionBinding;
+    use cccc_contracts::session_node::{SessionNodeEndpoint, SessionNodeSource};
+    use cccc_core::session_nodes;
+
+    let fixture = Fixture::new();
+    fixture.attach();
+    let home = &fixture.home;
+    session_nodes::register_endpoint(
+        home,
+        SessionNodeEndpoint {
+            endpoint_id: "fixture-hub".into(),
+            addresses: vec!["127.0.0.1:2345".into()],
+            relay_url: None,
+        },
+        fixture.source.host.clone(),
+        "fixture-gateway",
+    )
+    .expect("gateway");
+    let ticket = session_nodes::create_invite(home).expect("pairing ticket");
+    session_nodes::pair(
+        home,
+        "fixture-gateway",
+        "fixture-device",
+        "Laptop",
+        Some((&ticket.invite_id, &ticket.secret)),
+    )
+    .expect("paired device");
+    let device_source_id = session_nodes::update_sources(
+        home,
+        "fixture-gateway",
+        "fixture-device",
+        vec![SessionNodeSource {
+            source: fixture.source.source(true),
+            session_revision: "device-revision".into(),
+            alive: true,
+        }],
+    )
+    .expect("advertised sources")
+    .remove(0)
+    .source
+    .source_id;
+    store::attach(home, &device_source_id, "device-receiver").expect("bridge receiver");
+    let created = fixture.call(
+        "local_session_conversation",
+        json!({"by":"user","source_ids":[device_source_id]}),
+    );
+    let group_id = created["group_id"]
+        .as_str()
+        .expect("device Group")
+        .to_owned();
+    let group = GroupStore::new(home.clone())
+        .expect("store")
+        .load(&group_id)
+        .expect("device Group");
+    let actor = group
+        .actors
+        .iter()
+        .find(|actor| actor.external_session_id == device_source_id)
+        .expect("device member");
+    let binding = LocalSessionBinding {
+        group_id: group_id.clone(),
+        actor_id: actor.id.clone(),
+        actor_generation: cccc_core::actors::generation_identity(actor),
+        source_id: device_source_id.clone(),
+        session_revision: "device-revision".into(),
+    };
+
+    // Another local Group writes to the device member, whose reply would go back there.
+    let other = fixture.call("group_create", json!({"title":"other","by":"user"}));
+    let other_id = other["group"]["group_id"].as_str().expect("other Group");
+    fixture.call(
+        "actor_add",
+        json!({"group_id":other_id,"actor_id":"sender","by":"user"}),
+    );
+    let sent = fixture.call(
+        "send_cross_group",
+        json!({
+            "group_id":other_id,"dst_group_id":group_id,"by":"sender",
+            "to":[actor.id],"text":"question","message_mode":"send"
+        }),
+    );
+    let delivered = sent["event"]["id"].as_str().expect("delivered copy");
+    let refused = crate::dispatch::dispatch(
+        home,
+        &req(
+            "reply",
+            json!({
+                "group_id":group_id,"by":actor.id,"reply_to":delivered,
+                "text":"answer","_cccc_native_binding":binding
+            }),
+        ),
+    );
+    assert_eq!(
+        refused.error.expect("a reply that leaves the Group").code,
+        "permission_denied"
+    );
+    let other_ledger = GroupStore::new(home.clone())
+        .expect("store")
+        .ledger_path(other_id)
+        .expect("other ledger");
+    assert!(
+        !std::fs::read_to_string(other_ledger)
+            .expect("other ledger")
+            .contains("\"answer\""),
+        "nothing reached the other Group"
+    );
+
+    // The same member still writes within its own Group.
+    let within = crate::dispatch::dispatch(
+        home,
+        &req(
+            "send",
+            json!({
+                "group_id":group_id,"by":actor.id,"to":["user"],"message_mode":"send",
+                "text":"hello","_cccc_native_binding":binding
+            }),
+        ),
+    );
+    assert!(within.ok, "{:?}", within.error);
+    let asked = fixture.call(
+        "send",
+        json!({
+            "group_id":group_id,"by":"user","to":[actor.id],
+            "text":"local question","message_mode":"send"
+        }),
+    );
+    let answered = crate::dispatch::dispatch(
+        home,
+        &req(
+            "reply",
+            json!({
+                "group_id":group_id,"by":actor.id,"reply_to":asked["event"]["id"],
+                "text":"local answer","_cccc_native_binding":binding
+            }),
+        ),
+    );
+    assert!(answered.ok, "{:?}", answered.error);
+}
+
+#[test]
 fn unreadable_source_control_disables_only_its_own_source() {
     use sha2::{Digest, Sha256};
 

@@ -203,6 +203,7 @@ Manage standalone Group connections without a CCCC account or an exposed Web UI.
 cccc direct listen --bind 0.0.0.0:8847 --address 192.168.1.10:8847  # Enable the encrypted collaboration listener
 cccc direct stop                                                     # Stop the standalone collaboration listener
 cccc direct invite <group_id>                                        # Create a single-use invitation valid for 30 minutes
+cccc direct invite <group_id> --permanent                            # Create a reusable invitation with no expiry (each joining Group requires approval)
 cccc direct join <group_id>                                          # Read an invitation from stdin (kept out of shell history)
 cccc direct status <group_id>                                        # Show standalone connections for a Group
 cccc direct approve <group_id> <connection_id>                       # Approve a pending standalone connection

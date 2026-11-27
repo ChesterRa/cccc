@@ -10,7 +10,10 @@ use cccc_core::{HomeLayout, local_sessions, session_nodes};
 use iroh::endpoint::Connection;
 use serde_json::{Value, json};
 use std::{sync::Arc, time::Duration};
-use tokio::{sync::Semaphore, task::JoinSet};
+use tokio::{
+    sync::{Mutex, Semaphore},
+    task::JoinSet,
+};
 
 pub(crate) async fn run_session(
     home: &HomeLayout,
@@ -23,28 +26,55 @@ pub(crate) async fn run_session(
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let permits = Arc::new(Semaphore::new(8));
     let mut calls = JoinSet::new();
-    loop {
-        tokio::select! {
-            _ = connection.closed() => return Ok(()),
-            Some(_) = calls.join_next(), if !calls.is_empty() => {},
-            _ = interval.tick() => {
-                let sources = sources(home, daemon, &runtimes).await?;
-                let response = protocol::call(connection, &Request::Sync { sources }).await?;
-                session_nodes::update_memberships(home, secret, true, serde_json::from_value(response["memberships"].clone())?)?;
-            }
-            incoming = connection.accept_bi() => {
-                let (mut send, mut recv) = incoming?;
-                let permit = Arc::clone(&permits).try_acquire_owned()?;
-                let runtimes = Arc::clone(&runtimes);
-                let home = home.clone(); let daemon = daemon.clone(); let secret = secret.to_owned();
-                calls.spawn(async move {
-                    let _permit = permit;
-                    let response = incoming_delivery(&home, &daemon, &secret, &runtimes, protocol::read(&mut recv).await).await.unwrap_or_else(|_| json!({"error":"Native handoff authority is unavailable"}));
-                    let _ = protocol::write(&mut send, &response).await;
-                });
+    // A single bounded rejection task keeps an excess stream off the admission
+    // loop. Leave subsequent streams under transport backpressure until a slot opens.
+    let mut busy = JoinSet::new();
+    let sync_generation = Arc::new(Mutex::new(0));
+    let result = async {
+        loop {
+            tokio::select! {
+                _ = connection.closed() => return Ok(()),
+                Some(_) = calls.join_next(), if !calls.is_empty() => {},
+                Some(_) = busy.join_next(), if !busy.is_empty() => {},
+                _ = interval.tick() => {
+                    let sources = sources(home, daemon, &runtimes).await?;
+                    let response = protocol::call(connection, &Request::Sync { sources }).await?;
+                    let mut generation = sync_generation.lock().await;
+                    session_nodes::replace_memberships(home, secret, serde_json::from_value(response["memberships"].clone())?)?;
+                    *generation += 1;
+                }
+                incoming = connection.accept_bi(), if permits.available_permits() > 0 || busy.is_empty() => {
+                    let (mut send, mut recv) = incoming?;
+                    let Ok(permit) = Arc::clone(&permits).try_acquire_owned() else {
+                        busy.spawn(async move {
+                            // Consume the complete frame before replying. The hub writes
+                            // before it reads the response and needs a definite outcome.
+                            let response = if matches!(protocol::read(&mut recv).await, Ok(Request::Deliver { .. })) {
+                                json!({"outcome":SessionNodeDeliveryOutcome::Unavailable})
+                            } else {
+                                json!({"error":"Unexpected hub request"})
+                            };
+                            let _ = protocol::write(&mut send, &response).await;
+                        });
+                        continue;
+                    };
+                    let accepted_generation = *sync_generation.lock().await;
+                    let sync_generation = Arc::clone(&sync_generation);
+                    let runtimes = Arc::clone(&runtimes);
+                    let home = home.clone(); let daemon = daemon.clone(); let secret = secret.to_owned();
+                    calls.spawn(async move {
+                        let _permit = permit;
+                        let response = incoming_delivery(&home, &daemon, &secret, &runtimes, protocol::read(&mut recv).await, &sync_generation, accepted_generation).await.unwrap_or_else(|_| json!({"error":"Native handoff authority is unavailable"}));
+                        let _ = protocol::write(&mut send, &response).await;
+                    });
+                }
             }
         }
-    }
+    }.await;
+    // Finish cancelling local stream tasks before the reconnect reuses the secret.
+    calls.shutdown().await;
+    busy.shutdown().await;
+    result
 }
 
 pub(super) async fn incoming_delivery(
@@ -53,6 +83,8 @@ pub(super) async fn incoming_delivery(
     secret: &str,
     runtimes: &[LocalSessionRuntime],
     request: Result<Request>,
+    sync_generation: &Mutex<u64>,
+    accepted_generation: u64,
 ) -> Result<Value> {
     let Request::Deliver { delivery } = request? else {
         anyhow::bail!("Unexpected hub request");
@@ -77,12 +109,18 @@ pub(super) async fn incoming_delivery(
         // No native submission started, so it can retry with a fresh offer.
         return Ok(json!({"outcome":SessionNodeDeliveryOutcome::Unavailable}));
     }
-    let mut memberships = client.memberships;
-    memberships.retain(|member| {
-        member.source_id != delivery.source_id || member.group_id != delivery.membership.group_id
-    });
-    memberships.push(delivery.membership.clone());
-    session_nodes::update_memberships(home, secret, true, memberships)?;
+    {
+        let generation = sync_generation.lock().await;
+        if *generation == accepted_generation {
+            session_nodes::upsert_membership(home, secret, delivery.membership.clone())?;
+        } else if !session_nodes::client(home)?.is_some_and(|current| {
+            current.secret == secret && current.memberships.contains(&delivery.membership)
+        }) {
+            // Sync was requested after this stream was accepted. Its snapshot
+            // supersedes the earlier offer, and no native submission has started.
+            return Ok(json!({"outcome":SessionNodeDeliveryOutcome::Unavailable}));
+        }
+    }
     let response = daemon
         .call(&DaemonRequest {
             v: 1,

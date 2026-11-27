@@ -71,7 +71,13 @@ export function useSessionNodes(active = true) {
         if (!response.ok) {
           const status = response.error.httpStatus;
           if (status === 401 || status === 403) forbid();
-          else setDirectory({ status: status === 404 ? "unsupported" : "failed" });
+          else
+            setDirectory({
+              status:
+                status === 404 || response.error.code === "session_node_upgrade_required"
+                  ? "unsupported"
+                  : "failed",
+            });
         } else if (version === mutation.current) {
           const result = response.result;
           if (result?.supported === false) setDirectory({ status: "unsupported" });

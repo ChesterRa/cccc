@@ -688,6 +688,7 @@ fn preflight_upload_reply(home: &HomeLayout, request: &DaemonRequest) -> OpResul
     }
     let target = find_event(home, &group.group_id, &reply_to)?;
     if target.data.contains_key("connect_message") {
+        reject_remote_reply_route(request)?;
         return super::connect_outbound::reply(home, request, &group, &target, &message_mode, true);
     }
     reject_retired_reply(home, &target)?;
@@ -722,6 +723,7 @@ fn preflight_upload_reply(home: &HomeLayout, request: &DaemonRequest) -> OpResul
     }
     let routed = routed_reply_recipients(&forwarded.args);
     if !routed.is_empty() {
+        reject_remote_reply_route(request)?;
         let destination = cross_group_reply_destination(home, &forwarded, &target, &routed)?;
         let mut cross_group = forwarded.clone();
         cross_group.args.remove("reply_to");
@@ -847,6 +849,7 @@ fn reply(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     }
     let target = find_event(home, &group.group_id, &reply_to)?;
     if target.data.contains_key("connect_message") {
+        reject_remote_reply_route(request)?;
         return super::connect_outbound::reply(
             home,
             request,
@@ -891,6 +894,7 @@ fn reply(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     // send_cross_group instead of failing recipient resolution.
     let routed = routed_reply_recipients(&forwarded.args);
     if !routed.is_empty() {
+        reject_remote_reply_route(request)?;
         return reply_cross_group(home, &forwarded, &group, &target, &routed);
     }
     send_with_audience_policy(home, &forwarded, "chat.message", false, None, service_reply)
@@ -931,6 +935,25 @@ fn is_default_service_reply(
         ));
     }
     Ok(!uses_request_thread)
+}
+
+/// A session on another computer is admitted to one Group: a reply that would
+/// leave it, back to a Connect peer or to the local Group a message came from,
+/// is refused. The binding is set by the MCP router, never by the caller.
+fn reject_remote_reply_route(request: &DaemonRequest) -> Result<(), OpError> {
+    let remote = request
+        .args
+        .get("_cccc_native_binding")
+        .and_then(|binding| binding.get("source_id"))
+        .and_then(Value::as_str)
+        .is_some_and(cccc_core::session_nodes::is_remote_source);
+    if remote {
+        return Err(OpError::new(
+            "permission_denied",
+            "A session on another computer replies only within the Group it was added to",
+        ));
+    }
+    Ok(())
 }
 
 fn routed_reply_recipients(args: &Map<String, Value>) -> Vec<(String, String)> {

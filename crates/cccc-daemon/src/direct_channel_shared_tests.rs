@@ -30,7 +30,7 @@ async fn permanent_key_connects_multiple_groups_and_deletion_blocks_channels_and
         None,
     )
     .expect("listener");
-    let text = direct::shared::create(&homes[0], &groups[0], None, 0).expect("invitation");
+    let text = direct::shared::create(&homes[0], &groups[0], None).expect("invitation");
     let root = direct::load(&homes[0]).expect("store").shared_invitations[0]
         .invitation
         .id

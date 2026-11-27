@@ -78,7 +78,7 @@ export function readDirectInvitation(text: string): DirectInvitationPreview | nu
       ),
     );
     if (
-      ![1, 2, 3].includes(data?.v) ||
+      ![1, 3].includes(data?.v) ||
       (data.v === 3) !== (data.expires_at === DIRECT_PERMANENT_EXPIRY) ||
       typeof data.secret !== "string" ||
       data.secret.length !== 64 ||
@@ -91,8 +91,7 @@ export function readDirectInvitation(text: string): DirectInvitationPreview | nu
     )
       return null;
     return {
-      ...(data.v >= 2 ? { reusable: true } : {}),
-      ...(data.v === 3 ? { permanent: true } : {}),
+      ...(data.v === 3 ? { reusable: true, permanent: true } : {}),
       id: data.id,
       host: {
         ...data.host,

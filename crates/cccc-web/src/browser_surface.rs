@@ -49,6 +49,10 @@ use tokio::sync::{Mutex, RwLock};
 use tokio::task::JoinHandle;
 
 const BROWSER_EXIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
+/// How long an open waits for a kept browser that is closing, after its last
+/// window closed, before it reports the failure.
+const KEPT_BROWSER_ENDING_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+const KEPT_BROWSER_ENDING_RETRY: std::time::Duration = std::time::Duration::from_millis(200);
 
 pub(crate) fn system_browser_path() -> Option<PathBuf> {
     system_browser::find_system_browser().map(|(path, _)| path)
@@ -87,6 +91,21 @@ impl std::fmt::Display for BrowserSurfaceContentChanged {
 }
 
 impl std::error::Error for BrowserSurfaceContentChanged {}
+
+/// A browser the session owner keeps refused a connection or a new window.
+/// Chrome ends by itself once its last window closes, and while it is ending
+/// the owner still sees its process; once it has exited, the owner starts
+/// another. An open that hits this retries for a bounded time.
+#[derive(Debug)]
+pub(crate) struct KeptBrowserEnding;
+
+impl std::fmt::Display for KeptBrowserEnding {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("the kept browser did not accept the request; it may be closing")
+    }
+}
+
+impl std::error::Error for KeptBrowserEnding {}
 
 #[derive(Clone)]
 pub(super) struct Session {
@@ -523,22 +542,36 @@ impl BrowserSurfaces {
         let _operation_guard = operation.lock().await;
         self.bind_profile(key, &profile).await?;
         self.closed_pages.lock().await.remove(key);
-        let result = self
-            .open_registered(OpenRequest {
-                key,
-                profile: &profile,
-                url,
-                width,
-                height,
-                storage_state,
-                reuse_existing,
-                track_initial_url,
-                mode,
-                shared_browser,
-                actor_identity,
-                actor,
-            })
-            .await;
+        // A failed attempt opened no page, so trying again repeats nothing.
+        let deadline = std::time::Instant::now() + KEPT_BROWSER_ENDING_WAIT;
+        let result = loop {
+            let result = self
+                .open_registered(OpenRequest {
+                    key,
+                    profile: &profile,
+                    url,
+                    width,
+                    height,
+                    storage_state,
+                    reuse_existing,
+                    track_initial_url,
+                    mode,
+                    shared_browser,
+                    actor_identity,
+                    actor,
+                })
+                .await;
+            match result {
+                Err(error)
+                    if error.downcast_ref::<KeptBrowserEnding>().is_some()
+                        && std::time::Instant::now() < deadline
+                        && !self.shutting_down.load(Ordering::Acquire) =>
+                {
+                    tokio::time::sleep(KEPT_BROWSER_ENDING_RETRY).await;
+                }
+                result => break result,
+            }
+        };
         // Process/profile registration is serialized; a slow page navigation
         // must not hold the shared profile lock and block another Actor window.
         drop(_operation_guard);
@@ -714,10 +747,23 @@ impl BrowserSurfaces {
                     .background(actor_identity.is_some())
                     .build()
                     .map_err(anyhow::Error::msg)?;
+                let kept = owner.held.is_some();
                 let page = owner
                     .browser
                     .new_page(params)
                     .await
+                    .map_err(|error| {
+                        // Only Chrome's answer refusing the new target proves
+                        // no window opened; a timeout can follow a created one.
+                        // The marker sits under the message users see.
+                        let refused = matches!(error, chromiumoxide::error::CdpError::Chrome(_));
+                        let error = anyhow::Error::new(error);
+                        if kept && refused {
+                            error.context(KeptBrowserEnding)
+                        } else {
+                            error
+                        }
+                    })
                     .context("create shared browser window")?;
                 // Only the freshly launched owner has unowned startup pages.
                 // Later blank windows may belong to another Actor navigating.

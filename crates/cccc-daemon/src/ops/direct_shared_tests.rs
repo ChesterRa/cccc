@@ -32,21 +32,13 @@ fn reusable_invitation_actions_are_admin_only_and_polling_never_discloses_secret
         json!({"group_id":group.group_id,"by":"user","reusable":true}),
     );
     assert!(created.ok, "{created:?}");
-    let before = chrono::Utc::now();
-    let finite = call(
-        "connect_direct_invite",
-        json!({"group_id":group.group_id,"by":"user","reusable":true,"expires_in_seconds":86_400}),
-    );
-    assert!(finite.ok);
-    let key = direct::decode_invitation(finite.result["invitation"].as_str().expect("finite key"))
-        .expect("decode finite");
-    assert_eq!(key.v, 2);
-    let deadline = chrono::DateTime::parse_from_rfc3339(&key.expires_at).expect("finite deadline");
-    let day = chrono::Duration::days(1);
-    assert!(
-        deadline >= before + day - chrono::Duration::seconds(1)
-            && deadline <= chrono::Utc::now() + day
-    );
+    for seconds in [-1, 86_400, 604_800, 2_592_000] {
+        let finite = call(
+            "connect_direct_invite",
+            json!({"group_id":group.group_id,"by":"user","reusable":true,"expires_in_seconds":seconds}),
+        );
+        assert!(!finite.ok, "finite duration {seconds} must be refused");
+    }
     let legacy = call(
         "connect_direct_invite",
         json!({"group_id":group.group_id,"by":"user"}),
@@ -57,6 +49,7 @@ fn reusable_invitation_actions_are_admin_only_and_polling_never_discloses_secret
     assert_eq!(old.v, 1);
     assert!(!old.reusable());
     let saved = direct::load(&home).expect("store");
+    assert_eq!(saved.shared_invitations.len(), 1);
     let invitation = &saved.shared_invitations[0].invitation;
     direct::configure(
         &home,

@@ -10,13 +10,7 @@ pub fn create(
     home: &HomeLayout,
     group: &str,
     expected: Option<&DirectListener>,
-    seconds: i64,
 ) -> io::Result<String> {
-    if !matches!(seconds, 0 | 86_400 | 604_800 | 2_592_000) {
-        return Err(invalid(
-            "Choose an invitation lifetime of 24 hours, 7 days, 30 days or permanent",
-        ));
-    }
     let local = endpoint(home, group)?;
     update(home, |store| {
         if store.shared_invitations.len() >= 64 {
@@ -31,15 +25,7 @@ pub fn create(
                 "Receiving settings changed; review the current settings and try again",
             ));
         }
-        let mut invitation = new_invitation(
-            local,
-            listener,
-            if seconds == 0 { 3 } else { 2 },
-            chrono::Duration::seconds(seconds),
-        );
-        if seconds == 0 {
-            invitation.expires_at = DIRECT_PERMANENT_EXPIRY.into();
-        }
+        let invitation = new_invitation(local, listener, 3, DIRECT_PERMANENT_EXPIRY.into());
         let text = encode_invitation(&invitation)?;
         store.shared_invitations.push(DirectSharedInvitation {
             invitation,
@@ -60,10 +46,10 @@ pub fn copy(home: &HomeLayout, group: &str, id: &str) -> io::Result<String> {
         .ok_or_else(|| invalid("Unknown invitation"))?;
     if store.retired.contains(id)
         || !current(home, &link.invitation.host)?
-        || !unexpired(&link.invitation.expires_at)
+        || !link.invitation.permanent()
     {
         return Err(invalid(
-            "This invitation has expired or no longer belongs to this Group",
+            "This invitation is unavailable or no longer belongs to this Group",
         ));
     }
     encode_invitation(&link.invitation)
@@ -151,21 +137,21 @@ pub fn hello(
         {
             return Err(invalid("Invitation no longer matches this Group"));
         }
-        if !unexpired(&link.invitation.expires_at) {
-            return Ok(DirectState::Expired);
+        // Saved pairs use their own grant above. Only permanent keys can admit a new pair.
+        if !link.invitation.permanent() {
+            return Ok(DirectState::Revoked);
         }
-        if link.invitation.permanent()
-            && store
-                .relations
-                .iter()
-                .filter(|relation| {
-                    relation.state == DirectState::Pending
-                        && relation.local.group_id == link.invitation.host.group_id
-                        && relation.invitation.is_none()
-                        && relation.secret_sha256 == secret_sha256
-                })
-                .count()
-                >= MAX_PENDING_PER_PERMANENT_INVITATION
+        if store
+            .relations
+            .iter()
+            .filter(|relation| {
+                relation.state == DirectState::Pending
+                    && relation.local.group_id == link.invitation.host.group_id
+                    && relation.invitation.is_none()
+                    && relation.secret_sha256 == secret_sha256
+            })
+            .count()
+            >= MAX_PENDING_PER_PERMANENT_INVITATION
         {
             return Err(invalid(
                 "This invitation has too many pending requests. Ask the receiving administrator to review them or use another invitation",

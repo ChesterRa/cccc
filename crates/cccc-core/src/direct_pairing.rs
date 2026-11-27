@@ -26,7 +26,8 @@ pub fn invite_checked(
                 "Receiving settings changed; review the current settings and try again",
             ));
         }
-        let invitation = new_invitation(local.clone(), listener, 1, chrono::Duration::minutes(30));
+        let expires_at = (Utc::now() + chrono::Duration::minutes(30)).to_rfc3339();
+        let invitation = new_invitation(local.clone(), listener, 1, expires_at);
         store.relations.push(DirectRelation {
             id: invitation.id.clone(),
             local,
@@ -55,8 +56,10 @@ pub fn decode_invitation(text: &str) -> io::Result<DirectInvitation> {
         serde_json::from_slice(&raw).map_err(|_| invalid("Invalid direct invitation"))?;
     validate_endpoint(&invitation.host)?;
     address(&invitation.address)?;
-    if !matches!(invitation.v, 1..=3)
-        || (invitation.v == 3) != (invitation.expires_at == DIRECT_PERMANENT_EXPIRY)
+    if !matches!(invitation.v, 1 | 3) {
+        return Err(invalid("Unsupported direct invitation format"));
+    }
+    if (invitation.v == 3) != (invitation.expires_at == DIRECT_PERMANENT_EXPIRY)
         || !is_direct(&invitation.id)
         || !unexpired(&invitation.expires_at)
         || invitation.secret.len() != 64

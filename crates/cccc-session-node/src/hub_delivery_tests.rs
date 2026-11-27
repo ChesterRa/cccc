@@ -150,6 +150,43 @@ async fn retry_after_native_reload(device_reloads_before_sync: bool) {
     assert_eq!(handoff["source_revision"], "offered-revision");
     assert_eq!(handoff["event_ids"], event_ids);
 
+    let offered = RemoteSessionDelivery {
+        handoff_id: handoff["handoff_id"].as_str().expect("ID").into(),
+        source_id: native.source_id.clone(),
+        source_revision: native.revision.clone(),
+        membership: session_nodes::memberships(&home, &node_id)
+            .expect("membership snapshot")
+            .remove(0),
+        event_ids: serde_json::from_value(event_ids.clone()).expect("event IDs"),
+        text: "An offered handoff".into(),
+    };
+    if device_reloads_before_sync {
+        // A later authoritative Sync removed this key before an older stream
+        // reached admission. The original source is still alive at this point.
+        session_nodes::replace_memberships(&device, &client.secret, vec![]).expect("apply Sync");
+        let response = client_receive::incoming_delivery(
+            &device,
+            &cccc_client::DaemonClient::new(device.clone()),
+            &client.secret,
+            &DEVICE_SESSION_RUNTIMES,
+            Ok(Request::Deliver {
+                delivery: Box::new(offered.clone()),
+            }),
+            &Mutex::new(1),
+            0,
+        )
+        .await
+        .expect("old stream receives a pre-submission result");
+        assert_eq!(response["outcome"]["status"], "unavailable");
+        assert!(
+            session_nodes::client(&device)
+                .expect("state")
+                .expect("live")
+                .memberships
+                .is_empty()
+        );
+    }
+
     let mut ack = receiver.clone();
     ack["handoff_id"] = handoff["handoff_id"].clone();
     native.revision = "replacement-revision".into();
@@ -174,6 +211,8 @@ async fn retry_after_native_reload(device_reloads_before_sync: bool) {
                 &client.secret,
                 &DEVICE_SESSION_RUNTIMES,
                 Ok(request),
+                &Mutex::new(0),
+                0,
             )
             .await
             .expect("device reports a definite result before native submission");
@@ -250,6 +289,8 @@ async fn retry_after_native_reload(device_reloads_before_sync: bool) {
             &client.secret,
             &LEGACY_DEVICE_SESSION_RUNTIMES,
             Ok(request),
+            &Mutex::new(0),
+            0,
         )
         .await
         .expect_err("a valid Pi source is outside this connection's runtime set");
@@ -307,6 +348,9 @@ async fn retry_after_native_reload(device_reloads_before_sync: bool) {
         .await
         .expect("receiver next after acceptance");
     assert!(empty["handoff"].is_null());
+    if device_reloads_before_sync {
+        check_excess_device_stream(&device, &client.secret, &node, &host, offered).await;
+    }
     hub::stop(&home).await;
     endpoint.close().await;
     daemon(&hub, "shutdown", json!({})).await.expect("shutdown");
@@ -315,4 +359,85 @@ async fn retry_after_native_reload(device_reloads_before_sync: bool) {
         .expect("daemon stops")
         .expect("daemon task")
         .expect("daemon result");
+}
+
+async fn check_excess_device_stream(
+    device: &HomeLayout,
+    secret: &str,
+    node: &Connection,
+    host: &Connection,
+    offered: RemoteSessionDelivery,
+) {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    // Serve only the connector's local source listing. Offers from the former
+    // native revision will settle before invoking any native adapter.
+    let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("fixture IPC address");
+    cccc_core::fs::write_json(
+        &cccc_daemon::DaemonPaths::new(device.clone()).address,
+        &json!({"v":1,"transport":"tcp","path":"","host":"127.0.0.1",
+            "port":listener.local_addr().expect("port").port(),"pid":std::process::id(),
+            "version":env!("CARGO_PKG_VERSION"),"ts":cccc_contracts::utc_now()}),
+    )
+    .expect("fixture address record");
+    let ipc = tokio::spawn(async move {
+        while let Ok((stream, _)) = listener.accept().await {
+            let mut stream = BufReader::new(stream);
+            let mut line = String::new();
+            stream.read_line(&mut line).await.expect("local request");
+            let request: DaemonRequest = serde_json::from_str(&line).expect("local request");
+            assert_eq!(request.op, "local_session_list");
+            stream
+                .get_mut()
+                .write_all(b"{\"ok\":true,\"result\":{\"sources\":[]}}\n")
+                .await
+                .expect("local response");
+        }
+    });
+    let daemon = cccc_client::DaemonClient::new(device.clone());
+    let session = client_receive::run_session(
+        device,
+        &daemon,
+        secret,
+        node,
+        DEVICE_SESSION_RUNTIMES.as_slice().into(),
+    );
+    let traffic = async {
+        let request = Request::Deliver {
+            delivery: Box::new(offered),
+        };
+        let frame = serde_json::to_vec(&request).expect("offer frame");
+        let mut pending = Vec::new();
+        for _ in 0..8 {
+            let (mut send, recv) = host.open_bi().await.expect("open delivery stream");
+            send.write_all(&frame[..1])
+                .await
+                .expect("start offer frame");
+            pending.push((send, recv));
+        }
+        let excess = protocol::call(host, &request)
+            .await
+            .expect("excess stream response");
+        assert_eq!(excess["outcome"]["status"], "unavailable");
+        for (mut send, mut recv) in pending {
+            send.write_all(&frame[1..])
+                .await
+                .expect("complete offer frame");
+            send.finish().expect("finish offer frame");
+            let response: Value = protocol::read(&mut recv)
+                .await
+                .expect("in-flight stream response");
+            assert_eq!(response["outcome"]["status"], "unavailable");
+        }
+    };
+    tokio::select! {
+        result = session => panic!("overload ended the connector: {result:?}"),
+        result = tokio::time::timeout(Duration::from_secs(8), traffic) => {
+            result.expect("all streams settle on the same connection");
+        }
+    }
+    ipc.abort();
+    assert!(ipc.await.expect_err("fixture is stopped").is_cancelled());
 }

@@ -199,25 +199,20 @@ async fn remote_coordination_reads_and_preserves_parameter_authority() {
 }
 
 #[tokio::test]
-async fn remote_backlog_reads_and_preserves_parameter_authority() {
+async fn remote_backlog_is_refused_without_touching_the_workspace() {
     let f = Fixture::new().await;
-    let home = &f.home;
-    let binding = &f.binding;
     let root = &f.root;
 
-    f.lead("cccc_backlog",json!({"action":"create","path":"SELECTED.md","scope_key":"project","scope_url":root,"keep_local":false})).await;
-    let forged = json!({"by":"user","actor_id":"lead","group_id":"forged"});
-    let backlog = call(home, binding, "cccc_backlog", forged.clone()).await;
-    assert_eq!(payload(&backlog)["configured"], true);
-    assert_eq!(payload(&backlog)["path"], "SELECTED.md");
-    assert_eq!(
-        std::fs::read_to_string(root.join("SELECTED.md")).expect("backlog file"),
-        "# Backlog\n\n## Open\n\n## Closed\n"
-    );
-    denied(&call(home,binding,"cccc_backlog",json!({"action":"create","path":"BACKLOG.md","scope_key":"project","scope_url":root,"by":"user","actor_id":"lead","group_id":"forged"})).await,"permission_denied");
+    for args in [
+        json!({}),
+        json!({"action":"create","path":"BACKLOG.md","scope_key":"project","scope_url":root}),
+    ] {
+        denied(
+            &call(&f.home, &f.binding, "cccc_backlog", args).await,
+            "collaboration tools only",
+        );
+    }
     assert!(!root.join("BACKLOG.md").exists());
-    let after = call(home, binding, "cccc_backlog", json!({})).await;
-    assert_eq!(payload(&after)["path"], "SELECTED.md");
 }
 
 #[tokio::test]
@@ -315,7 +310,7 @@ async fn remote_tools_require_live_membership_and_collaboration_scope() {
             json!({"refs":[{"path":"secret"}]}),
         )
         .await,
-        "File references",
+        "`refs` is not accepted",
     );
     let revision = binding.session_revision.clone();
     binding.session_revision = "stale".into();
@@ -327,7 +322,7 @@ async fn remote_tools_require_live_membership_and_collaboration_scope() {
     let generation = binding.actor_generation.clone();
     binding.actor_generation = "stale".into();
     denied(
-        &call(home, &binding, "cccc_backlog", json!({})).await,
+        &call(home, &binding, "cccc_task", json!({})).await,
         "no longer valid",
     );
     binding.actor_generation = generation;

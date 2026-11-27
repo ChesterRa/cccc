@@ -1,7 +1,7 @@
 //! Standalone, administrator-approved Group pairs; no account authority.
 use serde::{Deserialize, Serialize};
 
-/// v3 reusable invitations explicitly have no deadline. Older versions require RFC3339.
+/// Permanent invitations explicitly have no deadline. Single-use invitations carry an RFC3339 deadline.
 pub const DIRECT_PERMANENT_EXPIRY: &str = "never";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -41,6 +41,7 @@ pub struct DirectInvitation {
 }
 
 impl DirectInvitation {
+    /// Saved grants use the same handshake on reconnect even if their issuing format was retired.
     pub fn reusable(&self) -> bool {
         matches!(self.v, 2 | 3)
     }

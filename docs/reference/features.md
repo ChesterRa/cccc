@@ -597,10 +597,11 @@ CCCC first-class runtime support is the named runtimes above. `custom` remains t
 ### Setup Commands
 
 ```bash
+cccc setup                    # List how each runtime gets CCCC's MCP; writes nothing
 cccc setup --runtime claude   # Report CCCC-owned per-session MCP
 cccc setup --runtime cline
-cccc setup --runtime codex
-cccc setup --runtime copilot
+cccc setup --runtime codex    # Register `cccc` for Codex sessions you start yourself
+cccc setup --runtime copilot  # Register `cccc` for Copilot sessions you start yourself
 cccc setup --runtime cursor
 cccc setup --runtime deepseek     # Install or repair the pinned DeepSeek Harness
 cccc setup --runtime devin
@@ -618,6 +619,8 @@ cccc setup --runtime antigravity
 cccc setup --runtime antigravity --runtime-mode acp --login
 cccc setup --runtime custom
 ```
+
+Without `--runtime`, `cccc setup` writes nothing and prints how CCCC-managed members get the `cccc` MCP server (`per_launch`, `user_config_entry`, or `manual`) alongside what `--runtime <name>` would write. Claude Code, Codex, Copilot, OpenCode, Kilo, Pi, Hermes, and DeepSeek members receive CCCC's MCP server per launch; `--runtime codex` and `--runtime copilot` only register a user entry for sessions you start yourself.
 
 `web_model` does not use `cccc setup`; create a `ChatGPT Web Model` Actor from the CCCC Web group, then use Web Settings to sign in to ChatGPT, copy its remote MCP URL, and bind one specific ChatGPT conversation for that Actor. For Grok, select `Grok Bot Web Model`, configure the shared Grok connector and save each Actor’s Bot URL; see [Grok Bot setup](/guide/grok-web-model-runtime).
 

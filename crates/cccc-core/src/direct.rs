@@ -202,14 +202,14 @@ fn new_invitation(
     local: DirectEndpoint,
     listener: &DirectListener,
     version: u32,
-    lifetime: chrono::Duration,
+    expires_at: String,
 ) -> DirectInvitation {
     DirectInvitation {
         v: version,
         id: format!("direct-{}", uuid::Uuid::new_v4()),
         address: listener.address.clone(),
         host: local,
-        expires_at: (Utc::now() + lifetime).to_rfc3339(),
+        expires_at,
         secret: format!(
             "{}{}",
             uuid::Uuid::new_v4().simple(),

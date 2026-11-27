@@ -143,9 +143,19 @@ pub(super) fn authorize(
     }
     cccc_core::local_sessions::validate_binding(home, binding)
         .map_err(|_| "Remote membership is no longer valid")?;
-    // Deliberately narrower than CORE_TOOL_NAMES (which also exposes files,
-    // Connect and capability dispatch). Admission here never replaces the
-    // daemon's parameter-specific Actor/Group/message authorization.
+    remote_request_allowed(name, args)
+}
+
+/// What a session on another computer may ask of this instance: collaboration
+/// in the one Group it was admitted to, as text. Deliberately narrower than
+/// CORE_TOOL_NAMES (which also exposes files, Connect and capability dispatch),
+/// and never a replacement for the daemon's own Actor/Group/message checks.
+fn remote_request_allowed(
+    name: &str,
+    args: &Map<String, Value>,
+) -> std::result::Result<(), ToolCallError> {
+    // No workspace file tools: the backlog tool reads and writes files in the
+    // Group's workspace on this computer.
     const COLLABORATION: &[&str] = &[
         "cccc_bootstrap",
         "cccc_help",
@@ -155,26 +165,40 @@ pub(super) fn authorize(
         "cccc_reply_request_cancel",
         "cccc_message_history",
         "cccc_inbox_read",
-        "cccc_inbox_mark_read",
         "cccc_context_get",
         "cccc_context_sync",
         "cccc_coordination",
         "cccc_agent_state",
         "cccc_task",
-        "cccc_backlog",
         "cccc_actor_notes",
-        "cccc_todo",
         "cccc_session",
     ];
+    // Arguments that would send outside the bound Group or carry files from
+    // this computer. The binding fixes the source Group, not the destination.
+    const OUT_OF_SCOPE: &[&str] = &[
+        "dst_group_id",
+        "dst_instance_id",
+        "attachments",
+        "path",
+        "paths",
+        "refs",
+    ];
     if !COLLABORATION.contains(&name) {
-        return Err("This LAN connector exposes CCCC collaboration tools only. Use the original native application's tools for files, commands and approvals on the remote machine".into());
+        return Err("A session on another computer gets CCCC collaboration tools only. Use the original native application's tools for files, commands and approvals on that computer".into());
     }
-    if args
-        .get("refs")
-        .and_then(Value::as_array)
-        .is_some_and(|refs| !refs.is_empty())
-    {
-        return Err("File references are not transferred by the LAN session connector; send text or use the existing file transfer connection".into());
+    if let Some(key) = OUT_OF_SCOPE.iter().find(|key| {
+        args.get(**key).is_some_and(|value| match value {
+            Value::Null => false,
+            Value::String(text) => !text.trim().is_empty(),
+            Value::Array(items) => !items.is_empty(),
+            Value::Object(fields) => !fields.is_empty(),
+            _ => true,
+        })
+    }) {
+        return Err(format!(
+            "A session on another computer sends text within the Group it was added to; `{key}` is not accepted"
+        )
+        .into());
     }
     Ok(())
 }
@@ -299,6 +323,46 @@ mod tests {
             listing, before,
             "unreadable connector retains local memberships"
         );
+    }
+
+    #[test]
+    fn remote_sessions_send_text_only_within_their_group() {
+        let args = |value: Value| value.as_object().expect("arguments").clone();
+        let text = args(json!({"group_id":"g_bound","text":"hello","to":["foreman"]}));
+        remote_request_allowed("cccc_message_send", &text).expect("text in the bound Group");
+        remote_request_allowed("cccc_message_reply", &text).expect("reply in the bound Group");
+        // Empty values are what a model sends for unused fields.
+        let empty = args(json!({
+            "text":"hello","dst_group_id":"","dst_instance_id":null,
+            "attachments":[],"refs":[],"path":"  "
+        }));
+        remote_request_allowed("cccc_message_send", &empty).expect("empty fields");
+
+        for (key, value) in [
+            ("dst_group_id", json!("g_other")),
+            ("dst_instance_id", json!("i_peer")),
+            ("attachments", json!([{"path":"state/blobs/a.txt"}])),
+            ("path", json!(".env")),
+            ("paths", json!(["src/main.rs"])),
+            ("refs", json!([{"kind":"file","path":"README.md"}])),
+        ] {
+            let mut request = text.clone();
+            request.insert(key.into(), value);
+            for tool in ["cccc_message_send", "cccc_message_reply", "cccc_session"] {
+                let error = remote_request_allowed(tool, &request)
+                    .expect_err("outside the bound Group or a local file");
+                assert!(
+                    error.error_value()["message"]
+                        .as_str()
+                        .expect("message")
+                        .contains(key),
+                    "{tool} {key}"
+                );
+            }
+        }
+        for tool in ["cccc_backlog", "cccc_file_send", "cccc_todo"] {
+            remote_request_allowed(tool, &text).expect_err("not a remote collaboration tool");
+        }
     }
 
     #[test]

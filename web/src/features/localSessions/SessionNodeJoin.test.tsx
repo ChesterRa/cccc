@@ -324,7 +324,14 @@ it("shares one relay switch between pairing and settings, stops only from settin
 });
 
 it("offers tickets only with verified access and clears a cached ticket after access is lost", async () => {
-  let mode: "forbidden" | "failure" | "absent" | "unsupported" | "ready" = "forbidden";
+  let mode:
+    | "forbidden"
+    | "failure"
+    | "unavailable"
+    | "absent"
+    | "upgrade"
+    | "unsupported"
+    | "ready" = "forbidden";
   let posts = 0;
   const ticket = "synthetic-private-device-ticket";
   const originalClipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
@@ -338,6 +345,8 @@ it("offers tickets only with verified access and clears a cached ticket after ac
     if (path === apiRoot) {
       if (mode === "forbidden") return fail(403);
       if (mode === "absent") return fail(404, "not_found");
+      if (mode === "upgrade") return fail(503, "session_node_upgrade_required");
+      if (mode === "unavailable") return fail(503, "shutdown_in_progress");
       if (mode === "failure") throw Error("Fixture network unavailable");
       return ok({
         supported: mode === "ready",
@@ -363,13 +372,16 @@ it("offers tickets only with verified access and clears a cached ticket after ac
     // The way back to the session list stays available even without access.
     await click(labels.backToSessionList);
     expect(back).toHaveBeenCalledOnce();
-    mode = "failure";
-    await refresh();
-    expect(host.textContent).toContain(labels.directoryFailed);
-    expect(button(labels.create)).toBeUndefined();
-    for (const state of ["absent", "unsupported"] as const) {
+    for (const state of ["failure", "unavailable"] as const) {
       mode = state;
       await refresh();
+      expect(host.textContent).toContain(labels.directoryFailed);
+      expect(button(labels.create)).toBeUndefined();
+    }
+    for (const state of ["absent", "upgrade", "unsupported"] as const) {
+      mode = state;
+      await refresh();
+      expect(host.textContent).toContain(labels.backendUpgradeTitle);
       expect(host.textContent).toContain(labels.upgradeRequired);
       expect(button(labels.create)).toBeUndefined();
       expect(button(labels.backToSessionList)).toBeDefined();

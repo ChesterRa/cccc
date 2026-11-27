@@ -14,9 +14,6 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
-        Self::with_lifetime(604_800)
-    }
-    fn with_lifetime(seconds: i64) -> Self {
         let temp = tempfile::tempdir().expect("temp");
         let home = HomeLayout::from_path(temp.path().join("host")).expect("home");
         let guest = HomeLayout::from_path(temp.path().join("guest")).expect("home");
@@ -43,7 +40,7 @@ impl Fixture {
             None,
         )
         .expect("metadata only");
-        let text = create(&home, &group, None, seconds).expect("shared invitation");
+        let text = create(&home, &group, None).expect("shared invitation");
         Self {
             _temp: temp,
             home,
@@ -120,7 +117,7 @@ fn one_invitation_pairs_multiple_groups_idempotently_with_independent_approval()
 }
 
 #[test]
-fn expiry_keeps_approved_connections_but_key_deletion_revokes_all_grants() {
+fn retired_finite_key_keeps_existing_grants_and_blocks_new_pairs() {
     let f = Fixture::new();
     let active = f.join(0);
     let pending = f.join(1);
@@ -128,26 +125,37 @@ fn expiry_keeps_approved_connections_but_key_deletion_revokes_all_grants() {
     f.hello(&active).expect("request");
     f.hello(&pending).expect("request");
     super::super::set_state(&f.home, &f.group, &active.id, true).expect("approve");
+    let mut old = super::super::decode_invitation(&f.text).expect("saved key");
+    old.v = 2;
+    old.expires_at = (Utc::now() + chrono::Duration::hours(24)).to_rfc3339();
     update(&f.home, |store| {
-        store.shared_invitations[0].invitation.expires_at = "2000-01-01T00:00:00Z".into();
+        store.shared_invitations[0].invitation = old.clone();
         for relation in &mut store.relations {
-            relation.expires_at = "2000-01-01T00:00:00Z".into();
+            relation.expires_at = old.expires_at.clone();
         }
         Ok(())
     })
-    .expect("move the deadline, no sleeping or wall-clock assertion");
+    .expect("restore state written by a preview build");
+    let text = encode_invitation(&old).expect("old key");
+    assert!(super::super::join(&f.guest, &f.groups[2], &text).is_err());
+    assert!(copy(&f.home, &f.group, &old.id).is_err());
+    assert!(old.reusable(), "saved grants retain the same hello format");
     assert_eq!(
         f.hello(&active).expect("approved peer reconnects"),
         DirectState::Active
     );
     assert_eq!(
-        f.hello(&unused).expect("expired invitation"),
-        DirectState::Expired
+        f.hello(&pending).expect("existing grant"),
+        DirectState::Pending
     );
-    assert!(super::super::set_state(&f.home, &f.group, &pending.id, true).is_err());
-    let root = active.invitation.as_ref().expect("invitation").id.clone();
-    assert!(copy(&f.home, &f.group, &root).is_err());
-    revoke(&f.home, &f.group, &root).expect("delete invitation");
+    assert_eq!(
+        f.hello(&unused).expect("retired invitation format"),
+        DirectState::Revoked
+    );
+    let store = load(&f.home).expect("store");
+    assert_eq!(store.relations.len(), 2);
+    assert_eq!(store.shared_invitations[0].uses, 2);
+    revoke(&f.home, &f.group, &old.id).expect("delete saved key");
     assert_eq!(
         f.hello(&unused).expect("deleted invitation"),
         DirectState::Revoked
@@ -164,7 +172,7 @@ fn expiry_keeps_approved_connections_but_key_deletion_revokes_all_grants() {
 }
 
 #[test]
-fn forged_requests_wrong_group_and_invalid_lifetimes_do_not_change_grants() {
+fn forged_requests_and_wrong_group_do_not_change_grants() {
     let f = Fixture::new();
     let relation = f.join(0);
     let invite = relation.invitation.as_ref().expect("invitation");
@@ -204,9 +212,6 @@ fn forged_requests_wrong_group_and_invalid_lifetimes_do_not_change_grants() {
     );
     assert!(copy(&f.home, "other-group", &invite.id).is_err());
     assert!(revoke(&f.home, "other-group", &invite.id).is_err());
-    for seconds in [-1, 60, 31 * 86_400] {
-        assert!(create(&f.home, &f.group, None, seconds).is_err());
-    }
     assert!(load(&f.home).expect("unchanged store") == before);
     super::super::retire_group(&f.home, &f.group).expect("retire Group");
     assert!(copy(&f.home, &f.group, &invite.id).is_err());

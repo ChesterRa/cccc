@@ -345,6 +345,8 @@ it("previews the invited pair, blocks expired content and joins without configur
   const input = host.querySelector("textarea")!;
   await fill(input, "not an invitation");
   expect(button("direct.request").disabled).toBe(true);
+  await fill(input, invitation(undefined, 2));
+  expect(button("direct.request").disabled).toBe(true);
   await fill(input, invitation(Date.now() - 100));
   expect(host.textContent).toContain("direct.expiredHint");
   expect(button("direct.request").disabled).toBe(true);

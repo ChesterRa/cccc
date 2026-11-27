@@ -102,7 +102,7 @@ fn status(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         "capabilities":{"reusable_invitations":true,"permanent_invitations":true,"invitation_revocation":true},
         "shared_invitations":store.shared_invitations.iter().filter(|link|link.invitation.host.group_id==group).map(|link|json!({
             "id":link.invitation.id,"address":link.invitation.address,"created_at":link.created_at,"expires_at":link.invitation.expires_at,"uses":link.uses,
-            "current":direct::current(home,&link.invitation.host).unwrap_or(false),"expired":!direct::unexpired(&link.invitation.expires_at)
+            "current":link.invitation.permanent() && direct::current(home,&link.invitation.host).unwrap_or(false),"expired":!direct::unexpired(&link.invitation.expires_at)
         })).collect::<Vec<_>>() }),
     )
 }
@@ -165,13 +165,16 @@ fn mutate(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
                 .map_err(OpError::invalid)?;
             let text = match request.args.get("reusable") {
                 Some(Value::Bool(true)) => {
-                    let seconds = match request.args.get("expires_in_seconds") {
-                        Some(value) => value.as_i64().ok_or_else(|| {
-                            OpError::invalid("Invitation lifetime must be an integer")
-                        })?,
-                        None => 0,
-                    };
-                    direct::shared::create(home, &group, expected.as_ref(), seconds)
+                    if request
+                        .args
+                        .get("expires_in_seconds")
+                        .is_some_and(|value| value.as_i64() != Some(0))
+                    {
+                        return Err(OpError::invalid(
+                            "Reusable invitations are permanent. Omit expires_in_seconds or set it to 0.",
+                        ));
+                    }
+                    direct::shared::create(home, &group, expected.as_ref())
                 }
                 Some(Value::Bool(false)) | None => {
                     direct::invite_checked(home, &group, expected.as_ref())

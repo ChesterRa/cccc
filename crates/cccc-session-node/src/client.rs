@@ -182,14 +182,7 @@ pub(crate) async fn connect_observed(
                     tokio::select! { _ = &mut stop => { connection.close(0u32.into(), b"connector stopped"); break Ok(()); }, result = session => { if result.is_err() { eprintln!("Session node disconnected; pending writes will not be replayed."); } } }
                     connection.close(0u32.into(), b"connector reconnecting");
                     *link.write().await = None;
-                    if let Some(current) = session_nodes::saved_client(home)? {
-                        session_nodes::update_memberships(
-                            home,
-                            &descriptor.secret,
-                            false,
-                            current.memberships,
-                        )?;
-                    }
+                    session_nodes::disconnect_client(home, &descriptor.secret)?;
                     expected = pairing_state::reconnect_state(home, &descriptor.secret)?;
                 }
                 Err(error) if error.downcast_ref::<protocol::RemoteRejection>().is_some() => {
@@ -225,10 +218,7 @@ pub(crate) async fn connect_observed(
     dialer.close().await;
     // Retain only the route and membership hints for explicit reconnect and
     // useful offline errors. A dead owner cannot authorize native tool calls.
-    if let Ok(Some(current)) = session_nodes::saved_client(home) {
-        let _ =
-            session_nodes::update_memberships(home, &descriptor.secret, false, current.memberships);
-    }
+    let _ = session_nodes::disconnect_client(home, &descriptor.secret);
     result
 }
 
@@ -241,14 +231,7 @@ struct ConnectorCleanup {
 impl Drop for ConnectorCleanup {
     fn drop(&mut self) {
         self.broker.abort();
-        if let Ok(Some(current)) = session_nodes::saved_client(&self.home) {
-            let _ = session_nodes::update_memberships(
-                &self.home,
-                &self.secret,
-                false,
-                current.memberships,
-            );
-        }
+        let _ = session_nodes::disconnect_client(&self.home, &self.secret);
     }
 }
 

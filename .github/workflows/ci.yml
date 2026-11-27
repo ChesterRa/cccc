@@ -36,6 +36,9 @@ jobs:
       - name: Run Ruff error checks
         run: python -m ruff check scripts tests
 
+      - name: Verify CCCC workspace and package version parity
+        run: python scripts/check_release_versions.py
+
       - name: Test quality tooling and workflow contracts
         run: python -m pytest -q
 

@@ -330,8 +330,10 @@ CCCC supports snapshot/compaction. Large blobs are stored separately in the `blo
 Groups, messages and tasks are kept. With a normal `cccc daemon stop`, agents that CCCC started stop
 with the daemon, and CCCC tries to start a running Group's agents again, though a turn that was running
 does not continue. On Linux and Apple Silicon Macs running the native arm64 build, `cccc daemon stop --keep-agents`
-(or **Keep agents running** on restart/update) keeps managed agents and active turns running across the
-restart. Sessions you started yourself always keep running. See
+(or **Keep agents running** on restart/update) keeps local managed agents and active turns running across the
+restart. ChatGPT Dots and Grok Bot Web Model agents run in the provider's cloud: CCCC keeps their saved
+connection, but marks unfinished work as unconfirmed during a restart because tool calls back to CCCC can
+fail while the daemon is down. Sessions you started yourself always keep running. See
 [What a daemon restart keeps](operations.md#what-a-daemon-restart-keeps).
 
 ### Why do git worktrees remain after an agent stops? {#why-do-git-worktrees-remain-after-an-actor-stops}

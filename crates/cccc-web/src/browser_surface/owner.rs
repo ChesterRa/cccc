@@ -243,6 +243,7 @@ impl BrowserOwner {
     pub async fn adopt(preserved: &super::PreservedBrowser, held: HeldResource) -> Result<Self> {
         let (browser, mut handler) = Browser::connect(preserved.websocket_url.clone())
             .await
+            .context(super::KeptBrowserEnding)
             .context("connect to the preserved browser")?;
         let handler = tokio::spawn(async move {
             while let Some(message) = handler.next().await {

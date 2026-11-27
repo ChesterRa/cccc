@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn permanent_key_has_a_versioned_deadline_and_counts_only_new_valid_applications() {
-    let f = Fixture::with_lifetime(0);
+    let f = Fixture::new();
     let first = f.join(0);
     let invite = first.invitation.as_ref().expect("invitation");
     assert_eq!(invite.v, 3);
@@ -72,7 +72,7 @@ fn permanent_key_has_a_versioned_deadline_and_counts_only_new_valid_applications
 
 #[test]
 fn permanent_marker_cannot_be_smuggled_into_an_older_invitation_version() {
-    let f = Fixture::with_lifetime(0);
+    let f = Fixture::new();
     let relation = f.join(0);
     let original = relation.invitation.expect("invitation");
     for version in [1, 2] {
@@ -93,7 +93,7 @@ fn permanent_marker_cannot_be_smuggled_into_an_older_invitation_version() {
 
 #[test]
 fn a_permanent_invitation_at_pending_capacity_still_allows_progress() {
-    let f = Fixture::with_lifetime(0);
+    let f = Fixture::new();
     let first = f.join(0);
     assert_eq!(
         f.hello(&first).expect("first application"),
@@ -120,7 +120,7 @@ fn a_permanent_invitation_at_pending_capacity_still_allows_progress() {
         DirectState::Pending
     );
 
-    let other_key = create(&f.home, &f.group, None, 0).expect("independent key");
+    let other_key = create(&f.home, &f.group, None).expect("independent key");
     let other_id =
         super::super::super::join(&f.guest, &f.groups[2], &other_key).expect("join with other key");
     let other = load(&f.guest)
@@ -144,7 +144,7 @@ fn a_permanent_invitation_at_pending_capacity_still_allows_progress() {
 
 #[test]
 fn deleted_key_cannot_return_but_a_fresh_key_can_request_new_approval_for_the_same_pair() {
-    let f = Fixture::with_lifetime(0);
+    let f = Fixture::new();
     let original = f.join(0);
     f.hello(&original).expect("request");
     super::super::super::set_state(&f.home, &f.group, &original.id, true).expect("approve");
@@ -156,7 +156,7 @@ fn deleted_key_cannot_return_but_a_fresh_key_can_request_new_approval_for_the_sa
     );
     super::super::super::set_state(&f.guest, &f.groups[0], &original.id, false)
         .expect("client has learned the revocation");
-    let fresh = create(&f.home, &f.group, None, 0).expect("new key");
+    let fresh = create(&f.home, &f.group, None).expect("new key");
     let id =
         super::super::super::join(&f.guest, &f.groups[0], &fresh).expect("new explicit request");
     assert_ne!(id, original.id);

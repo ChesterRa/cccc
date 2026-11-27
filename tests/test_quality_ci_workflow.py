@@ -83,6 +83,7 @@ def test_pr_jobs_keep_quality_web_package_and_native_boundaries() -> None:
     assert jobs["ci-required"]["if"] == "always()"
     assert jobs["package"]["needs"] == "quality"
     assert "ruff check" in _runs(jobs["quality"])
+    assert "scripts/check_release_versions.py" in _runs(jobs["quality"])
     assert "python -m pytest -q" in _runs(jobs["quality"])
     assert "npm -C web test" in _runs(jobs["web"])
     assert "npm -C web run build" in _runs(jobs["web"])

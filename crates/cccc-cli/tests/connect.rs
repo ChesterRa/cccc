@@ -1,3 +1,4 @@
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use cccc_contracts::DaemonRequest;
 use cccc_core::HomeLayout;
 use serde_json::{Value, json};
@@ -45,10 +46,17 @@ fn connect_cli_preserves_actor_scope_qualified_address_and_reply_defaults() {
     )
     .expect("fixture listener settings");
     let permanent =
-        cccc_core::direct::shared::create(&issuer, &group, None, 0).expect("fixture permanent key");
-    let finite = cccc_core::direct::shared::create(&issuer, &group, None, 86_400)
-        .expect("fixture finite key");
+        cccc_core::direct::shared::create(&issuer, &group, None).expect("fixture permanent key");
     let single_use = cccc_core::direct::invite(&issuer, &group).expect("fixture single-use key");
+    let mut old = cccc_core::direct::decode_invitation(&permanent).expect("fixture key");
+    old.v = 2;
+    old.expires_at = cccc_core::direct::decode_invitation(&single_use)
+        .expect("single-use deadline")
+        .expires_at;
+    let finite = format!(
+        "cccc-direct:{}",
+        URL_SAFE_NO_PAD.encode(serde_json::to_vec(&old).expect("fixture JSON"))
+    );
     let expected_default = single_use.clone();
     let expected_permanent = permanent.clone();
     let requested_group = group.clone();
