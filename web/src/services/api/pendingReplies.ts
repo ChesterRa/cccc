@@ -1,10 +1,18 @@
 import type { LedgerEvent, LedgerEventStatusPayload } from "../../types";
 import { apiJson } from "./base";
 
+export type PendingReplyUnattended = {
+  state: "fresh" | "unknown";
+  needs_user: number | null;
+  with_chet: number | null;
+  unknown: number | null;
+};
+
 export type PendingReplySummary = {
   group_id: string;
   state: "fresh" | "unknown";
   pending: number | null;
+  unattended?: PendingReplyUnattended;
   oldest_ts?: string | null;
   revision?: string;
   as_of?: string;

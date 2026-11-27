@@ -132,3 +132,78 @@ it("discards an old asynchronous response after the permitted Group set changes"
     host.remove();
   }
 });
+
+it("validates unattended breakdowns strictly and preserves them across stale refreshes", async () => {
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  let latest: Value | undefined;
+  const update = (value: Value) => (latest = value);
+  fetchSummary.mockResolvedValueOnce({
+    ok: true,
+    result: {
+      groups: [
+        {
+          group_id: "valid",
+          state: "fresh",
+          pending: 3,
+          revision: "r1",
+          unattended: { state: "fresh", needs_user: 1, with_chet: 2, unknown: 0 },
+        },
+        {
+          group_id: "mismatch",
+          state: "fresh",
+          pending: 3,
+          revision: "r2",
+          unattended: { state: "fresh", needs_user: 1, with_chet: 1, unknown: 0 },
+        },
+        {
+          group_id: "unknown",
+          state: "fresh",
+          pending: 2,
+          revision: "r3",
+          unattended: { state: "unknown", needs_user: null, with_chet: null, unknown: null },
+        },
+      ],
+    },
+  });
+  try {
+    await act(async () =>
+      root.render(<Harness enabled groups={["valid", "mismatch", "unknown"]} update={update} />),
+    );
+    expect(latest!.summaries.valid.unattended).toEqual({
+      state: "fresh",
+      needsUser: 1,
+      withChet: 2,
+      unknown: 0,
+    });
+    expect(latest!.summaries.mismatch.unattended).toEqual({
+      state: "unknown",
+      needsUser: null,
+      withChet: null,
+      unknown: null,
+    });
+    expect(latest!.summaries.unknown.unattended).toEqual({
+      state: "unknown",
+      needsUser: null,
+      withChet: null,
+      unknown: null,
+    });
+
+    fetchSummary.mockResolvedValueOnce({ ok: false, error: { code: "NETWORK_ERROR" } });
+    await act(async () => latest!.refresh());
+    expect(latest!.summaries.valid).toMatchObject({
+      state: "stale",
+      pending: 3,
+      unattended: { state: "fresh", needsUser: 1, withChet: 2, unknown: 0 },
+    });
+    expect(latest!.summaries.mismatch).toMatchObject({
+      state: "stale",
+      pending: 3,
+      unattended: { state: "unknown", needsUser: null, withChet: null, unknown: null },
+    });
+  } finally {
+    await act(async () => root.unmount());
+    host.remove();
+  }
+});

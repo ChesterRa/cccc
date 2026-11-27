@@ -162,6 +162,8 @@ pub(crate) struct CodexVoiceSessions {
     cleanup_gate: Arc<Mutex<()>>,
     chet_preparing: Arc<StdMutex<std::collections::HashSet<uuid::Uuid>>>,
     chet_history_write_failed: Arc<AtomicBool>,
+    /// True once this Web process owns `chet-group-input.lock` and finished `load_known`.
+    chet_group_input_active: Arc<AtomicBool>,
     /// Advances when Chet's admission of an input ends without confirmation.
     /// Inputs already waiting for Chet are then not started, rather than
     /// handed to the Chet that replaces the one in doubt.

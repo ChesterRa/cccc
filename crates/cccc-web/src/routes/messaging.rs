@@ -187,16 +187,181 @@ async fn user_reply_requests(
     call(&state, "user_reply_requests", args).await
 }
 /// Only Groups this principal may open are counted; a non-admin never learns
-/// another Group's id or count.
+/// another Group's id or count. Administrators also receive a read-only
+/// `unattended` breakdown folded against live in-memory Chet status, while
+/// internal `chet_breakdown` (including Chet UUIDs) is always stripped.
 async fn user_reply_requests_summary(
     State(state): State<AppState>,
     Extension(principal): Extension<Principal>,
 ) -> ApiResult {
     let mut args = object(json!({"by": "user"}));
-    if !principal.is_admin {
+    if principal.is_admin {
+        args.insert("include_chet_breakdown".into(), Value::Bool(true));
+    } else {
         args.insert("group_ids".into(), json!(principal.allowed_groups));
     }
-    call(&state, "user_reply_requests_summary", args).await
+    let Json(mut payload) = call(&state, "user_reply_requests_summary", args).await?;
+    let needs_live_status = payload
+        .get("result")
+        .and_then(|result| result.get("groups"))
+        .and_then(Value::as_array)
+        .is_some_and(|groups| summary_needs_live_chet_status(groups));
+    let live_status = if principal.is_admin && needs_live_status {
+        Some(state.codex_voice.chet_status().await)
+    } else {
+        None
+    };
+    if let Some(groups) = payload
+        .get_mut("result")
+        .and_then(|result| result.get_mut("groups"))
+        .and_then(Value::as_array_mut)
+    {
+        fold_summary_chet_breakdowns(
+            groups,
+            principal.is_admin,
+            live_status.as_ref(),
+            state.codex_voice.chet_group_input_active(),
+        );
+    }
+    Ok(Json(payload))
+}
+
+fn summary_needs_live_chet_status(groups: &[Value]) -> bool {
+    groups.iter().any(|group| {
+        let Some(bd) = group.get("chet_breakdown") else {
+            return false;
+        };
+        if bd.get("state").and_then(Value::as_str) != Some("fresh") {
+            return false;
+        }
+        let waiting = bd.get("waiting").and_then(Value::as_u64).unwrap_or(0);
+        let waiting_unregistered = bd
+            .get("waiting_unregistered")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        let has_dispatched = bd
+            .get("dispatched_input_ids")
+            .and_then(Value::as_array)
+            .is_some_and(|ids| !ids.is_empty());
+        waiting > 0 || waiting_unregistered > 0 || has_dispatched
+    })
+}
+
+fn fold_summary_chet_breakdowns(
+    groups: &mut [Value],
+    is_admin: bool,
+    live_status: Option<&Value>,
+    group_input_active: bool,
+) {
+    let string_set = |key: &str| -> std::collections::HashSet<&str> {
+        live_status
+            .and_then(|status| status.get(key))
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .collect()
+    };
+    let preparing = string_set("preparing");
+    let queued = string_set("queued");
+    let working = string_set("working");
+    let owner_busy = live_status
+        .and_then(|status| status.get("owner_busy"))
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    let history_write_failed = live_status
+        .and_then(|status| status.get("history_write_failed"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let has_start_problem = live_status
+        .and_then(|status| status.get("start_problem"))
+        .is_some_and(|problem| !problem.is_null());
+
+    for group in groups {
+        let Some(object) = group.as_object_mut() else {
+            continue;
+        };
+        // Always strip internal `chet_breakdown` regardless of admin status or pending counts.
+        let Some(breakdown) = object.remove("chet_breakdown") else {
+            continue;
+        };
+        if !is_admin {
+            continue;
+        }
+        let unknown_unattended = || {
+            json!({
+                "state": "unknown",
+                "needs_user": null,
+                "with_chet": null,
+                "unknown": null,
+            })
+        };
+        let unattended = if breakdown.get("state").and_then(Value::as_str) != Some("fresh") {
+            unknown_unattended()
+        } else if let (
+            Some(pending),
+            Some(needs_user),
+            Some(waiting),
+            Some(waiting_unregistered),
+            Some(dispatched),
+        ) = (
+            object.get("pending").and_then(Value::as_u64),
+            breakdown.get("needs_user").and_then(Value::as_u64),
+            breakdown.get("waiting").and_then(Value::as_u64),
+            breakdown
+                .get("waiting_unregistered")
+                .and_then(Value::as_u64),
+            breakdown
+                .get("dispatched_input_ids")
+                .and_then(Value::as_array),
+        ) {
+            let mut with_chet = 0_u64;
+            let mut unknown = 0_u64;
+
+            if has_start_problem {
+                unknown = unknown.saturating_add(waiting);
+            } else {
+                with_chet = with_chet.saturating_add(waiting);
+            }
+            if has_start_problem || history_write_failed || !group_input_active {
+                unknown = unknown.saturating_add(waiting_unregistered);
+            } else {
+                with_chet = with_chet.saturating_add(waiting_unregistered);
+            }
+            for id in dispatched {
+                let Some(id_str) = id.as_str() else {
+                    unknown = unknown.saturating_add(1);
+                    continue;
+                };
+                if preparing.contains(id_str) {
+                    with_chet = with_chet.saturating_add(1);
+                } else if owner_busy {
+                    unknown = unknown.saturating_add(1);
+                } else if queued.contains(id_str) || working.contains(id_str) {
+                    with_chet = with_chet.saturating_add(1);
+                } else {
+                    unknown = unknown.saturating_add(1);
+                }
+            }
+            if needs_user
+                .checked_add(with_chet)
+                .and_then(|sum| sum.checked_add(unknown))
+                == Some(pending)
+            {
+                json!({
+                    "state": "fresh",
+                    "needs_user": needs_user,
+                    "with_chet": with_chet,
+                    "unknown": unknown,
+                })
+            } else {
+                unknown_unattended()
+            }
+        } else {
+            unknown_unattended()
+        };
+        object.insert("unattended".into(), unattended);
+    }
 }
 async fn inbox_peek(
     State(state): State<AppState>,
@@ -455,5 +620,144 @@ mod tests {
                 "attachments exceed 100 MiB in total"
             );
         }
+    }
+
+    #[test]
+    fn fold_summary_strips_chet_breakdown_unconditionally_and_maps_live_states() {
+        // 1. All-needs-user case: no live chet_status needed, yet chet_breakdown is still stripped.
+        let mut all_user = vec![json!({
+            "group_id": "g_1",
+            "state": "fresh",
+            "pending": 2,
+            "chet_breakdown": {
+                "state": "fresh",
+                "needs_user": 2,
+                "waiting": 0,
+                "waiting_unregistered": 0,
+                "dispatched_input_ids": [],
+            }
+        })];
+        assert!(!summary_needs_live_chet_status(&all_user));
+        fold_summary_chet_breakdowns(&mut all_user, true, None, true);
+        assert!(all_user[0].get("chet_breakdown").is_none());
+        assert_eq!(
+            all_user[0]["unattended"],
+            json!({"state": "fresh", "needs_user": 2, "with_chet": 0, "unknown": 0})
+        );
+
+        // 2. Non-admin strips chet_breakdown and never exposes unattended.
+        let mut non_admin = vec![json!({
+            "group_id": "g_1",
+            "state": "fresh",
+            "pending": 1,
+            "chet_breakdown": {
+                "state": "fresh",
+                "needs_user": 0,
+                "waiting": 1,
+                "waiting_unregistered": 0,
+                "dispatched_input_ids": [],
+            }
+        })];
+        fold_summary_chet_breakdowns(&mut non_admin, false, None, true);
+        assert!(non_admin[0].get("chet_breakdown").is_none());
+        assert!(non_admin[0].get("unattended").is_none());
+
+        // 3. Mixed live states: preparing/queued/working -> with_chet; orphan dispatched -> unknown.
+        let mut mixed = vec![json!({
+            "group_id": "g_2",
+            "state": "fresh",
+            "pending": 6,
+            "chet_breakdown": {
+                "state": "fresh",
+                "needs_user": 1,
+                "waiting": 1,
+                "waiting_unregistered": 1,
+                "dispatched_input_ids": ["id-prep", "id-work", "id-orphan"],
+            }
+        })];
+        assert!(summary_needs_live_chet_status(&mixed));
+        let status = json!({
+            "preparing": ["id-prep"],
+            "queued": [],
+            "working": ["id-work"],
+            "owner_busy": false,
+            "history_write_failed": false,
+            "start_problem": null,
+        });
+        fold_summary_chet_breakdowns(&mut mixed, true, Some(&status), true);
+        assert!(mixed[0].get("chet_breakdown").is_none());
+        assert_eq!(
+            mixed[0]["unattended"],
+            json!({"state": "fresh", "needs_user": 1, "with_chet": 4, "unknown": 1})
+        );
+
+        // 4. Start problem turns waiting + waiting_unregistered into unknown (never with_chet, never needs_user).
+        let mut blocked = vec![json!({
+            "group_id": "g_3",
+            "state": "fresh",
+            "pending": 2,
+            "chet_breakdown": {
+                "state": "fresh",
+                "needs_user": 0,
+                "waiting": 1,
+                "waiting_unregistered": 1,
+                "dispatched_input_ids": [],
+            }
+        })];
+        let failed_status = json!({
+            "preparing": [],
+            "queued": [],
+            "working": [],
+            "owner_busy": false,
+            "history_write_failed": false,
+            "start_problem": {"code": "start_failed"},
+        });
+        fold_summary_chet_breakdowns(&mut blocked, true, Some(&failed_status), true);
+        assert_eq!(
+            blocked[0]["unattended"],
+            json!({"state": "fresh", "needs_user": 0, "with_chet": 0, "unknown": 2})
+        );
+
+        // 5. owner_busy turns non-preparing dispatched IDs into unknown; corrupt breakdown -> unknown.
+        let mut busy_and_corrupt = vec![
+            json!({
+                "group_id": "g_4",
+                "state": "fresh",
+                "pending": 2,
+                "chet_breakdown": {
+                    "state": "fresh",
+                    "needs_user": 0,
+                    "waiting": 0,
+                    "waiting_unregistered": 0,
+                    "dispatched_input_ids": ["id-prep", "id-maybe-working"],
+                }
+            }),
+            json!({
+                "group_id": "g_5",
+                "state": "fresh",
+                "pending": 3,
+                "chet_breakdown": {
+                    "state": "unknown",
+                    "error": "chet_history_unreadable",
+                }
+            }),
+        ];
+        let busy_status = json!({
+            "preparing": ["id-prep"],
+            "queued": [],
+            "working": [],
+            "owner_busy": true,
+            "history_write_failed": false,
+            "start_problem": null,
+        });
+        fold_summary_chet_breakdowns(&mut busy_and_corrupt, true, Some(&busy_status), true);
+        assert_eq!(
+            busy_and_corrupt[0]["unattended"],
+            json!({"state": "fresh", "needs_user": 0, "with_chet": 1, "unknown": 1})
+        );
+        assert_eq!(
+            busy_and_corrupt[1]["unattended"],
+            json!({"state": "unknown", "needs_user": null, "with_chet": null, "unknown": null})
+        );
     }
 }

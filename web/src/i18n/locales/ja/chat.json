@@ -645,6 +645,7 @@
   "videoPlaybackUnavailable": "このブラウザではこの動画を再生できません。ダウンロードしてご覧ください。",
   "playAudio": "再生：{{name}}",
   "pauseAudio": "一時停止：{{name}}",
+  "seekAudio": "再生位置を変更：{{name}}",
   "audioPlaybackUnavailable": "{{name}} を再生できません。もう一度試すか、ダウンロードしてください。",
   "imagePreviewUnavailable": "画像をプレビューできません",
   "downloadOriginalImage": "元の画像を開く",

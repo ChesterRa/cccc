@@ -4,10 +4,12 @@ use cccc_contracts::chet::{GroupInput, GroupInputSender};
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashSet,
-    fs::{self, File, OpenOptions},
+    collections::{HashMap, HashSet, VecDeque},
+    fs::{self, File, Metadata, OpenOptions},
     io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
+    sync::{Arc, Mutex, OnceLock},
+    time::UNIX_EPOCH,
 };
 use uuid::Uuid;
 
@@ -170,6 +172,107 @@ impl Record {
             | Self::Transcript { id, .. } => *id,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GroupInputStage {
+    Waiting,
+    Dispatched,
+    Terminal,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GroupInputFact {
+    pub input_id: Uuid,
+    pub sender_actor_generation: Option<String>,
+    pub stage: GroupInputStage,
+}
+
+pub type GroupInputKey = (String, String, String);
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct GroupInputStates {
+    pub by_source: HashMap<GroupInputKey, GroupInputFact>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct JournalFingerprint {
+    identity: (u64, u64),
+    len: u64,
+    modified_nanos: u128,
+    complete_end: u64,
+}
+
+#[derive(Clone)]
+struct CachedGroupInputStates {
+    fingerprint: JournalFingerprint,
+    states: Arc<GroupInputStates>,
+}
+
+const GROUP_INPUT_STATE_CACHE_HOMES: usize = 8;
+
+fn group_input_state_cache() -> &'static Mutex<VecDeque<(PathBuf, CachedGroupInputStates)>> {
+    static CACHE: OnceLock<Mutex<VecDeque<(PathBuf, CachedGroupInputStates)>>> = OnceLock::new();
+    CACHE.get_or_init(Mutex::default)
+}
+
+fn cached_states_for(journal: &Path) -> Option<CachedGroupInputStates> {
+    let cache = group_input_state_cache()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    cache
+        .iter()
+        .find(|(path, _)| path == journal)
+        .map(|(_, entry)| entry.clone())
+}
+
+fn store_cached_states(journal: &Path, entry: CachedGroupInputStates) {
+    let mut cache = group_input_state_cache()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(pos) = cache.iter().position(|(path, _)| path == journal) {
+        cache.remove(pos);
+    }
+    cache.push_back((journal.to_path_buf(), entry));
+    while cache.len() > GROUP_INPUT_STATE_CACHE_HOMES {
+        cache.pop_front();
+    }
+}
+
+fn invalidate_cached_states(journal: &Path) {
+    let mut cache = group_input_state_cache()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(pos) = cache.iter().position(|(path, _)| path == journal) {
+        cache.remove(pos);
+    }
+}
+
+#[cfg(unix)]
+fn file_identity(_file: &File, metadata: &Metadata) -> io::Result<(u64, u64)> {
+    use std::os::unix::fs::MetadataExt;
+    Ok((metadata.dev(), metadata.ino()))
+}
+
+#[cfg(not(unix))]
+fn file_identity(file: &File, _metadata: &Metadata) -> io::Result<(u64, u64)> {
+    use std::hash::{Hash, Hasher};
+    let handle = same_file::Handle::from_file(file.try_clone()?)?;
+    let mut hash = std::collections::hash_map::DefaultHasher::new();
+    handle.hash(&mut hash);
+    Ok((hash.finish(), 0))
+}
+
+fn modified_nanos(metadata: &Metadata) -> u128 {
+    metadata
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+        .map_or(0, |duration| duration.as_nanos())
+}
+
+fn is_lock_contended(error: &io::Error) -> bool {
+    error.kind() == io::ErrorKind::WouldBlock || error.kind() == fs2::lock_contended_error().kind()
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1023,7 +1126,80 @@ impl Store {
         }
     }
 
+    /// Read-only projection of Group inputs and their stages for summary views.
+    /// Reuses the shared lock and dual-file integrity checks of `reader()`, but
+    /// uses a non-blocking shared lock so summary polling never waits behind a
+    /// concurrent writer: when the lock is contended, the last confirmed cache
+    /// entry for this same Home is reused, or an error is returned if none exists.
+    pub fn try_group_input_states(&self) -> Result<Arc<GroupInputStates>, Error> {
+        let journal = self.journal();
+        let opened = match self.reader_with_lock(true) {
+            Ok(opened) => opened,
+            Err(Error::Rejected(error)) if is_lock_contended(&error) => {
+                if let Some(cached) = cached_states_for(&journal) {
+                    return Ok(cached.states);
+                }
+                return Err(Error::Rejected(error));
+            }
+            Err(error) => {
+                if matches!(error, Error::Corrupt) {
+                    invalidate_cached_states(&journal);
+                }
+                return Err(error);
+            }
+        };
+        let Some((_lock, mut file)) = opened else {
+            invalidate_cached_states(&journal);
+            return Ok(Arc::new(GroupInputStates::default()));
+        };
+        let metadata = file.metadata().map_err(Error::Rejected)?;
+        let end = match complete_end(&mut file) {
+            Ok(end) => end,
+            Err(error) => {
+                if matches!(error, Error::Corrupt) {
+                    invalidate_cached_states(&journal);
+                }
+                return Err(error);
+            }
+        };
+        let fingerprint = JournalFingerprint {
+            identity: file_identity(&file, &metadata).map_err(Error::Rejected)?,
+            len: metadata.len(),
+            modified_nanos: modified_nanos(&metadata),
+            complete_end: end,
+        };
+        if let Some(cached) = cached_states_for(&journal)
+            && cached.fingerprint == fingerprint
+        {
+            return Ok(cached.states);
+        }
+        let scanned = scan_group_input_states(&mut file, end);
+        match scanned {
+            Ok(states) => {
+                let states = Arc::new(states);
+                store_cached_states(
+                    &journal,
+                    CachedGroupInputStates {
+                        fingerprint,
+                        states: Arc::clone(&states),
+                    },
+                );
+                Ok(states)
+            }
+            Err(error) => {
+                if matches!(error, Error::Corrupt) {
+                    invalidate_cached_states(&journal);
+                }
+                Err(error)
+            }
+        }
+    }
+
     fn reader(&self) -> Result<Option<(File, File)>, Error> {
+        self.reader_with_lock(false)
+    }
+
+    fn reader_with_lock(&self, nonblocking: bool) -> Result<Option<(File, File)>, Error> {
         let mut lock = match OpenOptions::new().read(true).open(self.lock_path()) {
             Ok(lock) => lock,
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
@@ -1048,7 +1224,11 @@ impl Store {
             }
             Err(error) => return Err(Error::Rejected(error)),
         };
-        FileExt::lock_shared(&lock).map_err(Error::Rejected)?;
+        if nonblocking {
+            FileExt::try_lock_shared(&lock).map_err(Error::Rejected)?;
+        } else {
+            FileExt::lock_shared(&lock).map_err(Error::Rejected)?;
+        }
         let initialized = marker(&mut lock)?;
         let mut file = match File::open(self.journal()) {
             Ok(file) => file,
@@ -1234,6 +1414,108 @@ fn check_header(file: &mut File) -> Result<(), Error> {
     } else {
         Err(Error::Corrupt)
     }
+}
+
+fn scan_group_input_states(file: &mut File, end: u64) -> Result<GroupInputStates, Error> {
+    file.seek(SeekFrom::Start(HEADER.len() as u64))
+        .map_err(Error::Rejected)?;
+    let mut reader = BufReader::new(file.take(end - HEADER.len() as u64));
+    let mut known_inputs = HashSet::<Uuid>::new();
+    let mut group_keys_by_id = HashMap::<Uuid, GroupInputKey>::new();
+    let mut by_source = HashMap::<GroupInputKey, GroupInputFact>::new();
+    let advance = |input_id: Uuid,
+                   stage: GroupInputStage,
+                   known: &HashSet<Uuid>,
+                   keys: &HashMap<Uuid, GroupInputKey>,
+                   sources: &mut HashMap<GroupInputKey, GroupInputFact>|
+     -> Result<(), Error> {
+        if !known.contains(&input_id) {
+            return Err(Error::Corrupt);
+        }
+        if let Some(key) = keys.get(&input_id)
+            && let Some(fact) = sources.get_mut(key)
+        {
+            match (fact.stage, stage) {
+                (GroupInputStage::Terminal, _) => {}
+                (_, GroupInputStage::Terminal) => fact.stage = GroupInputStage::Terminal,
+                (GroupInputStage::Waiting, GroupInputStage::Dispatched) => {
+                    fact.stage = GroupInputStage::Dispatched;
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    };
+    while let Some(line) = read_line(&mut reader)? {
+        let record: Record = serde_json::from_slice(&line).map_err(|_| Error::Corrupt)?;
+        match record {
+            Record::Input { id, .. } | Record::VoiceDelegation { id, .. } => {
+                if !known_inputs.insert(id) {
+                    return Err(Error::Corrupt);
+                }
+            }
+            Record::GroupInput { id, input, .. } => {
+                if !known_inputs.insert(id) {
+                    return Err(Error::Corrupt);
+                }
+                let key = (input.group_id, input.group_generation, input.event_id);
+                let sender_actor_generation = match input.sender {
+                    GroupInputSender::User => None,
+                    GroupInputSender::Actor {
+                        actor_generation, ..
+                    } => Some(actor_generation),
+                };
+                if by_source
+                    .insert(
+                        key.clone(),
+                        GroupInputFact {
+                            input_id: id,
+                            sender_actor_generation,
+                            stage: GroupInputStage::Waiting,
+                        },
+                    )
+                    .is_some()
+                {
+                    return Err(Error::Corrupt);
+                }
+                group_keys_by_id.insert(id, key);
+            }
+            Record::GroupDispatch { input_id, .. } | Record::Receipt { input_id, .. } => {
+                advance(
+                    input_id,
+                    GroupInputStage::Dispatched,
+                    &known_inputs,
+                    &group_keys_by_id,
+                    &mut by_source,
+                )?;
+            }
+            Record::NotStarted { input_id, .. } => {
+                advance(
+                    input_id,
+                    GroupInputStage::Terminal,
+                    &known_inputs,
+                    &group_keys_by_id,
+                    &mut by_source,
+                )?;
+            }
+            Record::Result { input_ids, .. } => {
+                if input_ids.is_empty() {
+                    return Err(Error::Corrupt);
+                }
+                for input_id in input_ids {
+                    advance(
+                        input_id,
+                        GroupInputStage::Terminal,
+                        &known_inputs,
+                        &group_keys_by_id,
+                        &mut by_source,
+                    )?;
+                }
+            }
+            Record::Transcript { .. } => {}
+        }
+    }
+    Ok(GroupInputStates { by_source })
 }
 
 fn read_line(reader: &mut impl BufRead) -> Result<Option<Vec<u8>>, Error> {
@@ -2211,6 +2493,159 @@ mod tests {
         assert!(matches!(store.page(None, 20), Err(Error::Corrupt)));
         assert!(matches!(
             store.register_input(Uuid::new_v4(), request("next")),
+            Err(Error::Corrupt)
+        ));
+    }
+
+    #[test]
+    fn try_group_input_states_tracks_stages_and_reuses_cache_under_exclusive_writer_lock() {
+        let (_temp, store) = fixture();
+        // Empty uninitialized home returns empty states.
+        assert!(
+            store
+                .try_group_input_states()
+                .expect("empty")
+                .by_source
+                .is_empty()
+        );
+
+        let waiting_input = GroupInput {
+            group_id: "g_1".into(),
+            group_generation: "gen_1".into(),
+            event_id: "ev_wait".into(),
+            sender: GroupInputSender::Actor {
+                actor_id: "peer".into(),
+                actor_generation: "actor_gen_1".into(),
+            },
+            reply_to: None,
+        };
+        let (wait_id, _) = store
+            .register_group_input(waiting_input.clone())
+            .expect("register waiting");
+
+        let dispatched_input = GroupInput {
+            event_id: "ev_disp".into(),
+            ..waiting_input.clone()
+        };
+        let (disp_id, _) = store
+            .register_group_input(dispatched_input.clone())
+            .expect("register dispatched");
+        store.claim_group_input(disp_id).expect("claim");
+
+        let done_input = GroupInput {
+            event_id: "ev_done".into(),
+            ..waiting_input.clone()
+        };
+        let (done_id, _) = store
+            .register_group_input(done_input.clone())
+            .expect("register done");
+        store.claim_group_input(done_id).expect("claim done");
+        store
+            .record_result(
+                Uuid::new_v4(),
+                vec![done_id],
+                Outcome {
+                    generation: "g".into(),
+                    turn_id: "t".into(),
+                    status: "completed".into(),
+                    text: "left for user".into(),
+                    error: String::new(),
+                },
+            )
+            .expect("result");
+
+        let states = store.try_group_input_states().expect("projected");
+        assert_eq!(
+            states
+                .by_source
+                .get(&("g_1".into(), "gen_1".into(), "ev_wait".into())),
+            Some(&GroupInputFact {
+                input_id: wait_id,
+                sender_actor_generation: Some("actor_gen_1".into()),
+                stage: GroupInputStage::Waiting,
+            })
+        );
+        assert_eq!(
+            states
+                .by_source
+                .get(&("g_1".into(), "gen_1".into(), "ev_disp".into()))
+                .map(|fact| fact.stage),
+            Some(GroupInputStage::Dispatched)
+        );
+        assert_eq!(
+            states
+                .by_source
+                .get(&("g_1".into(), "gen_1".into(), "ev_done".into()))
+                .map(|fact| fact.stage),
+            Some(GroupInputStage::Terminal)
+        );
+
+        // While a concurrent writer holds the exclusive lock, try_group_input_states
+        // never blocks and reuses the last confirmed cache entry for this Home.
+        let lock = store.writer().expect("acquire exclusive writer lock");
+        let reused = store
+            .try_group_input_states()
+            .expect("reuse cache while lock is contended");
+        assert!(Arc::ptr_eq(&states, &reused));
+        drop(lock);
+
+        // On a fresh Home with no cached result yet, a contended lock returns an error
+        // so the caller reports unknown instead of blocking.
+        let (_temp2, cold_store) = fixture();
+        cold_store
+            .register_group_input(waiting_input)
+            .expect("seed cold store");
+        let cold_lock = cold_store.writer().expect("lock cold store");
+        assert!(cold_store.try_group_input_states().is_err());
+        drop(cold_lock);
+    }
+
+    #[test]
+    fn try_group_input_states_rejects_dual_file_and_semantic_corruption() {
+        let (_temp, store) = fixture();
+        let input = GroupInput {
+            group_id: "g_1".into(),
+            group_generation: "gen_1".into(),
+            event_id: "ev_1".into(),
+            sender: GroupInputSender::User,
+            reply_to: None,
+        };
+        let (_id, _) = store.register_group_input(input.clone()).expect("register");
+        assert_eq!(
+            store
+                .try_group_input_states()
+                .expect("warm")
+                .by_source
+                .len(),
+            1
+        );
+
+        // Appending a record referencing an unknown input ID invalidates the cache and fails Corrupt.
+        let bogus = Record::NotStarted {
+            id: Uuid::new_v4(),
+            created_at: cccc_contracts::utc_now(),
+            input_id: Uuid::new_v4(),
+            reason: StartFailure::Cancelled,
+        };
+        let mut line = serde_json::to_vec(&bogus).expect("encode");
+        line.push(b'\n');
+        let mut file = OpenOptions::new()
+            .append(true)
+            .open(store.journal())
+            .expect("open journal");
+        file.write_all(&line).expect("append bogus");
+        file.sync_all().expect("sync");
+        assert!(matches!(
+            store.try_group_input_states(),
+            Err(Error::Corrupt)
+        ));
+
+        // Removing lock while journal exists is dual-file corruption, never an empty history.
+        let (_temp2, store2) = fixture();
+        store2.register_group_input(input).expect("register2");
+        fs::remove_file(store2.lock_path()).expect("remove lock");
+        assert!(matches!(
+            store2.try_group_input_states(),
             Err(Error::Corrupt)
         ));
     }

@@ -4,9 +4,13 @@
 
 use cccc_contracts::reply_question::{self, Answer, FieldError, Stored};
 use cccc_contracts::{DaemonRequest, Event, utc_now};
-use cccc_core::user_requests::{self, PageError};
-use cccc_core::{HomeLayout, actors, ledger, unattended, voice_notifications};
+use cccc_core::chet_history::{GroupInputStage, GroupInputStates, Store as ChetHistoryStore};
+use cccc_core::user_requests::{self, OpenRequestFact, PageError};
+use cccc_core::{
+    GroupDoc, HomeLayout, actors, connect_groups, ledger, unattended, voice_notifications,
+};
 use serde_json::{Map, Value, json};
+use std::sync::Arc;
 
 use super::messaging::InPlace;
 use super::messaging_status::{self, Requester};
@@ -353,8 +357,125 @@ pub(super) fn page(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     }))
 }
 
+fn require_unbound_user_for_chet_breakdown(request: &DaemonRequest) -> Result<(), OpError> {
+    if request.args.contains_key("_cccc_native_binding")
+        || request.args.contains_key("_cccc_native_source_binding")
+        || request.args.contains_key("_cccc_web_binding")
+    {
+        return Err(OpError::new(
+            "permission_denied",
+            "user authority is required for unattended breakdown",
+        ));
+    }
+    Ok(())
+}
+
+enum BreakdownContext {
+    Disabled,
+    Unreadable(&'static str),
+    Ready {
+        unattended: cccc_contracts::chet::UnattendedSettings,
+        history: Option<Arc<GroupInputStates>>,
+        history_unreadable: bool,
+    },
+}
+
+fn classify_open_requests(
+    group: &GroupDoc,
+    facts: &[OpenRequestFact],
+    unattended_settings: &cccc_contracts::chet::UnattendedSettings,
+    history: &GroupInputStates,
+) -> Value {
+    let group_generation = connect_groups::generation(group);
+    let mut needs_user = 0_usize;
+    let mut waiting = 0_usize;
+    let mut waiting_unregistered = 0_usize;
+    let mut dispatched_input_ids = Vec::<String>::new();
+
+    for fact in facts {
+        // 1. Chet already posted a normal (non-answering) Group reply in this generation: handed back.
+        if group_generation != "legacy:"
+            && fact
+                .chet_reply_generations
+                .iter()
+                .any(|generation| generation == &group_generation)
+        {
+            needs_user += 1;
+            continue;
+        }
+        let eligible_now = fact.after_imported_marker
+            && unattended::copies_fact(
+                unattended_settings,
+                group,
+                &fact.ts,
+                &fact.by,
+                fact.copy_shape,
+            );
+        // 2. Check durable Chet history for this Group generation and event ID.
+        if let Some(entry) = history.by_source.get(&(
+            group.group_id.clone(),
+            group_generation.clone(),
+            fact.id.clone(),
+        )) {
+            match entry.stage {
+                GroupInputStage::Terminal => {
+                    needs_user += 1;
+                }
+                GroupInputStage::Dispatched => {
+                    dispatched_input_ids.push(entry.input_id.to_string());
+                }
+                GroupInputStage::Waiting => {
+                    let generation_matches =
+                        entry
+                            .sender_actor_generation
+                            .as_deref()
+                            .is_none_or(|expected| {
+                                actors::find(group, &fact.by).is_some_and(|actor| {
+                                    actors::generation_identity(actor) == expected
+                                })
+                            });
+                    if eligible_now && generation_matches {
+                        waiting += 1;
+                    } else {
+                        needs_user += 1;
+                    }
+                }
+            }
+            continue;
+        }
+        // 3. No Chet history record yet: only count as waiting_unregistered while currently
+        // covered by unattended mode and the sender has not been removed/recreated since.
+        if eligible_now && fact.sender_added_before_request {
+            waiting_unregistered += 1;
+        } else {
+            needs_user += 1;
+        }
+    }
+
+    json!({
+        "state": "fresh",
+        "needs_user": needs_user,
+        "waiting": waiting,
+        "waiting_unregistered": waiting_unregistered,
+        "dispatched_input_ids": dispatched_input_ids,
+    })
+}
+
 pub(super) fn summary(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     require_user(request)?;
+    let include_chet_breakdown = match request.args.get("include_chet_breakdown") {
+        None => false,
+        Some(Value::Bool(value)) => *value,
+        Some(_) => {
+            return Err(OpError::new(
+                "invalid_args",
+                "include_chet_breakdown must be a boolean",
+            ));
+        }
+    };
+    if include_chet_breakdown {
+        require_unbound_user_for_chet_breakdown(request)?;
+    }
     let store = store(home)?;
     let group_ids = match request.args.get("group_ids") {
         None | Some(Value::Null) => store
@@ -375,23 +496,25 @@ pub(super) fn summary(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             ));
         }
     };
+    let mut breakdown_ctx = if include_chet_breakdown {
+        match unattended::load(home) {
+            Ok(settings) if settings.enabled => BreakdownContext::Ready {
+                unattended: settings,
+                history: None,
+                history_unreadable: false,
+            },
+            Ok(_) => BreakdownContext::Disabled,
+            Err(_) => BreakdownContext::Unreadable("unattended_unreadable"),
+        }
+    } else {
+        BreakdownContext::Disabled
+    };
     let as_of = utc_now();
     let groups = group_ids
         .iter()
         .map(|group_id| {
-            let summary = store
-                .load(group_id)
-                .map_err(|_| "group_not_found")
-                .and_then(|_| user_requests::summary(home, group_id).map_err(|_| "unreadable"));
-            match summary {
-                Ok(summary) => json!({
-                    "group_id": group_id,
-                    "state": "fresh",
-                    "pending": summary.open,
-                    "oldest_ts": summary.oldest_ts,
-                    "revision": summary.revision,
-                    "as_of": as_of,
-                }),
+            let loaded_group = store.load(group_id).map_err(|_| "group_not_found");
+            match loaded_group {
                 Err(code) => json!({
                     "group_id": group_id,
                     "state": "unknown",
@@ -399,6 +522,87 @@ pub(super) fn summary(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
                     "error": code,
                     "as_of": as_of,
                 }),
+                Ok(group) => {
+                    let read_breakdown = !matches!(breakdown_ctx, BreakdownContext::Disabled);
+                    let projection = if read_breakdown {
+                        user_requests::summary_with_open_facts(home, group_id)
+                            .map_err(|_| "unreadable")
+                    } else {
+                        user_requests::summary(home, group_id)
+                            .map(|summary| (summary, Vec::new()))
+                            .map_err(|_| "unreadable")
+                    };
+                    match projection {
+                        Err(code) => json!({
+                            "group_id": group_id,
+                            "state": "unknown",
+                            "pending": null,
+                            "error": code,
+                            "as_of": as_of,
+                        }),
+                        Ok((summary, facts)) => {
+                            let mut entry = json!({
+                                "group_id": group_id,
+                                "state": "fresh",
+                                "pending": summary.open,
+                                "oldest_ts": summary.oldest_ts,
+                                "revision": summary.revision,
+                                "as_of": as_of,
+                            });
+                            if read_breakdown {
+                                let chet_breakdown = match &mut breakdown_ctx {
+                                    BreakdownContext::Disabled => unreachable!(),
+                                    BreakdownContext::Unreadable(code) => json!({
+                                        "state": "unknown",
+                                        "error": code,
+                                    }),
+                                    BreakdownContext::Ready {
+                                        unattended: unattended_settings,
+                                        history,
+                                        history_unreadable,
+                                    } => {
+                                        if summary.open == 0 {
+                                            json!({
+                                                "state": "fresh",
+                                                "needs_user": 0,
+                                                "waiting": 0,
+                                                "waiting_unregistered": 0,
+                                                "dispatched_input_ids": [],
+                                            })
+                                        } else {
+                                            if history.is_none() && !*history_unreadable {
+                                                match ChetHistoryStore::new(home.root())
+                                                    .try_group_input_states()
+                                                {
+                                                    Ok(states) => *history = Some(states),
+                                                    Err(_) => *history_unreadable = true,
+                                                }
+                                            }
+                                            if let Some(states) = history.as_ref() {
+                                                classify_open_requests(
+                                                    &group,
+                                                    &facts,
+                                                    unattended_settings,
+                                                    states,
+                                                )
+                                            } else {
+                                                json!({
+                                                    "state": "unknown",
+                                                    "error": "chet_history_unreadable",
+                                                })
+                                            }
+                                        }
+                                    }
+                                };
+                                entry
+                                    .as_object_mut()
+                                    .expect("summary object")
+                                    .insert("chet_breakdown".into(), chet_breakdown);
+                            }
+                            entry
+                        }
+                    }
+                }
             }
         })
         .collect::<Vec<_>>();

@@ -1,6 +1,8 @@
 import { CodexVoiceDock } from "../../components/layout/CodexVoiceDock";
 import { CodexVoiceAnalystModal } from "../../components/modals/CodexVoiceAnalystModal";
 import { useModalStore } from "../../stores";
+import { useUnattendedStore } from "../../stores/useUnattendedStore";
+import { codexVoiceNeedsAttention } from "./codexVoiceAttention";
 import type { CodexVoiceShellState } from "./useCodexVoiceShell";
 
 type SharedProps = { voice: CodexVoiceShellState };
@@ -22,15 +24,22 @@ export function CodexVoiceSidebarDock(props: SharedProps & { collapsed: boolean 
 
 export function CodexVoiceMobileDock(props: SharedProps) {
   const { voice } = props;
-  // The phone bar shows while a call or Chet's work runs, and folds away after.
-  if (!voice.controller.isEngaged && !voice.chet.working) return null;
+  const unattended = useUnattendedStore((state) => state.unattended?.enabled === true);
+  const chetAttention = Boolean(voice.chet.status?.start_problem);
+  const attention = codexVoiceNeedsAttention({
+    controller: voice.controller,
+    chetAttention,
+    unattended,
+  });
+  // The phone bar shows while a call, Chet's work, or any attention state is active.
+  if (!voice.controller.isEngaged && !voice.chet.working && !attention) return null;
   return (
     <div className="mt-[48px] flex-none md:hidden">
       <CodexVoiceDock
         variant="mobile"
         controller={voice.controller}
         chetWorking={voice.chet.working}
-        chetAttention={Boolean(voice.chet.status?.start_problem)}
+        chetAttention={chetAttention}
         chetUnread={voice.chet.unread}
         onOpen={voice.openDetails}
         onStart={voice.start}

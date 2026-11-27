@@ -949,3 +949,245 @@ fn a_question_reuses_its_client_id_only_for_the_same_question() {
     let open = f.ok("user_reply_requests", json!({}));
     assert_eq!(open["total"], 2);
 }
+
+#[test]
+fn summary_unattended_breakdown_classifies_waiting_handed_back_rebuilt_and_corrupt() {
+    let f = Fixture::new();
+    f.add_actor("peer");
+    f.add_actor("rebuilt");
+
+    // 1. Legacy request created BEFORE unattended mode was turned on -> needs_user.
+    let before = f.ok(
+        "send",
+        json!({
+            "by": "peer",
+            "to": ["user"],
+            "text": "Before unattended",
+            "message_mode": "request_reply",
+        }),
+    );
+    let _before_id = before["event"]["id"].as_str().expect("before id");
+
+    // While unattended mode is OFF, include_chet_breakdown=true omits chet_breakdown.
+    let off_summary = f.ok(
+        "user_reply_requests_summary",
+        json!({"include_chet_breakdown": true}),
+    );
+    assert!(
+        off_summary["groups"][0].get("chet_breakdown").is_none(),
+        "off mode should omit chet_breakdown: {off_summary:?}"
+    );
+
+    // Invalid arg type (including null) and bound caller authorization checks.
+    for invalid_value in [json!("yes"), json!(null), json!(1)] {
+        assert_eq!(
+            f.fail(
+                "user_reply_requests_summary",
+                json!({"include_chet_breakdown": invalid_value}),
+            )
+            .code,
+            "invalid_args"
+        );
+    }
+    assert_eq!(
+        f.fail(
+            "user_reply_requests_summary",
+            json!({
+                "include_chet_breakdown": true,
+                "_cccc_web_binding": {"actor_id": "peer"},
+            }),
+        )
+        .code,
+        "permission_denied"
+    );
+
+    // Turn unattended mode ON.
+    let _ = f.ok("unattended_update", json!({"by": "user", "enabled": true}));
+    std::thread::sleep(std::time::Duration::from_millis(5));
+
+    // 2. Waiting unregistered request -> waiting_unregistered.
+    let _unreg = f.ok(
+        "send",
+        json!({
+            "by": "peer",
+            "to": ["user"],
+            "text": "Fresh request waiting registration",
+            "message_mode": "request_reply",
+        }),
+    );
+
+    // 3. Waiting registered GroupInput -> waiting.
+    let reg_wait = f.ok(
+        "send",
+        json!({
+            "by": "peer",
+            "to": ["user"],
+            "text": "Queued in chet history",
+            "message_mode": "request_reply",
+        }),
+    );
+    let reg_wait_id = reg_wait["event"]["id"]
+        .as_str()
+        .expect("wait id")
+        .to_owned();
+
+    // 4. Dispatched GroupInput without Result -> dispatched_input_ids.
+    let disp = f.ok(
+        "send",
+        json!({
+            "by": "peer",
+            "to": ["user"],
+            "text": "Dispatched to Chet",
+            "message_mode": "request_reply",
+        }),
+    );
+    let disp_id = disp["event"]["id"].as_str().expect("disp id").to_owned();
+
+    // 5. Chet finished turn (Result) without answering -> needs_user.
+    let finished = f.ok(
+        "send",
+        json!({
+            "by": "peer",
+            "to": ["user"],
+            "text": "Chet finished without answering",
+            "message_mode": "request_reply",
+        }),
+    );
+    let finished_id = finished["event"]["id"]
+        .as_str()
+        .expect("finished id")
+        .to_owned();
+
+    // 6. Chet posted a normal Group reply in current generation -> needs_user (handed back).
+    let handed = f.ok(
+        "send",
+        json!({
+            "by": "peer",
+            "to": ["user"],
+            "text": "Chet replied in group handing back",
+            "message_mode": "request_reply",
+        }),
+    );
+    let handed_id = handed["event"]["id"]
+        .as_str()
+        .expect("handed id")
+        .to_owned();
+
+    // 7. Request sent by an actor that is later removed and recreated with the same ID -> needs_user.
+    let from_old = f.ok(
+        "send",
+        json!({
+            "by": "rebuilt",
+            "to": ["user"],
+            "text": "From old actor generation",
+            "message_mode": "request_reply",
+        }),
+    );
+    let _from_old_id = from_old["event"]["id"].as_str().expect("old actor id");
+    f.ok("actor_remove", json!({"actor_id": "rebuilt"}));
+    f.add_actor("rebuilt");
+
+    let group = cccc_core::GroupStore::new(f.home.clone())
+        .expect("store")
+        .load(&f.group_id)
+        .expect("group");
+    let group_gen = cccc_core::connect_groups::generation(&group);
+    let peer = cccc_core::actors::find(&group, "peer").expect("peer");
+    let peer_gen = cccc_core::actors::generation_identity(peer);
+    let history = cccc_core::chet_history::Store::new(f.home.root());
+    let mk_input = |event_id: String| cccc_contracts::chet::GroupInput {
+        group_id: f.group_id.clone(),
+        group_generation: group_gen.clone(),
+        event_id,
+        sender: cccc_contracts::chet::GroupInputSender::Actor {
+            actor_id: "peer".into(),
+            actor_generation: peer_gen.clone(),
+        },
+        reply_to: None,
+    };
+    let (_wait_uuid, _) = history
+        .register_group_input(mk_input(reg_wait_id))
+        .expect("register wait");
+    let (disp_uuid, _) = history
+        .register_group_input(mk_input(disp_id))
+        .expect("register disp");
+    history.claim_group_input(disp_uuid).expect("claim disp");
+    let (fin_uuid, _) = history
+        .register_group_input(mk_input(finished_id))
+        .expect("register finished");
+    history.claim_group_input(fin_uuid).expect("claim finished");
+    history
+        .record_result(
+            uuid::Uuid::new_v4(),
+            vec![fin_uuid],
+            cccc_core::chet_history::Outcome {
+                generation: "g".into(),
+                turn_id: "t".into(),
+                status: "completed".into(),
+                text: "Wait for user".into(),
+                error: String::new(),
+            },
+        )
+        .expect("record result");
+
+    // Append Chet's normal (non-answering) handback reply to the Group ledger.
+    let mut chet_reply = cccc_contracts::Event::new("chat.message", &f.group_id);
+    chet_reply.by = cccc_core::actors::CHET_SERVICE_PRINCIPAL.into();
+    chet_reply.data.insert("to".into(), json!(["peer"]));
+    chet_reply.data.insert("reply_to".into(), json!(handed_id));
+    chet_reply
+        .data
+        .insert("text".into(), json!("Please wait for the user."));
+    chet_reply.data.insert("message_mode".into(), json!("send"));
+    chet_reply.data.insert(
+        cccc_contracts::chet::GROUP_AUTHOR_GENERATION_FIELD.into(),
+        json!(group_gen),
+    );
+    let ledger_path = cccc_core::GroupStore::new(f.home.clone())
+        .expect("store")
+        .ledger_path(&f.group_id)
+        .expect("ledger");
+    cccc_core::ledger::append(&ledger_path, &chet_reply).expect("append chet handback");
+
+    let summary = f.ok(
+        "user_reply_requests_summary",
+        json!({"include_chet_breakdown": true}),
+    );
+    let row = &summary["groups"][0];
+    assert_eq!(row["state"], "fresh");
+    assert_eq!(row["pending"], 7);
+    let bd = &row["chet_breakdown"];
+    assert_eq!(bd["state"], "fresh", "{row}");
+    // needs_user: before(1) + finished(1) + handed(1) + rebuilt-old-gen(1) = 4
+    assert_eq!(bd["needs_user"], 4, "{row}");
+    assert_eq!(bd["waiting"], 1, "{row}");
+    assert_eq!(bd["waiting_unregistered"], 1, "{row}");
+    assert_eq!(bd["dispatched_input_ids"], json!([disp_uuid.to_string()]));
+
+    // Corrupting chet history degrades only chet_breakdown to unknown, never outer pending
+    // and never blocks answering a request.
+    std::fs::write(
+        f.home.root().join("state/chet/history.jsonl"),
+        b"not-json\n",
+    )
+    .expect("corrupt chet history");
+    let corrupt_summary = f.ok(
+        "user_reply_requests_summary",
+        json!({"include_chet_breakdown": true}),
+    );
+    assert_eq!(corrupt_summary["groups"][0]["state"], "fresh");
+    assert_eq!(corrupt_summary["groups"][0]["pending"], 7);
+    assert_eq!(
+        corrupt_summary["groups"][0]["chet_breakdown"]["state"],
+        "unknown"
+    );
+    let answer = f.ok(
+        "reply_request_answer",
+        json!({
+            "source_event_id": handed_id,
+            "client_id": "user-answer-under-corrupt-chet-history",
+            "answer": {"v": 1, "text": "Approved"},
+        }),
+    );
+    assert!(answer["event"]["id"].is_string());
+}

@@ -4,9 +4,14 @@ import {
   type PendingReplySummary,
 } from "../../services/api/pendingReplies";
 
+export type UnattendedBreakdown =
+  | { state: "fresh"; needsUser: number; withChet: number; unknown: number }
+  | { state: "unknown"; needsUser: null; withChet: null; unknown: null };
+
 export type Summary = {
   state: "fresh" | "stale" | "unknown";
   pending: number | null;
+  unattended?: UnattendedBreakdown;
   revision?: string;
   oldestTs?: string | null;
   asOf?: string;
@@ -16,7 +21,38 @@ export type Summary = {
 };
 
 const UNKNOWN: Summary = { state: "unknown", pending: null };
+const UNATTENDED_UNKNOWN: UnattendedBreakdown = {
+  state: "unknown",
+  needsUser: null,
+  withChet: null,
+  unknown: null,
+};
 const INTERVAL_MS = 5000;
+
+function nonNegativeInt(value: unknown): value is number {
+  return Number.isSafeInteger(value) && (value as number) >= 0;
+}
+
+function parseUnattended(value: unknown, pending: number): UnattendedBreakdown | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return UNATTENDED_UNKNOWN;
+  const record = value as Record<string, unknown>;
+  if (
+    record.state === "fresh" &&
+    nonNegativeInt(record.needs_user) &&
+    nonNegativeInt(record.with_chet) &&
+    nonNegativeInt(record.unknown) &&
+    record.needs_user + record.with_chet + record.unknown === pending
+  ) {
+    return {
+      state: "fresh",
+      needsUser: record.needs_user,
+      withChet: record.with_chet,
+      unknown: record.unknown,
+    };
+  }
+  return UNATTENDED_UNKNOWN;
+}
 
 function validSummary(value: PendingReplySummary): Summary {
   if (
@@ -27,9 +63,11 @@ function validSummary(value: PendingReplySummary): Summary {
     !value.revision
   )
     return UNKNOWN;
+  const unattended = parseUnattended(value.unattended, value.pending as number);
   return {
     state: "fresh",
     pending: value.pending,
+    ...(unattended ? { unattended } : {}),
     revision: value.revision,
     oldestTs: value.oldest_ts,
     asOf: value.as_of,

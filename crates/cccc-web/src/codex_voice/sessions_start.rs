@@ -478,6 +478,7 @@ impl CodexVoiceSessions {
         ),
         ChetSubmitError,
     > {
+        let attempted_runtime = Self::saved_analyst_runtime(home);
         match self.prepare_analyst_locked(home, state).await {
             Ok((state, analyst)) => {
                 *self
@@ -487,7 +488,7 @@ impl CodexVoiceSessions {
                 Ok((state, analyst))
             }
             Err(error) => {
-                self.record_chet_start_problem(home, chet_start_problem(&error))
+                self.record_chet_start_problem(home, attempted_runtime, chet_start_problem(&error))
                     .await;
                 Err(ChetSubmitError::NotStarted)
             }
@@ -497,28 +498,46 @@ impl CodexVoiceSessions {
     async fn record_chet_start_problem(
         &self,
         home: &HomeLayout,
+        attempted_runtime: Option<cccc_contracts::ActorRuntime>,
         problem: Option<serde_json::Value>,
     ) {
+        let Some(problem) = problem else {
+            // Excluded gate errors (restarting / recovery pending) did not run a fresh start;
+            // keep any prior recognized start problem until a real start succeeds or settings change.
+            return;
+        };
         // `prepare_analyst_locked` releases `state` when its worker fails. Re-acquire it so
-        // an intervening Runtime switch cannot be overwritten by the previous Claude failure.
+        // a late failure from a previous Runtime neither overwrites nor clears the current one's alert.
         let state = self.state.lock().await;
-        let problem =
-            problem.filter(|_| state.analyst.is_none() && Self::saved_analyst_is_claude(home));
+        if state.analyst.is_some() {
+            return;
+        }
+        let current_runtime = Self::saved_analyst_runtime(home);
+        let runtime_matches = match attempted_runtime {
+            Some(expected) => current_runtime == Some(expected),
+            None => current_runtime.is_none(),
+        };
+        if !runtime_matches {
+            return;
+        }
+        if problem.get("code").and_then(serde_json::Value::as_str)
+            == Some("claude_workspace_untrusted")
+            && current_runtime != Some(cccc_contracts::ActorRuntime::Claude)
+        {
+            return;
+        }
         *self
             .chet_start_problem
             .lock()
-            .unwrap_or_else(|error| error.into_inner()) = problem;
+            .unwrap_or_else(|error| error.into_inner()) = Some(problem);
     }
 
-    fn saved_analyst_is_claude(home: &HomeLayout) -> bool {
-        let Ok(settings) = cccc_core::codex_voice_settings::load(home) else {
-            return false;
-        };
-        let Ok(environment) = cccc_core::codex_voice_settings::private_environment(home) else {
-            return false;
-        };
+    fn saved_analyst_runtime(home: &HomeLayout) -> Option<cccc_contracts::ActorRuntime> {
+        let settings = cccc_core::codex_voice_settings::load(home).ok()?;
+        let environment = cccc_core::codex_voice_settings::private_environment(home).ok()?;
         cccc_core::codex_voice_settings::resolve(home, &settings, &environment)
-            .is_ok_and(|resolved| resolved.runtime == cccc_contracts::ActorRuntime::Claude)
+            .ok()
+            .map(|resolved| resolved.runtime)
     }
 
     pub(crate) async fn current(&self) -> VoiceState {
@@ -552,6 +571,14 @@ impl CodexVoiceSessions {
     pub(crate) fn mark_chet_history_write_failed(&self) {
         self.chet_history_write_failed
             .store(true, Ordering::Release);
+    }
+
+    pub(crate) fn mark_chet_group_input_active(&self) {
+        self.chet_group_input_active.store(true, Ordering::Release);
+    }
+
+    pub(crate) fn chet_group_input_active(&self) -> bool {
+        self.chet_group_input_active.load(Ordering::Acquire)
     }
 
     pub(crate) async fn chet_status(&self) -> serde_json::Value {
@@ -800,14 +827,40 @@ async fn create_realtime_answer_with_heartbeat(
 }
 
 /// The part of a failed Chet start that is safe and useful to show: a cause
-/// CCCC recognizes by type, with the directory the user has to act on.
+/// CCCC recognizes by type (never raw provider text or paths). Gate errors
+/// such as restarts or pending process recovery have their own controls and
+/// are excluded here.
 fn chet_start_problem(error: &anyhow::Error) -> Option<serde_json::Value> {
-    error.chain().find_map(|cause| {
+    if error
+        .chain()
+        .any(|cause| cause.downcast_ref::<restart::VoiceGateError>().is_some())
+    {
+        return None;
+    }
+    if let Some(workspace) = error.chain().find_map(|cause| {
         let io = cause.downcast_ref::<std::io::Error>()?;
-        let workspace = cccc_daemon::experimental_codex_voice::untrusted_claude_workspace(io)?;
-        Some(serde_json::json!({"code":"claude_workspace_untrusted",
-                                "workspace":workspace.to_string_lossy()}))
-    })
+        cccc_daemon::experimental_codex_voice::untrusted_claude_workspace(io)
+    }) {
+        return Some(serde_json::json!({
+            "code": "claude_workspace_untrusted",
+            "workspace": workspace.to_string_lossy(),
+        }));
+    }
+    if error.chain().any(|cause| {
+        cause
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(cccc_daemon::experimental_codex_voice::hermes_setup_required)
+    }) {
+        return Some(serde_json::json!({"code": "hermes_setup_required"}));
+    }
+    if error.chain().any(|cause| {
+        cause
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|io| io.kind() == std::io::ErrorKind::TimedOut)
+    }) {
+        return Some(serde_json::json!({"code": "start_timeout"}));
+    }
+    Some(serde_json::json!({"code": "start_failed"}))
 }
 
 #[cfg(test)]
@@ -873,7 +926,7 @@ mod current_tests {
 
         // While Claude remains configured and stopped, the problem is recorded.
         sessions
-            .record_chet_start_problem(&home, Some(problem.clone()))
+            .record_chet_start_problem(&home, Some(ActorRuntime::Claude), Some(problem.clone()))
             .await;
         assert_eq!(
             sessions.chet_status().await["start_problem"]["code"],
@@ -893,15 +946,62 @@ mod current_tests {
         assert!(sessions.chet_status().await["start_problem"].is_null());
 
         sessions
-            .record_chet_start_problem(&home, Some(problem.clone()))
+            .record_chet_start_problem(&home, Some(ActorRuntime::Claude), Some(problem.clone()))
             .await;
         assert!(sessions.chet_status().await["start_problem"].is_null());
 
+        // A late Hermes setup error and an excluded VoiceGateError (`None`) must neither
+        // overwrite nor clear an already-recorded alert for the current OpenCode Runtime.
+        let opencode = AgentRuntimeSettings {
+            runtime: ActorRuntime::Opencode,
+            ..Default::default()
+        };
+        sessions
+            .apply_analyst_settings(&home, opencode, BTreeMap::new(), vec![], false, false)
+            .await
+            .expect("switch to opencode");
+        sessions
+            .record_chet_start_problem(
+                &home,
+                Some(ActorRuntime::Opencode),
+                Some(json!({"code": "start_timeout"})),
+            )
+            .await;
+        assert_eq!(
+            sessions.chet_status().await["start_problem"]["code"],
+            "start_timeout"
+        );
+        sessions
+            .record_chet_start_problem(
+                &home,
+                Some(ActorRuntime::Hermes),
+                Some(json!({"code": "hermes_setup_required"})),
+            )
+            .await;
+        assert_eq!(
+            sessions.chet_status().await["start_problem"]["code"],
+            "start_timeout"
+        );
+        sessions
+            .record_chet_start_problem(&home, Some(ActorRuntime::Opencode), None)
+            .await;
+        assert_eq!(
+            sessions.chet_status().await["start_problem"]["code"],
+            "start_timeout"
+        );
+
         // Lock serialization: a late error publisher must block on `state` and re-check
         // the saved effective Runtime once the holder releases `state`.
-        cccc_core::codex_voice_settings::save(&home, &claude).expect("restore claude");
+        sessions
+            .apply_analyst_settings(&home, claude, BTreeMap::new(), vec![], false, false)
+            .await
+            .expect("restore claude");
         let guard = sessions.state.lock().await;
-        let mut publish = std::pin::pin!(sessions.record_chet_start_problem(&home, Some(problem)));
+        let mut publish = std::pin::pin!(sessions.record_chet_start_problem(
+            &home,
+            Some(ActorRuntime::Claude),
+            Some(problem)
+        ));
         let pending = std::future::poll_fn(|cx| {
             std::task::Poll::Ready(publish.as_mut().poll(cx).is_pending())
         })
@@ -912,5 +1012,35 @@ mod current_tests {
         drop(guard);
         publish.await;
         assert!(sessions.chet_status().await["start_problem"].is_null());
+    }
+
+    #[test]
+    fn chet_start_problem_classifies_known_codes_and_excludes_voice_gate_errors() {
+        use super::chet_start_problem;
+        use crate::codex_voice::restart::VoiceGateError;
+        use anyhow::anyhow;
+        use std::io;
+
+        for gate in [
+            VoiceGateError::Restarting,
+            VoiceGateError::RecoveryPending,
+            VoiceGateError::ProcessRecoveryPending,
+            VoiceGateError::ResetRecoveryPending,
+            VoiceGateError::ReplacementRecoveryPending,
+        ] {
+            let err: anyhow::Error = gate.into();
+            assert!(chet_start_problem(&err).is_none());
+        }
+
+        let timeout_err: anyhow::Error =
+            io::Error::new(io::ErrorKind::TimedOut, "timed out").into();
+        assert_eq!(
+            chet_start_problem(&timeout_err).expect("timeout")["code"],
+            "start_timeout"
+        );
+
+        let generic_err = anyhow!("provider exited with secret /tmp/private-token");
+        let problem = chet_start_problem(&generic_err).expect("generic fallback");
+        assert_eq!(problem, serde_json::json!({"code": "start_failed"}));
     }
 }

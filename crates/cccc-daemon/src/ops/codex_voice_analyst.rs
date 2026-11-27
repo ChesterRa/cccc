@@ -75,6 +75,11 @@ pub fn untrusted_claude_workspace(error: &io::Error) -> Option<&std::path::Path>
     claude::untrusted_workspace(error)
 }
 
+/// Whether Hermes refused to launch because its initial interactive setup has not been completed.
+pub fn hermes_setup_required(error: &io::Error) -> bool {
+    hermes_setup(error).is_some()
+}
+
 #[cfg(test)]
 pub(crate) fn claude_workspace_refusal(
     detail: &str,

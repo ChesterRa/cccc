@@ -99,22 +99,37 @@ pub fn closes(event: &Event) -> Option<&str> {
     .filter(|id| !id.is_empty())
 }
 
+#[derive(Clone)]
+struct OpenRequest {
+    id: String,
+    ts: String,
+    by: String,
+    copy_shape: bool,
+    chet_reply_generations: HashSet<String>,
+}
+
 #[derive(Default)]
 struct Projection {
+    group_id: String,
     sources: Vec<Source>,
     offsets: Vec<u64>,
-    /// Open requests in ledger order, with their timestamps.
-    open: BTreeMap<Location, String>,
+    /// Open requests in ledger order, with lightweight metadata for summary views.
+    open: BTreeMap<Location, OpenRequest>,
     locations: HashMap<String, Location>,
     /// Every request seen, open or closed.
     requests: HashSet<String>,
     /// Ids a reply or cancellation named before any request had them.
     closed_early: HashSet<String>,
+    /// Latest imported-group boundary marker in this ledger, if any.
+    imported_marker: Option<Location>,
+    /// Latest `actor.add` location per actor_id (matches `ops/chet_history.rs` rule).
+    actor_added_at: HashMap<String, Location>,
 }
 
 impl Projection {
-    fn build(snapshot: &Snapshot) -> io::Result<Self> {
+    fn build(group_id: &str, snapshot: &Snapshot) -> io::Result<Self> {
         let mut projection = Self {
+            group_id: group_id.to_owned(),
             sources: snapshot.sources.clone(),
             ..Self::default()
         };
@@ -152,19 +167,58 @@ impl Projection {
         if self.requests.contains(&event.id) {
             return Err(broken("reuses the id of a request"));
         }
+        if event.kind == "group.create" && event.data.get("imported") == Some(&Value::Bool(true)) {
+            self.imported_marker = Some(location);
+        } else if event.kind == "actor.add"
+            && let Some(actor_id) = event
+                .data
+                .get("actor")
+                .and_then(|value| value.get("id"))
+                .and_then(Value::as_str)
+                .filter(|id| !id.is_empty())
+        {
+            self.actor_added_at.insert(actor_id.to_owned(), location);
+        }
         if is_request(event) {
             if self.closed_early.contains(&event.id) {
                 return Err(broken("follows a reply or cancellation that names it"));
             }
             self.requests.insert(event.id.clone());
             self.locations.insert(event.id.clone(), location);
-            self.open.insert(location, event.ts.clone());
+            self.open.insert(
+                location,
+                OpenRequest {
+                    id: event.id.clone(),
+                    ts: event.ts.clone(),
+                    by: event.by.clone(),
+                    copy_shape: event.group_id == self.group_id
+                        && crate::unattended::copy_shape(event),
+                    chet_reply_generations: HashSet::new(),
+                },
+            );
         } else if let Some(id) = closes(event) {
             if let Some(location) = self.locations.remove(id) {
                 self.open.remove(&location);
             } else if !self.requests.contains(id) {
                 self.closed_early.insert(id.to_owned());
             }
+        } else if event.kind == "chat.message"
+            && event.group_id == self.group_id
+            && event.by == crate::actors::CHET_SERVICE_PRINCIPAL
+            && let Some(reply_to) = event
+                .data
+                .get("reply_to")
+                .and_then(Value::as_str)
+                .filter(|id| !id.is_empty())
+            && let Some(generation) = event
+                .data
+                .get(cccc_contracts::chet::GROUP_AUTHOR_GENERATION_FIELD)
+                .and_then(Value::as_str)
+                .filter(|generation| !generation.is_empty() && *generation != "legacy:")
+            && let Some(request_location) = self.locations.get(reply_to).copied()
+            && let Some(request) = self.open.get_mut(&request_location)
+        {
+            request.chet_reply_generations.insert(generation.to_owned());
         }
         Ok(())
     }
@@ -176,7 +230,7 @@ impl Projection {
 /// damage again. An unfinished last line could still be completed by growth,
 /// so that damage is kept only while the sources are unchanged.
 enum Cached {
-    Ready(Projection),
+    Ready(Box<Projection>),
     Damaged {
         sources: Vec<Source>,
         error: String,
@@ -239,7 +293,11 @@ fn with_projection<T>(
                 }) if snapshot.sources == *sources || *ended && snapshot.extends(sources) => {
                     return Err(io::Error::new(io::ErrorKind::InvalidData, error.clone()));
                 }
-                _ => *guard = Some(Cached::Ready(Projection::build(&snapshot)?)),
+                _ => {
+                    *guard = Some(Cached::Ready(Box::new(Projection::build(
+                        group_id, &snapshot,
+                    )?)))
+                }
             }
             let Some(Cached::Ready(projection)) = guard.as_ref() else {
                 unreachable!("projection built above");
@@ -269,13 +327,58 @@ pub struct Summary {
     pub revision: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenRequestFact {
+    pub id: String,
+    pub ts: String,
+    pub by: String,
+    pub copy_shape: bool,
+    pub after_imported_marker: bool,
+    pub sender_added_before_request: bool,
+    pub chet_reply_generations: Vec<String>,
+}
+
 pub fn summary(home: &HomeLayout, group_id: &str) -> io::Result<Summary> {
     with_projection(home, group_id, |projection, snapshot| {
         Ok(Summary {
             open: projection.open.len(),
-            oldest_ts: projection.open.values().next().cloned(),
+            oldest_ts: projection.open.values().next().map(|req| req.ts.clone()),
             revision: revision(&snapshot.sources),
         })
+    })
+}
+
+/// Summary paired with lightweight per-open-request facts from the same
+/// incremental projection, used by read-only unattended breakdown views.
+pub fn summary_with_open_facts(
+    home: &HomeLayout,
+    group_id: &str,
+) -> io::Result<(Summary, Vec<OpenRequestFact>)> {
+    with_projection(home, group_id, |projection, snapshot| {
+        let summary = Summary {
+            open: projection.open.len(),
+            oldest_ts: projection.open.values().next().map(|req| req.ts.clone()),
+            revision: revision(&snapshot.sources),
+        };
+        let facts = projection
+            .open
+            .iter()
+            .map(|(location, req)| OpenRequestFact {
+                id: req.id.clone(),
+                ts: req.ts.clone(),
+                by: req.by.clone(),
+                copy_shape: req.copy_shape,
+                after_imported_marker: projection
+                    .imported_marker
+                    .is_none_or(|marker| *location > marker),
+                sender_added_before_request: projection
+                    .actor_added_at
+                    .get(&req.by)
+                    .is_none_or(|added| *added <= *location),
+                chet_reply_generations: req.chet_reply_generations.iter().cloned().collect(),
+            })
+            .collect();
+        Ok((summary, facts))
     })
 }
 
@@ -853,5 +956,30 @@ mod tests {
             Err(PageError::CursorStale)
         ));
         assert_eq!(f.summary().open, 3);
+    }
+
+    #[test]
+    fn open_facts_copy_shape_requires_same_group_id() {
+        let f = Fixture::new();
+        let same_id = f.request("same group").id;
+        let mut foreign = Event::new("chat.message", "g_other");
+        foreign.by = "peer-1".into();
+        foreign.data.insert("to".into(), json!(["user"]));
+        foreign.data.insert("text".into(), json!("foreign group"));
+        foreign
+            .data
+            .insert("message_mode".into(), json!("request_reply"));
+        let foreign_id = foreign.id.clone();
+        ledger::append(&f.ledger, &foreign).expect("append foreign");
+
+        let (_summary, facts) =
+            summary_with_open_facts(&f.home, &f.group_id).expect("summary with open facts");
+        let same = facts.iter().find(|fact| fact.id == same_id).expect("same");
+        let other = facts
+            .iter()
+            .find(|fact| fact.id == foreign_id)
+            .expect("foreign");
+        assert!(same.copy_shape);
+        assert!(!other.copy_shape);
     }
 }

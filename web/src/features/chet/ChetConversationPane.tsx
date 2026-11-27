@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { StopIcon } from "../../components/Icons";
 import { Button } from "../../components/ui/button";
+import type { ChetStartProblem } from "../../services/api/chet";
 import type { ProcessRecoveryOwner } from "../../services/api/processRecovery";
 import type { CodexVoiceSessionController } from "../codexVoice/useCodexVoiceSessionController";
 import { ChetComposer } from "./ChetComposer";
@@ -69,10 +70,21 @@ export function ChetConversationPane({
   const hasUnknownSend = chet.items.some(
     (item) => item.kind === "request" && item.state === "send_unknown",
   );
+  const startNotice = (problem: ChetStartProblem | null | undefined): string => {
+    if (!problem) return "";
+    switch (problem.code) {
+      case "claude_workspace_untrusted":
+        return t("chet.startUntrusted", { workspace: problem.workspace });
+      case "hermes_setup_required":
+        return t("chet.startHermesSetup");
+      case "start_timeout":
+        return t("chet.startTimeout");
+      case "start_failed":
+        return t("chet.startFailed");
+    }
+  };
   const notices = [
-    chet.status?.start_problem
-      ? t("chet.startUntrusted", { workspace: chet.status.start_problem.workspace })
-      : "",
+    startNotice(chet.status?.start_problem),
     chet.status?.history_write_failed ? t("chet.writeFailed") : "",
     chet.historyError ? t("chet.historyUnavailable", { error: chet.historyError }) : "",
   ].filter(Boolean);

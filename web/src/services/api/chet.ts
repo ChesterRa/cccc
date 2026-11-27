@@ -85,15 +85,32 @@ export type ChetRecord =
     })
   | (Base & { kind: "transcript"; transcript: ChetTranscript });
 
-/** Claude Code refused to run Chet in a working folder it has not trusted. */
-export type ChetStartProblem = { code: "claude_workspace_untrusted"; workspace: string };
+/** A recognized reason the last Chet start failed. */
+export type ChetStartProblem =
+  | { code: "claude_workspace_untrusted"; workspace: string }
+  | { code: "hermes_setup_required" }
+  | { code: "start_timeout" }
+  | { code: "start_failed" };
 
 function startProblem(value: unknown): ChetStartProblem | null | undefined {
   if (value === undefined || value === null) return null;
-  if (isObject(value) && value.code === "claude_workspace_untrusted" && isString(value.workspace)) {
-    return { code: value.code, workspace: value.workspace };
+  if (!isObject(value) || !isString(value.code)) return undefined;
+  switch (value.code) {
+    case "claude_workspace_untrusted":
+      return isString(value.workspace)
+        ? { code: "claude_workspace_untrusted", workspace: value.workspace }
+        : { code: "start_failed" };
+    case "hermes_setup_required":
+      return { code: "hermes_setup_required" };
+    case "start_timeout":
+      return { code: "start_timeout" };
+    case "start_failed":
+      return { code: "start_failed" };
+    default:
+      // Newer host start-problem codes stay visible as a generic start failure without
+      // invalidating live status or echoing raw fields.
+      return { code: "start_failed" };
   }
-  return undefined;
 }
 
 /** Live work the Web host can confirm right now; history holds everything else. */

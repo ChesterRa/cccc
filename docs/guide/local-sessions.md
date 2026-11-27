@@ -337,6 +337,8 @@ Receiver presence is ephemeral and reconnects after a daemon restart. Current na
 
 **Experimental:** Cross-machine device sessions and the optional public cross-network relay are experimental. They have been verified on Linux with isolated Homes and network namespaces on one host (along with Windows system-proxy and terminal-pairing checks in CI). End-to-end acceptance across two physical computers, real public HTTPS relay tunnels, macOS and native Windows is still pending, and macOS system-proxy code is not yet covered by CI.
 
+A paired **computer** contributes its sessions to this hub through the device connector. Pairing does not register it with the account. The devices listed on the account website are CCCC instances linked through [CCCC Connect](connect.md), not the computers paired here.
+
 The device connector supports existing **Codex, Claude Code, Pi and OpenCode** sessions. Both computers need a CCCC build with session-node protocol 1 (Rust 1.91). Pi and OpenCode also need a CCCC version that offers them on both computers. An older hub shares only Codex and Claude Code sessions; when you pair with `--runtime pi` or `--runtime opencode`, the connector says so. Sessions from paired computers appear in **Add existing sessions** when you switch to **Other computers**, one section per computer. Selecting sources does not admit them: adding still waits for verified Group membership and rejects unavailable sources. Pairing alone creates no Group membership.
 
 ### Pair a computer from its terminal

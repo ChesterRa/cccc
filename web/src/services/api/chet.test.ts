@@ -181,6 +181,23 @@ it("rejects a malformed status rather than guessing live work", async () => {
     ok: true,
     result: { start_problem: { code: "claude_workspace_untrusted", workspace: "/w" } },
   });
+  for (const code of ["hermes_setup_required", "start_timeout", "start_failed"] as const) {
+    respond({
+      ok: true,
+      result: {
+        generation: null,
+        preparing: [],
+        queued: [],
+        working: [],
+        history_write_failed: false,
+        start_problem: { code },
+      },
+    });
+    expect(await fetchChetStatus()).toMatchObject({
+      ok: true,
+      result: { start_problem: { code } },
+    });
+  }
   respond({
     ok: true,
     result: {
@@ -189,7 +206,22 @@ it("rejects a malformed status rather than guessing live work", async () => {
       queued: [],
       working: [],
       history_write_failed: false,
-      start_problem: { code: "provider_text", workspace: "/w", detail: "secret" },
+      start_problem: { code: "future_start_code", workspace: "/w", detail: "secret" },
+    },
+  });
+  expect(await fetchChetStatus()).toMatchObject({
+    ok: true,
+    result: { start_problem: { code: "start_failed" } },
+  });
+  respond({
+    ok: true,
+    result: {
+      generation: null,
+      preparing: [],
+      queued: [],
+      working: [],
+      history_write_failed: false,
+      start_problem: "raw error string",
     },
   });
   expect((await fetchChetStatus()).ok).toBe(false);

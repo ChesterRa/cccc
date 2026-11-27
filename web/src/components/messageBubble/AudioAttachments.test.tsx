@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi, type MockInstance } from "vite-plus/test";
 import type { MessageAttachment } from "../../types";
 import { AudioAttachments } from "./AudioAttachments";
+import { formatAudioTime } from "./messageMedia";
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
@@ -258,4 +259,172 @@ it("pauses other message media when it starts, and leaves a voice call alone", a
   expect(pause.mock.contexts).toEqual([video]);
   video.remove();
   voice.remove();
+});
+
+it("formats audio durations for seconds, minutes, hours, and non-finite values", () => {
+  expect(formatAudioTime(0)).toBe("0:00");
+  expect(formatAudioTime(-3)).toBe("0:00");
+  expect(formatAudioTime(Number.NaN)).toBe("0:00");
+  expect(formatAudioTime(Number.POSITIVE_INFINITY)).toBe("0:00");
+  expect(formatAudioTime(8.9)).toBe("0:08");
+  expect(formatAudioTime(65)).toBe("1:05");
+  expect(formatAudioTime(3661)).toBe("1:01:01");
+});
+
+it("shows duration and lets the active clip seek by click, drag, and keyboard without changing inactive chips", async () => {
+  await render(["long-note.mp3", "second-note.mp3"]);
+  act(() => button("playAudio long-note.mp3").click());
+
+  let timeValue = 0;
+  Object.defineProperty(audio(), "duration", { value: 120, configurable: true });
+  Object.defineProperty(audio(), "currentTime", {
+    configurable: true,
+    get: () => timeValue,
+    set: (value: number) => {
+      timeValue = value;
+    },
+  });
+  act(() => audio().dispatchEvent(new Event("loadedmetadata")));
+
+  const sliders = host.querySelectorAll<HTMLDivElement>("[data-message-audio-seek]");
+  expect(sliders).toHaveLength(1);
+  const slider = sliders[0];
+  expect(slider.getAttribute("role")).toBe("slider");
+  expect(slider.getAttribute("aria-label")).toBe("seekAudio long-note.mp3");
+  expect(slider.closest("[data-message-audio]")?.textContent).toContain("long-note.mp3");
+  expect(host.querySelector("[data-message-audio-time]")?.textContent).toBe("0:00 / 2:00");
+  expect(slider.closest("button")).toBeNull();
+
+  // Click / drag along the 200px track: preview during drag, commit on pointer up.
+  vi.spyOn(slider, "getBoundingClientRect").mockReturnValue({
+    left: 100,
+    width: 200,
+    right: 300,
+    top: 0,
+    bottom: 24,
+    height: 24,
+    x: 100,
+    y: 0,
+    toJSON: () => ({}),
+  });
+
+  act(() => {
+    slider.dispatchEvent(
+      new PointerEvent("pointerdown", { bubbles: true, pointerId: 1, button: 0, clientX: 150 }),
+    );
+  });
+  expect(host.querySelector("[data-message-audio-time]")?.textContent).toBe("0:30 / 2:00");
+  expect(timeValue).toBe(0);
+
+  // Intermediate timeupdate during drag does not snap the preview back.
+  timeValue = 5;
+  act(() => audio().dispatchEvent(new Event("timeupdate")));
+  expect(host.querySelector("[data-message-audio-time]")?.textContent).toBe("0:30 / 2:00");
+
+  act(() => {
+    slider.dispatchEvent(
+      new PointerEvent("pointermove", { bubbles: true, pointerId: 1, clientX: 250 }),
+    );
+  });
+  expect(host.querySelector("[data-message-audio-time]")?.textContent).toBe("1:30 / 2:00");
+
+  act(() => {
+    slider.dispatchEvent(
+      new PointerEvent("pointerup", { bubbles: true, pointerId: 1, clientX: 250 }),
+    );
+  });
+  expect(timeValue).toBe(90);
+  expect(host.querySelector<HTMLElement>("[data-message-audio-progress]")?.style.width).toBe("75%");
+  expect(host.querySelector("[data-message-audio-time]")?.textContent).toBe("1:30 / 2:00");
+
+  // Pointer cancel clears the drag preview without changing currentTime.
+  act(() => {
+    slider.dispatchEvent(
+      new PointerEvent("pointerdown", { bubbles: true, pointerId: 2, button: 0, clientX: 100 }),
+    );
+  });
+  expect(host.querySelector("[data-message-audio-time]")?.textContent).toBe("0:00 / 2:00");
+  act(() => {
+    slider.dispatchEvent(new PointerEvent("pointercancel", { bubbles: true, pointerId: 2 }));
+  });
+  expect(timeValue).toBe(90);
+  expect(host.querySelector("[data-message-audio-time]")?.textContent).toBe("1:30 / 2:00");
+
+  // Keyboard stepping: ArrowLeft (-5s), ArrowRight (+5s), PageDown (-15s), PageUp (+15s), Home, End.
+  act(() => {
+    slider.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "ArrowLeft" }));
+  });
+  expect(timeValue).toBe(85);
+  act(() => {
+    slider.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "ArrowRight" }));
+  });
+  expect(timeValue).toBe(90);
+  act(() => {
+    slider.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "PageDown" }));
+  });
+  expect(timeValue).toBe(75);
+  act(() => {
+    slider.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "PageUp" }));
+  });
+  expect(timeValue).toBe(90);
+  act(() => {
+    slider.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Home" }));
+  });
+  expect(timeValue).toBe(0);
+  act(() => {
+    slider.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "End" }));
+  });
+  expect(timeValue).toBe(120);
+
+  // Switching clips resets duration and removes the old seek bar until the new clip loads metadata.
+  act(() => button("playAudio second-note.mp3").click());
+  expect(host.querySelectorAll("[data-message-audio-seek]")).toHaveLength(0);
+  expect(host.querySelector("[data-message-audio-time]")).toBeNull();
+});
+
+it("hides the seek slider and time readout for non-finite streams", async () => {
+  await render(["live-stream.mp3"]);
+  act(() => button("playAudio live-stream.mp3").click());
+  Object.defineProperty(audio(), "duration", {
+    value: Number.POSITIVE_INFINITY,
+    configurable: true,
+  });
+  act(() => audio().dispatchEvent(new Event("durationchange")));
+  expect(host.querySelector("[data-message-audio-seek]")).toBeNull();
+  expect(host.querySelector("[data-message-audio-time]")).toBeNull();
+  expect(host.querySelector<HTMLElement>("[data-message-audio-progress]")?.style.width).toBe("0%");
+});
+
+it("expands only the selected chip when the same audio file is attached twice in one message", async () => {
+  await render(["dup.mp3", "dup.mp3"]);
+  const chips = () => [...host.querySelectorAll<HTMLElement>("[data-message-audio]")];
+  const toggles = () => [
+    ...host.querySelectorAll<HTMLButtonElement>("[data-message-audio-toggle]"),
+  ];
+  expect(chips()).toHaveLength(2);
+
+  let timeValue = 0;
+  Object.defineProperty(audio(), "duration", { value: 60, configurable: true });
+  Object.defineProperty(audio(), "currentTime", {
+    configurable: true,
+    get: () => timeValue,
+    set: (value: number) => {
+      timeValue = value;
+    },
+  });
+
+  act(() => toggles()[0].click());
+  act(() => audio().dispatchEvent(new Event("loadedmetadata")));
+  expect(host.querySelectorAll("[data-message-audio-seek]")).toHaveLength(1);
+  expect(chips()[0].querySelector("[data-message-audio-seek]")).not.toBeNull();
+  expect(chips()[1].querySelector("[data-message-audio-seek]")).toBeNull();
+
+  // Switching to the second duplicate entry moves the single seek bar to it and restarts at 0:00.
+  timeValue = 25;
+  act(() => toggles()[1].click());
+  expect(timeValue).toBe(0);
+  expect(host.querySelectorAll("[data-message-audio-seek]")).toHaveLength(1);
+  expect(chips()[0].querySelector("[data-message-audio-seek]")).toBeNull();
+  expect(chips()[1].querySelector("[data-message-audio-seek]")).not.toBeNull();
+  expect(host.querySelectorAll("audio")).toHaveLength(1);
 });

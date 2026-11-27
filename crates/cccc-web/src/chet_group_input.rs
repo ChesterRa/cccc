@@ -81,6 +81,7 @@ fn spawn_with_interval(state: AppState, every: Duration) {
                 _ = tokio::time::sleep(Duration::from_secs(5)) => {},
             }
         };
+        state.codex_voice.mark_chet_group_input_active();
         let (work_tx, mut work_rx) = mpsc::channel::<Work>(128);
         let (done_tx, mut done_rx) = mpsc::channel::<(SourceKey, bool)>(128);
         let worker_state = state.clone();

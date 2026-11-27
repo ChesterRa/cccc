@@ -5,6 +5,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vite-plus/test";
 import type { CodexVoiceSessionController } from "../../features/codexVoice/useCodexVoiceSessionController";
 import type { AcpPermission } from "../../services/api/codexVoice";
+import { CodexVoiceMobileDock } from "../../features/codexVoice/CodexVoiceShellSurfaces";
+import { chetConversationStub } from "../../features/chet/chetTestSupport";
+import type { CodexVoiceShellState } from "../../features/codexVoice/useCodexVoiceShell";
 import { CodexVoiceDock } from "./CodexVoiceDock";
 
 const unattended = vi.hoisted(() => ({ enabled: false, refresh: vi.fn(async () => undefined) }));
@@ -442,5 +445,77 @@ describe("CodexVoiceDock", () => {
     document.dispatchEvent(new Event("visibilitychange"));
     expect(unattended.refresh).toHaveBeenCalledTimes(2);
     host.remove();
+  });
+
+  it("shows the mobile dock bar for every attention state even when idle and not engaged", () => {
+    const voiceFor = (
+      controllerOverrides: Partial<CodexVoiceSessionController> = {},
+      chetOverrides: Parameters<typeof chetConversationStub>[0] = {},
+    ): CodexVoiceShellState =>
+      ({
+        controller: controller(controllerOverrides),
+        chet: chetConversationStub(chetOverrides),
+        analystSettings: { hasChanges: false },
+        setAnalystSettingsActive: vi.fn(),
+        detailsOpen: false,
+        start: vi.fn(),
+        openDetails: vi.fn(),
+        closeDetails: vi.fn(),
+      }) as unknown as CodexVoiceShellState;
+
+    expect(renderToStaticMarkup(<CodexVoiceMobileDock voice={voiceFor()} />)).toBe("");
+
+    const withStartProblem = renderToStaticMarkup(
+      <CodexVoiceMobileDock
+        voice={voiceFor(
+          {},
+          {
+            status: {
+              generation: null,
+              preparing: [],
+              queued: [],
+              working: [],
+              history_write_failed: false,
+              start_problem: { code: "start_failed" },
+              owner_busy: false,
+            },
+          },
+        )}
+      />,
+    );
+    expect(withStartProblem).toContain("layout:codexVoiceAttention");
+
+    const withPermission = renderToStaticMarkup(
+      <CodexVoiceMobileDock
+        voice={voiceFor({
+          analyst: {
+            generation: "a1",
+            tui_ready: false,
+            phase: "needs_attention",
+            last_result: "",
+            warning: "",
+            structured: true,
+            permissions: [{ request_id: "p1", kind: "permission", title: "Approve" }],
+          },
+        })}
+      />,
+    );
+    expect(withPermission).toContain("layout:codexVoiceAttention");
+
+    unattended.enabled = true;
+    try {
+      const withUnavailableRuntime = renderToStaticMarkup(
+        <CodexVoiceMobileDock
+          voice={voiceFor({
+            readiness: { ...controller().readiness!, analyst_runtime_available: false },
+          })}
+        />,
+      );
+      expect(withUnavailableRuntime).toContain(
+        "modals:chet.unattendedOn · layout:codexVoiceAttention",
+      );
+    } finally {
+      unattended.enabled = false;
+    }
   });
 });

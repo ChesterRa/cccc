@@ -36,7 +36,10 @@ import { ConnectSidebar } from "../../features/connect/ConnectSidebar";
 import type { ConnectWorkbench } from "../../features/connect/useConnectWorkbench";
 
 import { useVisiblePendingSummary } from "../../features/pendingReplies/useVisiblePendingSummary";
-import { aggregatePendingIndicator } from "../../features/pendingReplies/indicator";
+import {
+  aggregatePendingIndicator,
+  pendingIndicatorSummaryLabel,
+} from "../../features/pendingReplies/indicator";
 import { PendingIndicatorText } from "../../features/pendingReplies/PendingIndicator";
 
 export interface GroupSidebarProps {
@@ -435,7 +438,7 @@ export function GroupSidebar({
               onClick={onToggleCollapse}
               label={
                 totalPending
-                  ? `${t("expandSidebar")} · ${t("pendingRepliesIndicator", { value: totalPending.text })}`
+                  ? `${t("expandSidebar")} · ${pendingIndicatorSummaryLabel(t, totalPending)}`
                   : t("expandSidebar")
               }
             >

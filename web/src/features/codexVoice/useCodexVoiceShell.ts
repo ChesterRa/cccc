@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useGroupStore, useUIStore } from "../../stores";
 import type { ChetGroupContext } from "../../services/api/chet";
 import { useChetConversation } from "../chet/useChetConversation";
@@ -38,6 +38,25 @@ export function useCodexVoiceShell(enabled: boolean) {
     // The first send can start the shared Analyst; read it so its status shows.
     onRegistered: () => void controller.refresh(false),
   });
+  // When Chet is started or stopped in the background (e.g., unattended mode), notice on each
+  // confirmed `/api/v1/chet/status` tick without adding a new poll timer. Transient refresh
+  // failures leave `controller.analyst?.generation` mismatched so the next status tick retries.
+  const syncRefreshInFlightRef = useRef(false);
+  const chetStatus = chet.status;
+  const chetStatusSeq = chet.appliedStatusSeq;
+  const controllerOwned = controller.owned;
+  const analystGeneration = controller.analyst?.generation ?? null;
+  const refreshController = controller.refresh;
+  useEffect(() => {
+    if (!enabled || controllerOwned || !chetStatus || syncRefreshInFlightRef.current) return;
+    const reportedGeneration = chetStatus.generation;
+    if (reportedGeneration === analystGeneration) return;
+    if (reportedGeneration === null && chetStatus.owner_busy) return;
+    syncRefreshInFlightRef.current = true;
+    void Promise.resolve(refreshController(false)).finally(() => {
+      syncRefreshInFlightRef.current = false;
+    });
+  }, [analystGeneration, chetStatus, chetStatusSeq, controllerOwned, enabled, refreshController]);
   return {
     controller,
     analystSettings,

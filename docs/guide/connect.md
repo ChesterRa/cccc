@@ -17,7 +17,10 @@ Linking from trusted localhost administration prepares the first administrator
 Access Token and signs that browser in automatically. Existing Tokens remain
 unchanged; remote first setup still requires the local bootstrap code. In
 **Settings → This instance → Account**, edit **Instance name** to identify the workstation. This
-is the same instance name shown on the account website. New device grants use
+is the same instance name shown on the account website, which lists each linked
+instance as a device. Those devices are CCCC instances, not the computers paired
+under [Connect sessions from another computer](local-sessions.md#connect-sessions-from-another-computer-lan-or-public-relay).
+New device grants use
 the machine hostname as an initial name when available; reconnecting does not
 overwrite an existing name. The editor identifies the instance and its address.
 The sidebar marks the current instance and nests each Group under its instance.

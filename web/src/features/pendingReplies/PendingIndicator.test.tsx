@@ -149,3 +149,63 @@ it("hides sidebar indicators in both layouts without changing the waiting view",
     host.remove();
   }
 });
+
+it("uses subdued badges and truthful labels for Chet-handled and unknown unattended items", async () => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  try {
+    await act(async () =>
+      root.render(
+        <PendingSummaryContext.Provider
+          value={{
+            summaries: {
+              gChet: {
+                state: "fresh",
+                pending: 2,
+                unattended: { state: "fresh", needsUser: 0, withChet: 2, unknown: 0 },
+              },
+              gUnknown: {
+                state: "fresh",
+                pending: 1,
+                unattended: { state: "unknown", needsUser: null, withChet: null, unknown: null },
+              },
+            },
+            refresh: () => {},
+          }}
+        >
+          <PendingReplyNavigationContext.Provider value={vi.fn()}>
+            <GroupSidebarItem
+              group={{ group_id: "gChet", title: "Queued" } as GroupMeta}
+              isActive={false}
+              isCollapsed={true}
+              onSelect={vi.fn()}
+            />
+            <GroupSidebarItem
+              group={{ group_id: "gUnknown", title: "Uncertain" } as GroupMeta}
+              isActive={false}
+              isCollapsed={false}
+              onSelect={vi.fn()}
+            />
+          </PendingReplyNavigationContext.Provider>
+        </PendingSummaryContext.Provider>,
+      ),
+    );
+    const chetBadge = host.querySelector('[data-pending-tone="chet"]')!;
+    expect(chetBadge.textContent).toBe("2");
+    expect(chetBadge.className).not.toContain("bg-[var(--color-accent-primary)]");
+    const collapsedRow = host.querySelector<HTMLButtonElement>('button[aria-label^="Queued · "]')!;
+    expect(collapsedRow.getAttribute("aria-label")).toMatch(
+      /(pendingRepliesWithChet|Chet handling: 2)/,
+    );
+    expect(collapsedRow.getAttribute("aria-label")).not.toContain("Waiting for your reply");
+
+    const unknownBadge = host.querySelector('[data-pending-tone="unknown"]')!;
+    expect(unknownBadge.textContent).toBe("?");
+    expect(unknownBadge.className).not.toContain("bg-[var(--color-accent-primary)]");
+  } finally {
+    await act(async () => root.unmount());
+    host.remove();
+  }
+});

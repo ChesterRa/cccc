@@ -700,6 +700,7 @@ export function useChetConversation({
     loadingOlder,
     loadOlder,
     status,
+    appliedStatusSeq,
     draft,
     storageAvailable,
     setText,

@@ -12,6 +12,7 @@ export function chetConversationStub(overrides: Partial<ChetConversation> = {}):
     loadingOlder: false,
     loadOlder: vi.fn(async () => {}),
     status: null,
+    appliedStatusSeq: 0,
     draft: "",
     storageAvailable: true,
     setText: vi.fn(),

@@ -108,13 +108,21 @@ impl CodexVoiceSessions {
             &previous_environment,
         )?;
         let Some(previous) = state.analyst.clone() else {
-            if candidate_runtime.runtime != cccc_contracts::ActorRuntime::Claude {
-                // Only clear `claude_workspace_untrusted` immediately when Chet leaves Claude.
-                // Unrelated Claude tweaks keep the warning until a real start succeeds.
-                self.chet_start_problem
-                    .lock()
-                    .unwrap_or_else(|error| error.into_inner())
-                    .take();
+            // While Chet is stopped, clear any prior start problem whenever the
+            // saved configuration changes, except keep `claude_workspace_untrusted`
+            // until Chet leaves Claude (unrelated Claude tweaks do not resolve trust).
+            let mut slot = self
+                .chet_start_problem
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            let keep_untrusted = candidate_runtime.runtime == cccc_contracts::ActorRuntime::Claude
+                && slot
+                    .as_ref()
+                    .and_then(|problem| problem.get("code"))
+                    .and_then(serde_json::Value::as_str)
+                    == Some("claude_workspace_untrusted");
+            if !keep_untrusted {
+                slot.take();
             }
             return Ok(AnalystSettingsOutcome {
                 analyst: None,
@@ -372,9 +380,25 @@ mod tests {
             ..Default::default()
         };
         sessions
-            .apply_analyst_settings(&home, codex, BTreeMap::new(), vec![], false, false)
+            .apply_analyst_settings(&home, codex.clone(), BTreeMap::new(), vec![], false, false)
             .await
             .expect("switch runtime");
+        assert!(sessions.chet_status().await["start_problem"].is_null());
+
+        // For non-trust problems (e.g. start_failed / start_timeout / hermes_setup_required),
+        // any meaningful settings change while stopped clears the warning immediately.
+        *sessions
+            .chet_start_problem
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = Some(json!({"code": "start_failed"}));
+        let codex_tweaked = AgentRuntimeSettings {
+            command: vec!["codex".into(), "--model".into(), "o3".into()],
+            ..codex
+        };
+        sessions
+            .apply_analyst_settings(&home, codex_tweaked, BTreeMap::new(), vec![], false, false)
+            .await
+            .expect("update codex settings");
         assert!(sessions.chet_status().await["start_problem"].is_null());
     }
 }

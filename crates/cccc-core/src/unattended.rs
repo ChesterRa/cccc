@@ -20,6 +20,19 @@ pub fn load(home: &HomeLayout) -> std::io::Result<UnattendedSettings> {
 /// already addressed to Chet. A message from an earlier period of the mode
 /// does not qualify after the mode is turned off and on again.
 pub fn copies(settings: &UnattendedSettings, group: &GroupDoc, event: &Event) -> bool {
+    event.group_id == group.group_id
+        && copies_fact(settings, group, &event.ts, &event.by, copy_shape(event))
+}
+
+/// Same eligibility rule as [`copies`], using pre-extracted event facts from
+/// an incremental projection for an event already verified to belong to `group`.
+pub fn copies_fact(
+    settings: &UnattendedSettings,
+    group: &GroupDoc,
+    ts: &str,
+    by: &str,
+    has_copy_shape: bool,
+) -> bool {
     let Some(since) = settings
         .since
         .as_deref()
@@ -28,10 +41,9 @@ pub fn copies(settings: &UnattendedSettings, group: &GroupDoc, event: &Event) ->
     else {
         return false;
     };
-    parse(&event.ts).is_some_and(|ts| ts >= since)
-        && copy_shape(event)
-        && event.group_id == group.group_id
-        && actors::find(group, &event.by).is_some_and(|actor| actor.internal_kind.is_none())
+    has_copy_shape
+        && parse(ts).is_some_and(|event_ts| event_ts >= since)
+        && actors::find(group, by).is_some_and(|actor| actor.internal_kind.is_none())
 }
 
 /// Whether this message has the form of a copy, whatever the mode and the

@@ -6837,7 +6837,11 @@ Count the user's open requests per Group.
 
 Args:
 ```ts
-{ by?: "user"; group_ids?: string[] } // omitted: every Group
+{
+  by?: "user"
+  group_ids?: string[]            // omitted: every Group
+  include_chet_breakdown?: boolean // admin/unbound user only; default false
+}
 ```
 
 Result:
@@ -6845,7 +6849,26 @@ Result:
 {
   as_of: string
   groups: (
-    | { group_id: string; state: "fresh"; pending: number; oldest_ts: string | null; revision: string; as_of: string }
+    | {
+        group_id: string
+        state: "fresh"
+        pending: number
+        oldest_ts: string | null
+        revision: string
+        as_of: string
+        chet_breakdown?:          // present only when include_chet_breakdown=true and unattended mode is enabled (or unreadable)
+          | {
+              state: "fresh"
+              needs_user: number
+              waiting: number
+              waiting_unregistered: number
+              dispatched_input_ids: string[]
+            }
+          | {
+              state: "unknown"
+              error: "unattended_unreadable" | "chet_history_unreadable"
+            }
+      }
     | { group_id: string; state: "unknown"; pending: null; error: "group_not_found" | "unreadable"; as_of: string }
   )[]
 }
@@ -6856,9 +6879,17 @@ incremental projection as `user_reply_requests`; polling reads only what was
 appended since the last query. `revision` changes whenever the Group's ledger
 sources change. A Group that cannot be read, including one with a damaged
 record, is `unknown`, never `pending: 0`.
-Callers other than the user are refused. The Web port passes the Groups the
-principal may open and refuses both reads, as well as the answer, in
-read-only (exhibit) mode.
+Callers other than the user are refused. Passing a non-boolean
+`include_chet_breakdown` fails with `invalid_args`; passing
+`include_chet_breakdown: true` with any Actor binding (`_cccc_*_binding`) is
+refused with `permission_denied`. When unattended mode is off, `chet_breakdown`
+is omitted and Chet history is not read. A `chet_breakdown` error (`unknown`)
+never degrades the outer Group `state` or `pending` count. The Web port passes
+the Groups the principal may open, requests `include_chet_breakdown` only for
+administrators, folds `dispatched_input_ids` against live in-memory Chet status
+into an `unattended` summary (`needs_user`, `with_chet`, `unknown`), always
+strips `chet_breakdown` before returning HTTP responses, and refuses both reads
+and answers in read-only (exhibit) mode.
 
 #### `message_deliver`
 

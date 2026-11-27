@@ -238,6 +238,64 @@ it("says which folder Claude must trust before Chet can start", () => {
   expect(host.textContent).toContain('chet.startUntrusted:{"workspace":"/home/u/.cccc/chet"}');
 });
 
+it.each([
+  ["hermes_setup_required", "chet.startHermesSetup"],
+  ["start_timeout", "chet.startTimeout"],
+  ["start_failed", "chet.startFailed"],
+] as const)("explains recognized start problem %s in the conversation pane", (code, key) => {
+  const chet = {
+    items: [],
+    status: {
+      generation: null,
+      preparing: [],
+      queued: [],
+      working: [],
+      history_write_failed: false,
+      start_problem: { code },
+      owner_busy: false,
+    },
+    appliedStatusSeq: 1,
+    historyError: null,
+    loaded: true,
+    hasOlder: false,
+    loadingOlder: false,
+    loadOlder: vi.fn(),
+    skipped: 0,
+    problems: new Map(),
+    storageAvailable: true,
+    resentIds: new Set(),
+    sendAgain: vi.fn(),
+    retry: vi.fn(),
+    putBack: vi.fn(),
+    dismiss: vi.fn(),
+    draft: "",
+    composerProblem: null,
+    duplicateRisk: false,
+    setText: vi.fn(),
+    send: vi.fn(),
+    clearComposerProblem: vi.fn(),
+  } as unknown as ChetConversation;
+  const controller = {
+    conversation: [],
+    call: null,
+    analystWorking: false,
+  } as unknown as CodexVoiceSessionController;
+  act(() =>
+    root.render(
+      <ChetConversationPane
+        controller={controller}
+        chet={chet}
+        isDark={false}
+        visible
+        analystExpanded={false}
+        onToggleAnalyst={vi.fn()}
+        onReviewRecovery={vi.fn()}
+      />,
+    ),
+  );
+  expect(host.textContent).toContain(key);
+});
+
 function timeline(
   items: ChetTimelineItem[],
   extra: Partial<ChetRequestActions> = {},

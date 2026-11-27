@@ -645,6 +645,7 @@
   "videoPlaybackUnavailable": "This browser can't play this video. Download it to watch.",
   "playAudio": "Play {{name}}",
   "pauseAudio": "Pause {{name}}",
+  "seekAudio": "Seek {{name}}",
   "audioPlaybackUnavailable": "Can't play {{name}}. Try again or download it.",
   "imagePreviewUnavailable": "Image preview unavailable",
   "downloadOriginalImage": "Open the original image",

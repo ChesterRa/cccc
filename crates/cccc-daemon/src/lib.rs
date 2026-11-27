@@ -52,7 +52,7 @@ pub fn live_web_binding(home: &cccc_core::HomeLayout) -> Option<(String, u16)> {
 /// identity and may change when the upstream private Voice protocol changes.
 pub mod experimental_codex_voice {
     pub use crate::ops::codex_voice_analyst::{
-        LaunchConfig, TurnReceipt, untrusted_claude_workspace,
+        LaunchConfig, TurnReceipt, hermes_setup_required, untrusted_claude_workspace,
     };
     pub use crate::ops::codex_voice_controller::{
         CodexVoiceAnalyst, CodexVoiceCall, DEFAULT_REALTIME_VOICE, FinalProjection,

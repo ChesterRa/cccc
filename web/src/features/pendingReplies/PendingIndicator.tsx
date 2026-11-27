@@ -2,24 +2,29 @@ import { useContext } from "react";
 import { useVisiblePendingSummary } from "./useVisiblePendingSummary";
 import { useTranslation } from "react-i18next";
 import { PendingReplyNavigationContext } from "./context";
-import { pendingIndicator, type PendingIndicator as Indicator } from "./indicator";
+import {
+  pendingIndicator,
+  pendingIndicatorActionLabel,
+  pendingIndicatorStatusLabel,
+  pendingIndicatorTone,
+  type PendingIndicator as Indicator,
+} from "./indicator";
 
 export function PendingIndicatorText({ indicator }: { indicator: Indicator }) {
   const { t } = useTranslation("layout");
-  const label =
-    indicator.state === "fresh"
-      ? t("pendingRepliesCount", { value: indicator.text })
-      : indicator.state === "stale"
-        ? t("pendingRepliesStale")
-        : indicator.daemonUnsupported
-          ? t("pendingRepliesDaemonUnsupported")
-          : t("pendingRepliesUnknown");
+  const tone = pendingIndicatorTone(indicator);
+  const label = pendingIndicatorStatusLabel(t, indicator);
+  const badgeClass =
+    tone === "attention"
+      ? "inline-flex min-w-[20px] justify-center rounded-full bg-[var(--color-accent-primary)] px-1.5 py-0.5 text-[10px] font-semibold leading-4 text-[var(--color-bg-primary)]"
+      : "inline-flex min-w-[20px] justify-center rounded-full border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-1.5 py-0.5 text-[10px] font-semibold leading-4 text-[var(--color-text-secondary)]";
   return (
     <span
       title={label}
       aria-label={label}
-      className="inline-flex min-w-[20px] justify-center rounded-full bg-[var(--color-accent-primary)] px-1.5 py-0.5 text-[10px] font-semibold leading-4 text-[var(--color-bg-primary)]"
+      className={badgeClass}
       data-pending-state={indicator.state}
+      data-pending-tone={tone}
     >
       {indicator.text}
     </span>
@@ -48,14 +53,7 @@ export function GroupPendingIndicator({
         <PendingIndicatorText indicator={indicator} />
       </span>
     );
-  const actionLabel =
-    indicator.state === "fresh"
-      ? t("openPendingRepliesCount", { value: indicator.text })
-      : indicator.state === "stale"
-        ? t("openPendingRepliesStale")
-        : indicator.daemonUnsupported
-          ? t("openPendingRepliesDaemonUnsupported")
-          : t("openPendingRepliesUnknown");
+  const actionLabel = pendingIndicatorActionLabel(t, indicator);
   const label = `${groupName || groupId} · ${actionLabel}`;
   return (
     <button

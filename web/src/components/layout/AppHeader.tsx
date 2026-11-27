@@ -12,7 +12,10 @@ import { useGroupMenu } from "./useGroupMenu";
 import type { GroupControl } from "../../utils/groupControls";
 import { AppSettingsMenu } from "./AppSettingsMenu";
 import { useVisiblePendingSummary } from "../../features/pendingReplies/useVisiblePendingSummary";
-import { aggregatePendingIndicator } from "../../features/pendingReplies/indicator";
+import {
+  aggregatePendingIndicator,
+  pendingIndicatorSummaryLabel,
+} from "../../features/pendingReplies/indicator";
 import { PendingIndicatorText } from "../../features/pendingReplies/PendingIndicator";
 
 export interface AppHeaderProps {
@@ -176,7 +179,7 @@ export function AppHeader({
             data-sidebar-toggle="true"
             label={
               totalPending
-                ? `${t("openSidebar")} · ${t("pendingRepliesIndicator", { value: totalPending.text })}`
+                ? `${t("openSidebar")} · ${pendingIndicatorSummaryLabel(t, totalPending)}`
                 : t("openSidebar")
             }
           >

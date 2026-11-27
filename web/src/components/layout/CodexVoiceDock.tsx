@@ -4,6 +4,7 @@ import {
   codexVoiceCallStatus,
   codexVoiceDisplayIdentity,
 } from "../../features/codexVoice/codexVoiceControllerText";
+import { codexVoiceNeedsAttention } from "../../features/codexVoice/codexVoiceAttention";
 import { classNames } from "../../utils/classNames";
 import { ChetHead } from "../../features/chet/ChetHead";
 import { AlertIcon, StopIcon, VoiceWaveformIcon } from "../Icons";
@@ -26,17 +27,7 @@ export function CodexVoiceDock({
   const providerLabel = t(`modals:codexVoiceProviders.${identity.provider}`);
   const callStatus = codexVoiceCallStatus(controller);
   const unattended = useUnattendedStore((state) => state.unattended?.enabled === true);
-  const attention = Boolean(
-    controller.error ||
-    controller.refreshError ||
-    controller.playbackBlocked ||
-    controller.analyst?.warning ||
-    controller.analyst?.phase === "needs_attention" ||
-    (controller.analyst?.permissions?.length ?? 0) > 0 ||
-    chetAttention ||
-    // Unattended copies wait for a Chet that cannot run; the panel says why.
-    (unattended && controller.readiness?.analyst_runtime_available === false),
-  );
+  const attention = codexVoiceNeedsAttention({ controller, chetAttention, unattended });
   const phaseLabel = t(`modals:${callStatus.labelKey}`);
   const working = chetWorking || controller.analystWorking;
   const refreshUnattended = useUnattendedStore((state) => state.refresh);

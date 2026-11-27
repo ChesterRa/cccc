@@ -1720,6 +1720,16 @@
   color: var(--lcd-on-wait);
 }
 
+/* Unattended replies currently with Chet, or whose breakdown is unconfirmed with zero
+   confirmed user-decision items, stay subdued rather than taking the warning fill. */
+:root[data-ui-style="lcd"]
+  [data-lcd-scope]
+  [data-pending-state]:is([data-pending-tone="chet"], [data-pending-tone="unknown"]) {
+  border: 1px solid var(--lcd-rule-strong);
+  background: var(--lcd-panel);
+  color: var(--lcd-dim);
+}
+
 /* No round corners in the LCD grid. The radius tokens are zero; this also reaches
    literal radii (`rounded`, `rounded-full`) and product classes that hard-code theirs.
    A busy spinner keeps its ring: it is still while animations are off, and a square

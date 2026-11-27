@@ -680,8 +680,11 @@ async fn chet_http_reports_a_known_pre_admission_failure() {
         .request("GET", "/api/v1/chet/status", json!(null))
         .await;
     assert_eq!(status, axum::http::StatusCode::OK);
-    // A cause CCCC does not recognize by type shows no provider text at all.
-    assert!(live["result"]["start_problem"].is_null());
+    // A cause CCCC does not recognize by type shows only the generic code, never provider text.
+    assert_eq!(
+        live["result"]["start_problem"],
+        json!({"code":"start_failed"})
+    );
     assert!(!live.to_string().contains("devin"));
     let (_, retry) = fixture.request("POST", "/api/v1/chet/inputs", body).await;
     assert_eq!(retry["result"]["registration"], "existing");
