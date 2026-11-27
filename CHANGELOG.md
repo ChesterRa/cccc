@@ -6,6 +6,80 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+## [0.4.61]
+
+### Added
+
+- **Sessions on another computer** (experimental): pair a computer from **Add Agent → Add
+  existing sessions → Pair a computer** and run the copied `cccc sessions node connect` command
+  on it, with the one-time ticket. Its Codex, Claude Code, Pi and OpenCode sessions registered
+  with CCCC on that computer appear in the same list under that computer, keep their own application, account, files and approvals, and
+  exchange text with the Group they were added to. Direct pairing uses UDP; relay fallback is off by default and needs
+  Remote Access with an HTTPS public address. **Settings → This instance → Session access** lists paired
+  computers, with revoke and stop receiving. Both computers need v0.4.61. The hub's hello reports
+  the runtimes it supports, and remote Pi and OpenCode Group calls pass `hub_id`.
+- When a member accepts a **Send + Reply** handoff from another member and does not answer in
+  time, the sender also gets one reminder listing the handoffs that became overdue in that check.
+- Chet's entry asks for attention when Chet waits for a permission or its Claude Code runtime
+  waits for workspace trust.
+- Direct Group connections can create permanent, reusable invitations; each requesting Group
+  still needs approval.
+- Read-only terminal windows follow the controlling window's size when the session reports size
+  updates, and smaller windows can scroll to see the rest.
+
+### Changed
+
+- Adding running sessions moves from the sidebar's **Connect sessions** entry into a Group's
+  **Add Agent → Add existing sessions** and **New → Create from existing sessions**. Removing
+  and restoring sessions and managing paired computers move into **Settings → This instance → Session access**,
+  where sessions can also be checked again.
+- Each row of the existing-session list shows the application, title and path. A session that
+  cannot receive is marked **Unavailable to receive**, with the reason when CCCC can confirm it.
+  Sessions never checked no longer carry a diagnostic note.
+- A native foreman reading a member's terminal reads the member it asked for.
+- Common delivery and shutdown errors show guidance in English, Chinese and Japanese with the
+  original error code. **Unattended on** has its own row in Chet's entry. The Group list shows
+  the status symbol at the end of each row.
+- `cccc setup` without `--runtime` only reports how each runtime connects and what explicit setup
+  would change; it writes nothing.
+- Members that run `copilot` directly get CCCC's MCP server as a launch option, so CCCC no longer
+  checks or repairs the `cccc` entry in the user's Copilot configuration. A wrapper command still
+  needs a working MCP entry of its own.
+- Native terminal members that run `agy` directly turn off Antigravity's feedback survey for that
+  session only, unless their command already passes `--settings`. CCCC no longer writes this
+  preference into the user's Antigravity settings.
+- The FAQ explains how to remove the MCP entries CCCC wrote.
+- The Web server compresses responses with gzip instead of Brotli. In Linux tests, loading the
+  same Web UI files left much less extra memory in the daemon, with about the same amount of
+  response data.
+- In the expanded sidebar, Group list rows keep the status symbol, pending-reply count and ⋮ menu in fixed columns; running
+  Groups show a monochrome triangle, the connection count moves into the ⋮ menu, and the sidebar
+  can be dragged down to 200 px. **This computer** and **Other computers** in the existing-session
+  list switch between the two lists.
+- Settings hints say **This instance** where they meant this instance's settings.
+- Linux CI checks native sessions with Codex 0.172.0, Claude Code 2.1.332 and Kilo 7.8.32.
+- Building from source needs Rust 1.91 or newer.
+
+### Fixed
+
+- On a fresh home where Antigravity's first-run setup is not complete, a new member's first
+  messages wait until setup is finished and the chat input box is visible, instead of being typed
+  into the setup screens (#237).
+- Choosing the wrong file type for a branding image, or a file that is not a ZIP or has no Group
+  copy manifest, names the accepted formats or the **Export Group** button in English, Chinese and Japanese.
+- Presentation files, avatars, branding images, Group copy packages and chat attachments over their
+  size limit say they are too large instead of showing a parse error.
+- A session bound to a member that passes another member's ID to `cccc_headless` gets an error
+  for reads and writes instead of silently using its own state.
+- On Linux and on Apple Silicon Macs running the native arm64 build, CCCC retries reopening an
+  agent window within a ten-second window if the shared browser refuses the connection or a new
+  window after its last window closes. Verified on Linux.
+- Only reminders CCCC itself sent count as reminders.
+- An expired Pi interaction no longer shows in the control panel or blocks new ones.
+- A preview shortened for a native notification ends with "…".
+- Developer diagnostics and log loading follow the saved developer setting.
+- On Windows, each daemon readiness check during startup is bounded by the startup deadline.
+
 ## [0.4.60]
 
 ### Added

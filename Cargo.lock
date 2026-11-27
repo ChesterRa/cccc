@@ -640,7 +640,7 @@ dependencies = [
 
 [[package]]
 name = "cccc"
-version = "0.4.60"
+version = "0.4.61"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -680,11 +680,11 @@ dependencies = [
 
 [[package]]
 name = "cccc-linux-memory"
-version = "0.4.60"
+version = "0.4.61"
 
 [[package]]
 name = "cccc-pair-client"
-version = "0.4.60"
+version = "0.4.61"
 dependencies = [
  "cccc-pair-contracts",
  "cccc-pair-core",
@@ -696,7 +696,7 @@ dependencies = [
 
 [[package]]
 name = "cccc-pair-contracts"
-version = "0.4.60"
+version = "0.4.61"
 dependencies = [
  "chrono",
  "serde",
@@ -706,7 +706,7 @@ dependencies = [
 
 [[package]]
 name = "cccc-pair-core"
-version = "0.4.60"
+version = "0.4.61"
 dependencies = [
  "aws-lc-rs",
  "base64 0.22.1",
@@ -743,7 +743,7 @@ dependencies = [
 
 [[package]]
 name = "cccc-pair-daemon"
-version = "0.4.60"
+version = "0.4.61"
 dependencies = [
  "anyhow",
  "axum",
@@ -791,7 +791,7 @@ dependencies = [
 
 [[package]]
 name = "cccc-pair-mcp"
-version = "0.4.60"
+version = "0.4.61"
 dependencies = [
  "anyhow",
  "axum",
@@ -818,7 +818,7 @@ dependencies = [
 
 [[package]]
 name = "cccc-pair-notebooklm"
-version = "0.4.60"
+version = "0.4.61"
 dependencies = [
  "cookie",
  "mime_guess",
@@ -831,7 +831,7 @@ dependencies = [
 
 [[package]]
 name = "cccc-pair-runtime"
-version = "0.4.60"
+version = "0.4.61"
 dependencies = [
  "cccc-pair-contracts",
  "cccc-windows-process",
@@ -856,7 +856,7 @@ dependencies = [
 
 [[package]]
 name = "cccc-pair-session-node"
-version = "0.4.60"
+version = "0.4.61"
 dependencies = [
  "anyhow",
  "axum",
@@ -906,7 +906,7 @@ dependencies = [
 
 [[package]]
 name = "cccc-pair-web"
-version = "0.4.60"
+version = "0.4.61"
 dependencies = [
  "aes",
  "anyhow",
@@ -968,7 +968,7 @@ dependencies = [
 
 [[package]]
 name = "cccc-system-proxy"
-version = "0.4.60"
+version = "0.4.61"
 dependencies = [
  "core-foundation 0.10.1",
  "windows-sys 0.61.2",
@@ -976,14 +976,14 @@ dependencies = [
 
 [[package]]
 name = "cccc-windows-console"
-version = "0.4.60"
+version = "0.4.61"
 dependencies = [
  "windows-sys 0.61.2",
 ]
 
 [[package]]
 name = "cccc-windows-process"
-version = "0.4.60"
+version = "0.4.61"
 dependencies = [
  "windows-sys 0.61.2",
 ]

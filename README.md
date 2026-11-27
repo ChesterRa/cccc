@@ -47,17 +47,15 @@ When several coding agents share work, you need to know who owns a task, whether
 - **CCCC Connect** links Groups across machines and teams; each instance keeps its own state.
 - **Local-first.** Runtime state stays in `CCCC_HOME` (default `~/.cccc/`), outside your repository.
 
-## What's new in 0.4.60
+## What's new in 0.4.61
 
-- **Let Chet act for you while you are away (Experimental).** Turn on **Unattended** in Chet's title bar (off by default) and each new message a member on this instance sends you with Send or Send + Reply also goes to Chet, which can reply, answer question cards for you, or flag a risk; it is instructed to leave to you what only you can do. You still get every message; a card Chet answered says so, and you can correct it by replying.
-- **Choose which messages notify you.** In **Settings > Notifications**, each browser can notify you for **All messages to me** or **Only when a reply is requested**, so a phone can stay quiet until someone needs your answer.
-- **See where a message went.** When CCCC has the evidence, the recipient list says whether a message was written to a member's terminal or accepted by its runtime, and it can show why a message is still waiting. For a plain message, open it from **Show recipient status** in the message's action menu.
-- **Recover missed deliveries.** Messages not yet handed to the runtime, or known not to have been submitted, during a short disconnection are delivered when the member is back. A partial terminal write stays unconfirmed and is not replayed automatically.
-- **One unresponsive session owner no longer holds up the others.** While CCCC is running, if one session owner stops responding, new messages can still reach running members whose healthy owner CCCC can verify. Those members can also be stopped individually.
+- **Add sessions from another computer (Experimental).** In a Group's **Add Agent → Add existing sessions**, choose **Pair a computer**, run the copied command on the other computer and paste the one-time ticket. Its Codex, Claude Code, Pi and OpenCode sessions registered with CCCC on that computer then appear in the same list; each keeps its own application, account, files and approvals. Only text is carried for now. Tested on Linux with two isolated CCCC homes on one machine; two physical computers, cross-network relay, macOS and Windows are not verified yet.
+- **Existing sessions moved into Add Agent and Settings.** Add running sessions from **Add Agent → Add existing sessions** or **New → Create from existing sessions**; manage sessions and paired computers in **Settings → This instance → Session access**. Each row shows the application, title and path. A session that cannot receive is marked, with the reason when CCCC can confirm it.
+- **Hear about handoffs that get no reply.** When a member accepts a **Send + Reply** handoff but does not answer in time, the member who sent it gets one reminder as well.
 
-**Upgrade notes.** On Linux and native Apple Silicon Macs, a compatible update from 0.4.59 can keep agents running; Windows updates restart agents. A member kept running from 0.4.59 can still show **Sent to runtime** until it is restarted. Managed and DeepSeek members kept running from 0.4.59 need a restart of that member for the delivery and individual-stop fix above. If a session owner is already unresponsive when CCCC starts, startup can still fail; see the release notes for recovery.
+**Upgrade notes.** Your Groups, members, settings, messages, tasks and Group connections are kept. The sidebar's **Connect sessions** entry is gone; use the entries above. Sessions on another computer need 0.4.61 on both computers. Without `--runtime`, `cccc setup` only reports how each runtime connects and what explicit setup would change. Building from source needs Rust 1.91 or newer.
 
-Details: [0.4.60 release notes](https://chesterra.github.io/cccc/release/v0.4.60_release_notes).
+Details: [0.4.61 release notes](https://chesterra.github.io/cccc/release/v0.4.61_release_notes).
 
 ## Quick start
 
