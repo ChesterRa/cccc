@@ -72,6 +72,7 @@ export function ChatFilterTabs({
       ref={tabsRef}
       className="flex h-[44px] md:h-9 min-w-0 flex-1 md:flex-initial items-stretch gap-3 overflow-x-auto scrollbar-hide"
       style={fadeMask(more)}
+      data-chat-filters
       data-more-before={more.before || undefined}
       data-more-after={more.after || undefined}
     >

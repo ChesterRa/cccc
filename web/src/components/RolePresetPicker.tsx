@@ -1,18 +1,17 @@
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { classNames } from "../utils/classNames";
 import {
   BUILTIN_ROLE_PRESETS,
   getRolePresetApplyState,
   getRolePresetById,
 } from "../utils/rolePresets";
-import { Button } from "./ui/button";
 import { GroupCombobox } from "./GroupCombobox";
 
 type RolePresetPickerProps = {
   draftValue: string;
   disabled?: boolean;
-  showDescription?: boolean;
+  /** The label of the field the chosen preset fills in; it shares one row with the picker. */
+  label: ReactNode;
   onChangeDraft: (value: string) => void;
 };
 
@@ -21,7 +20,7 @@ const NO_PRESET_VALUE = "__no_actor_preset__";
 export function RolePresetPicker({
   draftValue,
   disabled = false,
-  showDescription = true,
+  label,
   onChangeDraft,
 }: RolePresetPickerProps) {
   const { t } = useTranslation("actors");
@@ -43,7 +42,6 @@ export function RolePresetPicker({
     };
   };
 
-  const selectedPreset = localizedPreset(selectedPresetId);
   const normalizedDraftValue = String(draftValue || "").trim();
   const visibleNotice =
     notice && notice.presetId === selectedPresetId && notice.draftValue === normalizedDraftValue
@@ -52,38 +50,32 @@ export function RolePresetPicker({
         })
       : "";
 
-  const applyPreset = () => {
-    if (!selectedPreset || disabled) return;
-    const applyState = getRolePresetApplyState(draftValue, selectedPreset.content);
-    const nextDraftValue = String(selectedPreset.content || "").trim();
+  const choosePreset = (presetId: string) => {
+    const preset = localizedPreset(presetId);
+    if (!preset || disabled) return;
+    const applyState = getRolePresetApplyState(draftValue, preset.content);
+    const nextDraftValue = String(preset.content || "").trim();
     if (applyState === "no_change") {
-      setNotice({ presetId: selectedPreset.id, kind: "no_change", draftValue: nextDraftValue });
+      setSelectedPresetId(preset.id);
+      setNotice({ presetId: preset.id, kind: "no_change", draftValue: nextDraftValue });
       return;
     }
+    // Declining keeps both the draft and the previous choice: nothing was filled in.
     if (
       applyState === "confirm_replace" &&
-      !window.confirm(t("rolePresetReplaceConfirm", { name: selectedPreset.name }))
+      !window.confirm(t("rolePresetReplaceConfirm", { name: preset.name }))
     ) {
       return;
     }
-    onChangeDraft(selectedPreset.content);
-    setNotice({ presetId: selectedPreset.id, kind: "applied", draftValue: nextDraftValue });
+    setSelectedPresetId(preset.id);
+    onChangeDraft(preset.content);
+    setNotice({ presetId: preset.id, kind: "applied", draftValue: nextDraftValue });
   };
 
   return (
     <div className="space-y-2">
-      <div className="min-w-0">
-        <div className="text-xs font-semibold text-[var(--color-text-primary)]">
-          {t("rolePreset")}
-        </div>
-        {showDescription ? (
-          <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">
-            {t("rolePresetHint")}
-          </div>
-        ) : null}
-      </div>
-
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+      <div className="flex min-w-0 flex-wrap items-end justify-between gap-x-3 gap-y-2">
+        <div className="min-w-0">{label}</div>
         <GroupCombobox
           items={[
             {
@@ -109,39 +101,21 @@ export function RolePresetPicker({
               setNotice(null);
               return;
             }
-            setSelectedPresetId(nextValue);
-            setNotice(null);
+            choosePreset(nextValue);
           }}
-          placeholder={t("rolePresetSelectPlaceholder")}
-          searchPlaceholder={t("rolePresetSelectPlaceholder")}
+          placeholder={t("rolePresetFill")}
+          searchPlaceholder={t("rolePresetFill")}
           emptyText={t("common:noResults", { defaultValue: "No matching results" })}
           ariaLabel={t("rolePreset")}
-          triggerClassName="glass-input w-full flex-1 min-h-[44px] px-3 py-2.5 text-sm"
+          triggerClassName="glass-input min-h-[36px] w-full px-3 py-1.5 text-xs sm:w-56"
           contentClassName="p-0"
           disabled={disabled}
           searchable={false}
-          matchTriggerWidth
         />
-
-        <Button
-          type="button"
-          className={classNames("sm:shrink-0", !selectedPreset && "text-[var(--color-text-muted)]")}
-          variant={selectedPreset && !disabled ? "default" : "secondary"}
-          onClick={applyPreset}
-          disabled={!selectedPreset || disabled}
-        >
-          {t("applyPreset")}
-        </Button>
       </div>
 
-      {showDescription ? (
-        <div className="text-[10px] leading-5 text-[var(--color-text-muted)]">
-          {selectedPreset ? selectedPreset.summary : t("rolePresetSelectPrompt")}
-        </div>
-      ) : null}
-
       {visibleNotice ? (
-        <div className="rounded-xl border border-black/10 bg-[rgb(245,245,245)] px-3 py-2 text-xs text-[rgb(35,36,37)] dark:border-white/12 dark:bg-white/[0.08] dark:text-white">
+        <div role="status" className="text-xs text-[var(--color-text-secondary)]">
           {visibleNotice}
         </div>
       ) : null}

@@ -5,14 +5,17 @@
     <script>
       (() => {
         let stored = null;
+        let style = null;
         try {
           stored = localStorage.getItem("cccc-theme");
+          style = localStorage.getItem("cccc-ui-style-v2");
         } catch {
           // Storage can be unavailable in hardened or private browser contexts.
         }
         const automatic = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
         const theme = stored === "light" || stored === "dark" ? stored : automatic;
         document.documentElement.classList.add(theme);
+        document.documentElement.dataset.uiStyle = style === "preview" ? "preview" : "lcd";
       })();
     </script>
     <meta

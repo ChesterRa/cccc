@@ -146,6 +146,12 @@
   "secretsSection": "環境変数",
   "capabilitiesSection": "能力",
   "profileToolsSection": "ランタイムプロファイル",
+  "commandSection": "起動コマンド",
+  "advancedChanged": {
+    "command": "カスタムコマンド",
+    "environment": "環境変数 {{count}} 件",
+    "capabilities": "機能 {{count}} 件"
+  },
   "displayName": "表示名",
   "leaveEmptyForId": "空欄の場合はエージェント ID を表示名として使用します",
   "agentId": "エージェント ID",
@@ -263,6 +269,7 @@
   "rolePresetNone": "プリセットなし",
   "rolePresetNoneDescription": "プリセットの選択だけを解除し、現在のエージェントノートは残します。",
   "rolePresetSelectPlaceholder": "内蔵プリセットを選択",
+  "rolePresetFill": "プリセットから入力",
   "rolePresetSelectPrompt": "プリセットを選んでから、下の草稿へ適用します。",
   "applyPreset": "適用",
   "rolePresetCatalog": {
@@ -540,6 +547,7 @@
   "workingDirectoryEditHint": "保存は次回の起動設定のみを変更し、実行中のプロセスを再起動・移動しません。「グループに従う」は起動時のグループの現在のディレクトリを使用し、固定ディレクトリはこのエージェント専用です。リポジトリの変更時に元のセッションやコンテキストが引き継がれる保証はありません。",
   "workingDirectoryUnavailable": "このディレクトリは接続解除されています。別のディレクトリを選択してください。",
   "workingDirectoryAdd": "別のディレクトリを追加",
+  "workingDirectoryChange": "変更",
   "workingDirectoryPath": "CCCC ホスト上のディレクトリパス",
   "workingDirectoryBrowse": "パスを参照",
   "workingDirectoryUse": "追加して選択",

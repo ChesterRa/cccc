@@ -150,7 +150,10 @@ export function GroupSidebarItem({
         {/* Fixed slots, present on every row, keep the status, pending count and menu
             in the same columns whether or not a row has pending replies. The connection
             count is in the menu. */}
-        <div className="flex w-11 shrink-0 justify-end md:w-10 pointer-coarse:w-11">
+        <div
+          data-group-pending-slot
+          className="flex w-11 shrink-0 justify-end md:w-10 pointer-coarse:w-11"
+        >
           <GroupPendingIndicator groupId={gid} groupName={group.title || gid} />
         </div>
         <div className="flex w-8 shrink-0 justify-end pointer-coarse:w-[44px]">

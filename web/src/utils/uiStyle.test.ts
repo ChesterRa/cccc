@@ -18,6 +18,7 @@ async function loadStore() {
 beforeEach(() => {
   window.localStorage.clear();
   const root = document.documentElement;
+  delete root.dataset.uiStyle;
   delete root.dataset.lcdBody;
   delete root.dataset.lcdWidth;
   delete root.dataset.lcdMotion;
@@ -30,8 +31,11 @@ afterEach(() => {
 describe("LCD appearance preferences", () => {
   it("accepts only known values and falls back to the defaults", () => {
     expect(normalizeUiStylePrefs({ lcdBody: "pixel", lcdWidth: "full", lcdMotion: "off" })).toEqual(
-      { lcdBody: "pixel", lcdWidth: "full", lcdMotion: "off" },
+      { style: "lcd", lcdBody: "pixel", lcdWidth: "full", lcdMotion: "off" },
     );
+    expect(normalizeUiStylePrefs({ style: "preview" }).style).toBe("preview");
+    // The classic style was removed: a browser that stored it returns to the pixel default.
+    expect(normalizeUiStylePrefs({ style: "classic" }).style).toBe("lcd");
     expect(normalizeUiStylePrefs({ lcdWidth: "wide" }).lcdWidth).toBe("wide");
     expect(normalizeUiStylePrefs({ lcdBody: "mono" }).lcdBody).toBe("mono");
     expect(normalizeUiStylePrefs({ lcdBody: "proportional" }).lcdBody).toBe("proportional");
@@ -46,6 +50,7 @@ describe("LCD appearance preferences", () => {
     window.localStorage.setItem(LCD_MOTION_STORAGE_KEY, "off");
     const store = await loadStore();
     expect(store.getUiStylePrefs()).toEqual({
+      style: "lcd",
       lcdBody: "proportional",
       lcdWidth: "full",
       lcdMotion: "off",

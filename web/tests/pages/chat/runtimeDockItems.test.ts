@@ -7,7 +7,7 @@ import {
   buildRuntimeDockItems,
   type RuntimeDockItem,
 } from "../../../src/pages/chat/runtimeDockItems";
-import { getRuntimeRingTone } from "../../../src/pages/chat/runtimeDockRingTone";
+import { getRuntimeRingTone } from "../../../src/utils/runtimeRingTone";
 import type { Actor, HeadlessPreviewBlock, StreamingActivity } from "../../../src/types";
 
 describe("runtime dock ticker projections", () => {

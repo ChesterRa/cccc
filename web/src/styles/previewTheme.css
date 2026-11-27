@@ -1,0 +1,469 @@
+/**
+ * Global & Preview Modern Design System
+ * Solves the harsh "plastic" contrast and jagged mono typography across the entire app.
+ * Provides modern sans-serif typography, refined dark-mode surfaces, specular edge
+ * highlights, and eliminates harsh chalky-white solid patches on dark backgrounds.
+ */
+
+/* Every rule here is scoped to the preview style so the pixel (lcd) style
+   never picks it up. */
+
+/* Hide group status circles in sidebar rows and header */
+:root[data-ui-style="preview"] .lcd-group-symbol {
+  display: none !important;
+}
+
+:root[data-ui-style="preview"]
+  button[data-group-run-controls]
+  > span[data-connection-state="connected"],
+:root[data-ui-style="preview"] button[data-group-run-controls] > span:not([data-connection-state]) {
+  padding-right: 0 !important;
+  border: none !important;
+  background: transparent !important;
+}
+
+/* =========================================================
+   1. Universal Anti-aliasing & Smooth Typography
+   ========================================================= */
+
+:root[data-ui-style="preview"],
+:root[data-ui-style="preview"] body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+/* =========================================================
+   2. Selected states
+   No solid slabs in either theme: selection is a faint lift with one crisp hairline.
+   ========================================================= */
+
+/* Selected toggles that paint themselves with the text colour (pure white), such as
+   the runtime category picker, sit quiet here: one step below the solid primary
+   action, which takes --color-accent-primary. */
+:root[data-ui-style="preview"] button[aria-pressed="true"].bg-\[var\(--color-text-primary\)\],
+:root[data-ui-style="preview"] [data-mode-choice][aria-pressed="true"] {
+  background: var(--preview-selected-bg) !important;
+  color: var(--preview-selected-text) !important;
+  border-color: var(--preview-selected-border) !important;
+  box-shadow: none !important;
+}
+
+/* Switches & segmented choices */
+:root[data-ui-style="preview"]
+  [data-lcd-scope]
+  :is(
+    [data-settings-scope-switch] > button[aria-pressed="true"],
+    [data-segmented-choice] > [role="radio"][aria-checked="true"],
+    [data-search-kind] > button[aria-pressed="true"],
+    [data-voice-pane-switch] > button[aria-pressed="true"],
+    [data-workspace-mode-switch] > button[aria-pressed="true"],
+    [data-connect-mode-switch] > button[aria-pressed="true"],
+    [data-browser-view-switch] > button[aria-pressed="true"],
+    [data-voice-panel-views] > button[aria-pressed="true"],
+    [data-voice-document-views] > button[aria-pressed="true"],
+    [data-presentation-snapshot-tabs] > button[aria-pressed="true"],
+    [data-presentation-preview-mode] > button[aria-pressed="true"],
+    [data-presentation-slot-switch] > button[aria-pressed="true"],
+    [data-web-model-delivery] > label > input:checked + span
+  ) {
+  background: var(--preview-selected-bg) !important;
+  color: var(--preview-selected-text) !important;
+  border-color: var(--preview-selected-border) !important;
+  box-shadow: none !important;
+  font-weight: 500;
+}
+
+/* =========================================================
+   3. Preview Mode: Full System Modernization
+   Activated when the preview style is selected.
+   ========================================================= */
+
+:root[data-ui-style="preview"] {
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, "Inter", "SF Pro Text", "SF Pro Display", "Segoe UI",
+    "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", "Fira Code", monospace;
+
+  /* Modern typographic hierarchy */
+  --lcd-font-body: var(--font-sans);
+  --lcd-font-cjk: var(--font-sans);
+  --lcd-font-brand: var(--font-sans);
+  --lcd-font-pixel: var(--font-sans);
+
+  font-family: var(--font-sans);
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+}
+
+/* Universal typography adoption in Preview mode */
+:root[data-ui-style="preview"] body,
+:root[data-ui-style="preview"] button,
+:root[data-ui-style="preview"] input,
+:root[data-ui-style="preview"] select,
+:root[data-ui-style="preview"] textarea,
+:root[data-ui-style="preview"] [role="dialog"],
+:root[data-ui-style="preview"] .lcd-row,
+:root[data-ui-style="preview"] .lcd-row .markdown-body,
+:root[data-ui-style="preview"] [data-lcd-scope] {
+  font-family: var(--font-sans) !important;
+}
+
+/* Preserve clean monospace for code blocks */
+:root[data-ui-style="preview"] code,
+:root[data-ui-style="preview"] kbd,
+:root[data-ui-style="preview"] samp,
+:root[data-ui-style="preview"] pre,
+:root[data-ui-style="preview"] [data-code-block] {
+  font-family: var(--font-mono) !important;
+  font-size: 0.9em;
+}
+
+/* Headings typographic hierarchy */
+:root[data-ui-style="preview"] h1,
+:root[data-ui-style="preview"] h2,
+:root[data-ui-style="preview"] h3,
+:root[data-ui-style="preview"] h4 {
+  font-family: var(--font-sans) !important;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+:root[data-ui-style="preview"] :is(h1, h2, h3, h4):lang(zh),
+:root[data-ui-style="preview"] :is(h1, h2, h3, h4):lang(ja) {
+  letter-spacing: 0;
+}
+
+/* Modals & dialogs: one clean elevated surface */
+:root[data-ui-style="preview"] .glass-modal,
+:root[data-ui-style="preview"] [role="dialog"] {
+  background: var(--preview-modal-bg) !important;
+  border: 1px solid var(--preview-modal-border) !important;
+  box-shadow: var(--preview-modal-shadow) !important;
+}
+
+/* Section 4 promises no hairline rings: the base modal's 1px top highlight goes. */
+:root[data-ui-style="preview"] .glass-modal::before {
+  display: none;
+}
+
+/* Inputs inside a dialog sit one step off its surface: lifted in dark, inset in light. */
+:root[data-ui-style="preview"] :is(.glass-modal, [role="dialog"]) .glass-input {
+  background: var(--preview-field-bg);
+}
+
+/* Section cards inside modals */
+:root[data-ui-style="preview"] .glass-panel {
+  background: var(--preview-card-bg) !important;
+  border: 1px solid var(--preview-card-border) !important;
+  box-shadow: none !important;
+}
+
+/* Ensure brand name button keeps clean inverted text without stark white background patch */
+:root[data-ui-style="preview"] [data-brand-name] {
+  background: transparent !important;
+}
+
+/* =========================================================
+   4. Surfaces and tokens (pure elevation)
+   Restrained neutral surfaces without glare, blur or hairline rings: obsidian in dark,
+   warm paper in light. Component rules below read these tokens, so both themes share them.
+   ========================================================= */
+
+:root[data-ui-style="preview"].dark {
+  --color-body-bg: #0a0b0d;
+  --color-sidebar-bg: #0e0f13;
+  --color-sidebar-border: rgba(255, 255, 255, 0.06);
+  --color-chat-bg: #121317;
+
+  --color-bg-primary: #0a0b0d;
+  --color-bg-secondary: #121317;
+  --color-bg-tertiary: #17181e;
+  --color-bg-elevated: #1b1d24;
+
+  --glass-panel-bg: #16181e;
+  --glass-panel-border: rgba(255, 255, 255, 0.07);
+
+  --glass-bubble-bg: #1a1c23;
+  --glass-bubble-border: rgba(255, 255, 255, 0.06);
+  --glass-bubble-shadow: none;
+
+  --color-border-primary: rgba(255, 255, 255, 0.07);
+  --color-border-secondary: rgba(255, 255, 255, 0.1);
+
+  --color-text-primary: #f3f4f6;
+  --color-text-secondary: #9ca3af;
+  --color-text-tertiary: #6b7280;
+  --color-text-muted: #4b5563;
+
+  /* Hover, selection and glass controls follow the same neutral obsidian scale; the
+     base dark theme's are blue-grey and clash with these surfaces. */
+  --color-sidebar-item-hover: rgba(255, 255, 255, 0.04);
+  --color-sidebar-item-active: rgba(255, 255, 255, 0.08);
+  --glass-bg: #1b1d24;
+  --glass-bg-hover: #22252d;
+  --glass-bg-active: #2a2d36;
+  --color-border-focus: rgba(255, 255, 255, 0.28);
+
+  /* The one solid accent: primary actions are a soft light grey with dark text, never
+     pure white, so each screen has a single clear focal point. */
+  --color-accent-primary: #d9dbe0;
+  --primary-foreground: #0f1013;
+
+  /* Layers are told apart by surface shade; lines stay neutral and barely there. The
+     base dark theme's are blue-grey and loud. */
+  --glass-border: rgba(255, 255, 255, 0.1);
+  --glass-border-subtle: rgba(255, 255, 255, 0.06);
+
+  /* Selected, not raised: a faint lift and one crisp hairline, no grey slab or bevel. */
+  --preview-selected-bg: rgba(255, 255, 255, 0.05);
+  --preview-selected-border: rgba(255, 255, 255, 0.32);
+  --preview-selected-text: #ffffff;
+
+  --glass-tab-bg: rgba(255, 255, 255, 0.04);
+  --glass-tab-bg-hover: rgba(255, 255, 255, 0.08);
+  --glass-tab-bg-active: rgba(255, 255, 255, 0.12);
+  --glass-tab-border-active: rgba(255, 255, 255, 0.18);
+  --glass-tab-shadow-active: 0 1px 3px rgba(0, 0, 0, 0.4);
+
+  --preview-modal-bg: #14161c;
+  --preview-modal-border: rgba(255, 255, 255, 0.08);
+  --preview-modal-shadow: 0 24px 64px -12px rgba(0, 0, 0, 0.75);
+  --preview-field-bg: #1b1d24;
+  --preview-card-bg: #181a21;
+  --preview-card-border: rgba(255, 255, 255, 0.07);
+  --preview-bubble-user-bg: #232732;
+  --preview-bubble-user-border: rgba(255, 255, 255, 0.09);
+  --preview-quiet-key-bg: rgba(255, 255, 255, 0.1);
+  --preview-quiet-key-border: rgba(255, 255, 255, 0.14);
+  --preview-quiet-key-hover: rgba(255, 255, 255, 0.16);
+  --preview-mark-bg: #2b2822;
+  --preview-mark-fg: #d8cba8;
+  --preview-choice-border: rgba(255, 255, 255, 0.08);
+  --preview-choice-hover-bg: rgba(255, 255, 255, 0.03);
+  --preview-choice-hover-border: rgba(255, 255, 255, 0.14);
+}
+
+/* Light: warm paper. The page is a soft off-white, cards and messages are white, and ink
+   is near-black; lines are faint neutral hairlines, as in dark. */
+:root[data-ui-style="preview"]:not(.dark) {
+  --color-body-bg: #f4f4f1;
+  --color-sidebar-bg: #efefeb;
+  --color-sidebar-border: rgba(15, 16, 19, 0.07);
+  --color-chat-bg: #f8f8f6;
+
+  --color-bg-primary: #f8f8f6;
+  --color-bg-secondary: #f1f1ee;
+  --color-bg-tertiary: #e9e9e5;
+  --color-bg-elevated: #ffffff;
+
+  --glass-panel-bg: #ffffff;
+  --glass-panel-border: rgba(15, 16, 19, 0.08);
+
+  --glass-bubble-bg: #ffffff;
+  --glass-bubble-border: rgba(15, 16, 19, 0.07);
+  --glass-bubble-shadow: none;
+
+  --color-border-primary: rgba(15, 16, 19, 0.08);
+  --color-border-secondary: rgba(15, 16, 19, 0.13);
+
+  --color-text-primary: #17181c;
+  --color-text-secondary: #565a63;
+  --color-text-tertiary: #6f747d;
+  --color-text-muted: #9a9ea6;
+
+  --color-sidebar-item-hover: rgba(15, 16, 19, 0.04);
+  --color-sidebar-item-active: rgba(15, 16, 19, 0.075);
+  --glass-bg: #ffffff;
+  --glass-bg-hover: #f3f3f0;
+  --glass-bg-active: #e9e9e5;
+  --color-border-focus: rgba(15, 16, 19, 0.45);
+
+  /* The one solid accent: near-black ink with white text. */
+  --color-accent-primary: #1c1d21;
+  --primary-foreground: #ffffff;
+
+  --glass-border: rgba(15, 16, 19, 0.12);
+  --glass-border-subtle: rgba(15, 16, 19, 0.07);
+
+  --preview-selected-bg: rgba(15, 16, 19, 0.045);
+  --preview-selected-border: rgba(15, 16, 19, 0.42);
+  --preview-selected-text: #17181c;
+
+  --glass-tab-bg: rgba(15, 16, 19, 0.045);
+  --glass-tab-bg-hover: rgba(15, 16, 19, 0.075);
+  --glass-tab-bg-active: #ffffff;
+  --glass-tab-border-active: rgba(15, 16, 19, 0.1);
+  --glass-tab-shadow-active: 0 1px 2px rgba(15, 16, 19, 0.08);
+
+  --preview-modal-bg: #ffffff;
+  --preview-modal-border: rgba(15, 16, 19, 0.08);
+  --preview-modal-shadow: 0 24px 64px -16px rgba(15, 16, 19, 0.24);
+  --preview-field-bg: #f6f6f3;
+  --preview-card-bg: #fafaf8;
+  --preview-card-border: rgba(15, 16, 19, 0.07);
+  --preview-bubble-user-bg: #e9e9e4;
+  --preview-bubble-user-border: rgba(15, 16, 19, 0.06);
+  --preview-quiet-key-bg: rgba(15, 16, 19, 0.05);
+  --preview-quiet-key-border: rgba(15, 16, 19, 0.14);
+  --preview-quiet-key-hover: rgba(15, 16, 19, 0.09);
+  --preview-mark-bg: #efe9d8;
+  --preview-mark-fg: #6b5a2e;
+  --preview-choice-border: rgba(15, 16, 19, 0.1);
+  --preview-choice-hover-bg: rgba(15, 16, 19, 0.03);
+  --preview-choice-hover-border: rgba(15, 16, 19, 0.18);
+}
+
+/* Solid, clean message bubbles */
+:root[data-ui-style="preview"] .lcd-row-content {
+  background: var(--glass-bubble-bg) !important;
+  border: 1px solid var(--glass-bubble-border) !important;
+  box-shadow: none !important;
+}
+
+:root[data-ui-style="preview"] .lcd-row[data-lcd-user] .lcd-row-content {
+  background: var(--preview-bubble-user-bg) !important;
+  border-color: var(--preview-bubble-user-border) !important;
+}
+
+/* Hide stark pending count badges in preview mode */
+:root[data-ui-style="preview"] [data-pending-state] {
+  display: none !important;
+}
+
+/* Remove dock backdrop gradient mask in preview mode */
+:root[data-ui-style="preview"] .chat-dock-fade::before {
+  display: none !important;
+}
+
+/* Stopped members dim, as in the pixel style, so running ones stand out in the dock. */
+:root[data-ui-style="preview"]
+  :is(.lcd-member, [data-lcd-dock-button])[data-tone="stopped"]
+  .lcd-tile {
+  filter: grayscale(1);
+  opacity: 0.45;
+}
+
+/* Pending-reply card. The pixel style lays out its last row in lcd.css; preview gets
+   its own: "Other" full width, then "add note" and the send key right-aligned below,
+   and a compact, quiet send key instead of a bright solid block. */
+:root[data-ui-style="preview"] [data-pending-reply] .lcd-ask-other {
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+}
+
+:root[data-ui-style="preview"] [data-pending-reply] .lcd-ask-action {
+  justify-content: flex-end;
+  gap: 0.75rem;
+}
+
+:root[data-ui-style="preview"] [data-pending-reply] .lcd-ask-answer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: flex-end;
+  gap: 0.5rem 0.75rem;
+  margin-top: 0.625rem;
+}
+
+:root[data-ui-style="preview"] [data-pending-reply] .lcd-ask-answer textarea {
+  flex: 1 1 20ch;
+  min-width: 0;
+}
+
+:root[data-ui-style="preview"] [data-pending-reply] :is(.lcd-ask-action, .lcd-ask-answer) > button {
+  min-height: 2.25rem;
+  padding: 0 0.875rem;
+  gap: 0.375rem;
+  border-radius: 8px;
+  font-size: 0.8125rem;
+  box-shadow: none;
+}
+
+:root[data-ui-style="preview"] [data-pending-reply] :is(.lcd-ask-action, .lcd-ask-answer) > button {
+  background: var(--preview-quiet-key-bg);
+  border: 1px solid var(--preview-quiet-key-border);
+  color: var(--color-text-primary);
+}
+
+:root[data-ui-style="preview"]
+  [data-pending-reply]
+  :is(.lcd-ask-action, .lcd-ask-answer)
+  > button:not(:disabled):hover {
+  background: var(--preview-quiet-key-hover);
+}
+
+:root[data-ui-style="preview"] [data-ask-send-mark] {
+  display: inline-flex;
+}
+
+/* Message spacing. Each row stacks the list's own bottom padding, the row's block
+   padding and the hover-only action bar, which keeps its height while invisible; in
+   preview all three tighten so consecutive messages read as one conversation. */
+:root[data-ui-style="preview"] [data-message-row="true"] {
+  padding-bottom: 0.25rem;
+}
+
+:root[data-ui-style="preview"] .lcd-row {
+  padding-block: 0.25rem;
+}
+
+:root[data-ui-style="preview"] .preview-message-footer {
+  margin-top: 0.125rem;
+}
+
+:root[data-ui-style="preview"] .preview-message-actions button {
+  min-height: 1.5rem;
+  padding-block: 0;
+}
+
+/* One corner scale: 8px controls (base), 12px message surfaces, 14px dialogs. A message keeps the small corner that points at its sender. */
+:root[data-ui-style="preview"] .lcd-row-content {
+  border-radius: 12px;
+  border-top-left-radius: 4px;
+}
+
+:root[data-ui-style="preview"] .lcd-row[data-lcd-user] .lcd-row-content {
+  border-top-left-radius: 12px;
+  border-top-right-radius: 4px;
+}
+
+:root[data-ui-style="preview"] .glass-modal {
+  border-radius: 14px;
+}
+
+/* Unread counts: a muted warm chip instead of saturated amber. */
+:root[data-ui-style="preview"] .lcd-member-mark[data-mark="mail"],
+:root[data-ui-style="preview"].dark .lcd-member-mark[data-mark="mail"] {
+  border-color: transparent;
+  background: var(--preview-mark-bg);
+  color: var(--preview-mark-fg);
+}
+
+/* An unselected mode choice is flat on the card; only its outline shows. */
+:root[data-ui-style="preview"] [data-mode-choice][aria-pressed="false"] {
+  background: transparent;
+  border-color: var(--preview-choice-border);
+  color: var(--color-text-secondary);
+}
+
+:root[data-ui-style="preview"] [data-mode-choice][aria-pressed="false"]:not(:disabled):hover {
+  background: var(--preview-choice-hover-bg);
+  border-color: var(--preview-choice-hover-border);
+}
+
+/* Preview hides pending counts (above), so their fixed column in each Group row goes
+   too and the name gets that width instead of truncating early. */
+:root[data-ui-style="preview"] [data-group-pending-slot] {
+  display: none;
+}
+
+/* Text in three clear steps: bright content, quiet labels, and metadata (route, time)
+   a step further back and smaller, so the message itself leads. */
+:root[data-ui-style="preview"] .lcd-row-route {
+  color: var(--color-text-tertiary);
+}
+
+:root[data-ui-style="preview"] .lcd-row-time {
+  font-size: 0.6875rem;
+}

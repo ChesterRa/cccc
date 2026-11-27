@@ -132,4 +132,60 @@ describe("Actor working directory", () => {
     expect(api.attachScope).toHaveBeenCalledExactlyOnceWith("g1", "/manual", { activate: false });
     expect(api.fetchDirContents).toHaveBeenCalledExactlyOnceWith("/src");
   });
+
+  describe("as one summary line", () => {
+    const renderCollapsible = async (
+      scopes: { scope_key: string; url: string }[],
+      value: string,
+      onChange = vi.fn(),
+    ) =>
+      act(async () =>
+        root.render(
+          <ActorWorkingDirectory
+            key="collapsible"
+            collapsible
+            groupId="g1"
+            scopes={scopes}
+            activeScopeKey="s1"
+            value={value}
+            onChange={onChange}
+            onScopeAttached={vi.fn()}
+            onBusyChange={vi.fn()}
+            disabled={false}
+          />,
+        ),
+      );
+    const scopes = [
+      { scope_key: "s1", url: "/src" },
+      { scope_key: "s2", url: "/other" },
+    ];
+
+    it("shows where the Agent will start and hides the controls until asked", async () => {
+      await renderCollapsible(scopes, "");
+
+      expect(host.textContent).toContain("followGroupDirectory · /src");
+      expect(host.querySelector('[role="combobox"]')).toBeNull();
+      expect(button("workingDirectoryAdd")).toBeUndefined();
+
+      await act(async () => button("workingDirectoryChange").click());
+
+      expect(host.querySelector('[role="combobox"]')).not.toBeNull();
+      expect(button("workingDirectoryAdd")).toBeDefined();
+      expect(button("workingDirectoryChange")).toBeUndefined();
+    });
+
+    it("summarises a fixed directory by its own path", async () => {
+      await renderCollapsible(scopes, "s2");
+
+      expect(host.textContent).toContain("fixedDirectory · /other");
+    });
+
+    it("stays open when the chosen directory is no longer attached", async () => {
+      await renderCollapsible(scopes, "gone");
+
+      expect(button("workingDirectoryChange")).toBeUndefined();
+      expect(host.querySelector('[role="combobox"]')).not.toBeNull();
+      expect(host.textContent).toContain("workingDirectoryUnavailable");
+    });
+  });
 });

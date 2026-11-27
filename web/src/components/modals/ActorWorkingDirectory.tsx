@@ -19,6 +19,8 @@ interface ActorWorkingDirectoryProps {
   onBusyChange: (busy: boolean) => void;
   disabled: boolean;
   hint?: string;
+  /** Show one summary line until the user asks to change the directory. */
+  collapsible?: boolean;
 }
 
 export function ActorWorkingDirectory({
@@ -31,6 +33,7 @@ export function ActorWorkingDirectory({
   onBusyChange,
   disabled,
   hint,
+  collapsible = false,
 }: ActorWorkingDirectoryProps) {
   const { t } = useTranslation("actors");
   const picker = useWorkspaceDirectoryPicker();
@@ -38,6 +41,7 @@ export function ActorWorkingDirectory({
   const [attaching, setAttaching] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [expanded, setExpanded] = useState(false);
   const requestSeq = useRef(0);
   useEffect(
     () => () => {
@@ -48,6 +52,8 @@ export function ActorWorkingDirectory({
   );
   const selectedScope = scopes.find((scope) => scope.scope_key === (value || activeScopeKey));
   const path = pathDraft ?? picker.currentDir;
+  // A directory that is no longer attached needs a new choice, so it is never folded away.
+  const collapsed = collapsible && !expanded && !picker.open && Boolean(selectedScope?.url);
   const choose = (scopeKey: string) => {
     setNotice("");
     onChange(scopeKey);
@@ -109,6 +115,38 @@ export function ActorWorkingDirectory({
       }
     }
   };
+
+  if (collapsed) {
+    return (
+      <div className="min-w-0 space-y-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+          <span className="shrink-0 text-xs font-medium text-[var(--color-text-muted)]">
+            {t("workingDirectory")}
+          </span>
+          <span
+            className="min-w-0 flex-1 truncate text-sm text-[var(--color-text-secondary)]"
+            title={selectedScope?.url}
+          >
+            {t(value ? "fixedDirectory" : "followGroupDirectory")} · {selectedScope?.url}
+          </span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            disabled={disabled}
+            onClick={() => setExpanded(true)}
+          >
+            {t("workingDirectoryChange")}
+          </Button>
+        </div>
+        {notice ? (
+          <p role="status" className="text-xs text-[var(--color-text-secondary)]">
+            {notice}
+          </p>
+        ) : null}
+      </div>
+    );
+  }
 
   return (
     <div className="min-w-0 space-y-2">

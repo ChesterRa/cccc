@@ -139,8 +139,9 @@ whose menu you opened. Only incoming invitations ask which local Group should ac
 the connection.
 **Settings and more** opens with your account, where your access includes it, and the full
 settings entry, then Appearance:
-theme and language stay in view, and **More appearance settings** unfolds body font, message
-area width, motion, ‘Waiting for you’ indicators and text size. The menu opens folded each
+theme, interface style and language stay in view. **More appearance settings** unfolds
+‘Waiting for you’ indicators and text size; the Pixel style also offers body font, message
+area width and motion. The menu opens folded each
 time. A choice applies with one click or tap and keeps the menu open; arrow keys move a
 choice's selection. Narrow headers use the overflow sheet with the same choices and access
 rules; message area width is offered only on screens 768px and wider.
@@ -157,7 +158,7 @@ A blank note sends the choice alone; **Other** keeps its own box, and switching 
 what you wrote in each. Browser
 notifications keep their own switch under Settings → This instance → Notifications. The indicators show by default;
 the choice is saved in this browser.
-**Message area width** under Appearance sets how wide the conversation runs on
+In the Pixel style, **Message area width** under Appearance sets how wide the conversation runs on
 screens 768px and wider: **Medium** keeps a centered reading column, **Wide** gives tables and
 code more room and **Full** uses the whole chat area. With **Medium** or **Wide**, the
 conversation's scrollbar sits beside the column, and the mouse wheel scrolls the conversation
@@ -166,7 +167,7 @@ does not appear on narrower screens, where the conversation already has no width
 The members' status floats in a compact centered row above the composer. Text scrolled
 behind the member keys fades out, while messages remain visible and interactive on either
 side; the scrollable tail lets the final message move fully above the member controls.
-Activity and feedback move in whole steps: a busy member's ring of pixel dots, three blinks when
+In the Pixel style, activity and feedback move in whole steps: a busy member's ring of pixel dots, three blinks when
 the page sees a member start needing attention, a pixel spinner for waits longer than a quarter of
 a second, and a block cursor that can follow a headless agent's live text, though not after code
 blocks, tables and some other structures. **Motion** under Appearance stills these and the typing
@@ -200,12 +201,13 @@ Use **Messages / Terminals** in the Group header to switch the current Group's w
 On narrow headers, the view icon switches between these views. Presentation also opens from
 the header through the bookmark icon, beside the **Files** folder icon on desktop, with its own update indicator. Tooltips and accessible names identify these controls. View, search and context controls align with the main work area as the side panel resizes. Files and Presentation
 share one side column: selecting the other swaps panels; selecting the active one closes it.
-Switching views only replaces the history area; the message composer stays in place.
+The terminal view takes the whole work area: the message composer is hidden there and returns,
+with its draft, recipients and attachments, when you switch back to messages.
 Each Group remembers its view and terminal page in this browser, including after a page reload. Message drafts and
 the message reading position survive switching between views.
 
-The terminal view shows up to four agents per page, in the Group's existing order. Narrow areas
-show one agent per page. Page arrows appear only when there is more than one page, in the
+The terminal view shows up to two agents per page, side by side at the full height, in the
+Group's existing order. Narrow areas show one agent per page. Page arrows appear only when there is more than one page, in the
 Group header or the single agent title bar on mobile. The arrows have 44-pixel targets, with a
 visible page count and disabled endpoints. On touchscreens, swipe horizontally on the agent
 title area to page; buttons, vertical gestures and the terminal body keep their own behavior.
@@ -1673,7 +1675,13 @@ For end-to-end setup details, see [Group Space + NotebookLM](./group-space-noteb
 
 Switch between Light, Dark, or Auto theme. Auto follows the light or dark setting of your system.
 
-Both themes use the same pixel-screen look: light mode sets dark ink on a pale screen, dark mode light ink on a dark screen. Surfaces are separated by thin rules rather than shadows, and keyboard focus shows a dashed outline. **Body font** under Appearance offers **Sans**, the default, which sets message text in IBM Plex Sans while message headers, controls and code stay monospace; **Mono**, which sets most text in monospace; and **Pixel**, a pixel font. Text size also scales side-panel titles, file paths and settings labels; terminal text keeps its own sizing.
+**Interface style** under Appearance selects **Pixel** or **Preview**, independently of the
+light/dark theme. Pixel is the default terminal-screen appearance; its additional body-font,
+width and motion choices are shown while it is selected. Preview is a modern look with neutral
+surfaces, rounded message cards and the system font; it hides the Group state symbols and the
+‘Waiting for you’ counts in the sidebar. The choice is saved in this browser.
+Text size also scales side-panel titles, file paths and settings labels; terminal text keeps its
+own sizing.
 
 ## Mobile Usage
 

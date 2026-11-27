@@ -124,6 +124,7 @@ describe("appearance choices inside their real hosts", () => {
       const preferences = document.querySelector("[data-appearance-preferences]")!;
       expect(names(preferences).filter((name) => !names(folded).includes(name))).toEqual([
         "theme",
+        "style",
         "language",
       ]);
       // The key follows what stays in view, so opening it moves nothing above.
@@ -198,8 +199,7 @@ describe("appearance choices inside their real hosts", () => {
   }
 
   for (const host of ["desktop", "sheet"] as const) {
-    it(`${host}: offers the body-font, width and motion choices, with no style switch`, async () => {
-      await act(async () => setUiStylePrefs({ lcdBody: "proportional" }));
+    it(`${host}: offers style and pixel appearance choices`, async () => {
       await renderHost(host, "light");
       const choice = (name: string) =>
         document.querySelector<HTMLElement>(
@@ -208,8 +208,17 @@ describe("appearance choices inside their real hosts", () => {
       const radios = (name: string) => [
         ...(choice(name)?.querySelectorAll<HTMLButtonElement>('[role="radio"]') ?? []),
       ];
-      expect(choice("uiStyle")).toBeNull();
+      expect(radios("style").map((radio) => radio.textContent)).toEqual([
+        "uiStylePixel",
+        "uiStylePreview",
+      ]);
       try {
+        await click(radios("style")[1]!);
+        expect(document.documentElement.dataset.uiStyle).toBe("preview");
+        expect(choice("pendingPrompts")).toBeNull();
+        await click(radios("style")[0]!);
+        expect(document.documentElement.dataset.uiStyle).toBe("lcd");
+        expect(choice("pendingPrompts")).not.toBeNull();
         expect(radios("lcdBody").map((radio) => radio.textContent)).toEqual([
           "lcdBodyProportional",
           "lcdBodyMono",
@@ -245,7 +254,12 @@ describe("appearance choices inside their real hosts", () => {
         expect(outerOpen(host)).toBe(true);
       } finally {
         await act(async () =>
-          setUiStylePrefs({ lcdBody: "proportional", lcdWidth: "column", lcdMotion: "on" }),
+          setUiStylePrefs({
+            style: "lcd",
+            lcdBody: "proportional",
+            lcdWidth: "column",
+            lcdMotion: "on",
+          }),
         );
       }
     });
@@ -262,7 +276,10 @@ describe("appearance choices inside their real hosts", () => {
         }) as unknown as MediaQueryList,
     );
     try {
-      await act(async () => applyUiStylePrefs(getUiStylePrefs()));
+      await act(async () => {
+        setUiStylePrefs({ style: "lcd" });
+        applyUiStylePrefs(getUiStylePrefs());
+      });
       await renderHost("sheet", "light");
       const hint = document.querySelector("[data-lcd-motion-system]");
       expect(hint?.textContent).toBe("lcdMotionSystemStill");
@@ -270,6 +287,7 @@ describe("appearance choices inside their real hosts", () => {
       expect(document.documentElement.dataset.lcdMotion).toBe("off");
     } finally {
       vi.restoreAllMocks();
+      await act(async () => setUiStylePrefs({ style: "lcd" }));
       await act(async () => applyUiStylePrefs(getUiStylePrefs()));
     }
   });

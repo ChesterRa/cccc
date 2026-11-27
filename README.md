@@ -46,6 +46,7 @@ When several coding agents share work, you need to know who owns a task, whether
 - **Chet**, a global assistant you can write or talk to.
 - **CCCC Connect** links Groups across machines and teams; each instance keeps its own state.
 - **Local-first.** Runtime state stays in `CCCC_HOME` (default `~/.cccc/`), outside your repository.
+- **Interface styles.** The Web UI offers the Pixel terminal style (the default) and a modern Preview style, each in light and dark.
 
 ## What's new in 0.4.61
 

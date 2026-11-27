@@ -1,11 +1,23 @@
-import type { RuntimeDockItem } from "./runtimeDockItems";
-import { hasManagedRuntimeOutput } from "../../utils/headlessRuntimeSupport";
-import { UNOBSERVABLE_WORKING_STATE } from "../../utils/terminalWorkingState";
+import type { Actor } from "../types";
+import { hasManagedRuntimeOutput } from "./headlessRuntimeSupport";
+import { UNOBSERVABLE_WORKING_STATE } from "./terminalWorkingState";
 
 export type RuntimeRingTone = "stopped" | "idle" | "active" | "attention";
 
+/** The member and, when one exists, the phase of its live reply. */
+export interface RuntimeRingSubject {
+  actor: Actor;
+  liveWorkCard?: { phase: string } | null;
+  /** Accepted so a dock item can be passed as it is; the rule reads the runner off the actor. */
+  runner?: string;
+}
+
+/**
+ * The one rule for a member's state colour. The member dock and the sidebar's bars both call
+ * it, so a member cannot read differently in the two places.
+ */
 export function getRuntimeRingTone(
-  item: Pick<RuntimeDockItem, "actor" | "liveWorkCard" | "runner">,
+  item: RuntimeRingSubject,
   isRunning: boolean,
   workingState: string,
   // A terminal still waiting for its startup input past the shown delay.

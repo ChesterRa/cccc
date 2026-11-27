@@ -39,6 +39,7 @@ import { ComposerFailedSends } from "./ComposerFailedSends";
 import { ChatFilterTabs } from "./ChatFilterTabs";
 import { usePinnedIds } from "../../features/pins/pinStore";
 import { GroupWorkArea, type RuntimeActorRenderer } from "./GroupWorkArea";
+import { WorkViewComposerSlot } from "./WorkViewComposerSlot";
 import { RuntimeDock } from "./RuntimeDock";
 import { ChatSenderFilter } from "./ChatSenderFilter";
 import { pinnedEmptyKey } from "../../hooks/chat/chatMessageFilters";
@@ -1670,64 +1671,66 @@ export function ChatTab({
                     />
                   ) : null}
                   {selectedGroupId ? (
-                    <ChatComposer
-                      isDark={isDark}
-                      isSmallScreen={isSmallScreen}
-                      keepExpanded={mobileAppHeaderReserved}
-                      selectedGroupId={selectedGroupId}
-                      actors={actors}
-                      recipientActorsBusy={recipientActorsBusy}
-                      selectedGroupActorsHydrating={selectedGroupActorsHydrating}
-                      destGroupId={destGroupId}
-                      setDestGroupId={setDestGroupId}
-                      composerGroupSettled={composerGroupSettled}
-                      composerRouteGroups={composerRouteGroups}
-                      destGroupScopeLabel={destGroupScopeLabel}
-                      busy={busy}
-                      sendInFlight={sendInFlight}
-                      uploadInFlight={uploadInFlight}
-                      onStopUploadWaiting={stopUploadWaiting}
-                      recentMessages={chatMessages}
-                      suggestionSourceMessages={suggestionSourceMessages}
-                      replyTarget={replyTarget}
-                      onCancelReply={cancelReply}
-                      quotedPresentationRef={quotedPresentationRef}
-                      onClearQuotedPresentationRef={clearQuotedPresentationRef}
-                      quotedVoiceDocumentRef={quotedVoiceDocumentRef}
-                      onQuoteVoiceDocumentRef={handleQuoteVoiceDocumentReference}
-                      onClearQuotedVoiceDocumentRef={clearQuotedVoiceDocumentRef}
-                      toTokens={toTokens}
-                      unavailableRecipients={unavailableRecipients}
-                      onToggleRecipient={toggleRecipient}
-                      onClearRecipients={clearRecipients}
-                      composerFiles={composerFiles}
-                      onRemoveComposerFile={removeComposerFile}
-                      appendComposerFiles={appendComposerFiles}
-                      fileInputRef={fileInputRef}
-                      composerRef={composerRef}
-                      setComposerText={setComposerText}
-                      composerGroupMentionTokens={composerGroupMentionTokens}
-                      setComposerGroupMentionTokens={setComposerGroupMentionTokens}
-                      composerAgentMentionTokens={composerAgentMentionTokens}
-                      setComposerAgentMentionTokens={setComposerAgentMentionTokens}
-                      messageMode={messageMode}
-                      setMessageMode={setMessageMode}
-                      onSendMessage={sendMessage}
-                      showMentionMenu={showMentionMenu}
-                      setShowMentionMenu={setShowMentionMenu}
-                      mentionSuggestions={mentionSuggestions}
-                      connectMentionStatus={
-                        mentionKind === "group" ? connectMentionStatus : undefined
-                      }
-                      mentionSelectedIndex={mentionSelectedIndex}
-                      setMentionSelectedIndex={setMentionSelectedIndex}
-                      setMentionFilter={setMentionFilter}
-                      setMentionKind={setMentionKind}
-                      setMentionActorScope={setMentionActorScope}
-                      setMentionTargetGroupId={setMentionTargetGroupId}
-                      setMentionTriggerIndex={setMentionTriggerIndex}
-                      slashCommands={slashCommands}
-                    />
+                    <WorkViewComposerSlot groupId={selectedGroupId}>
+                      <ChatComposer
+                        isDark={isDark}
+                        isSmallScreen={isSmallScreen}
+                        keepExpanded={mobileAppHeaderReserved}
+                        selectedGroupId={selectedGroupId}
+                        actors={actors}
+                        recipientActorsBusy={recipientActorsBusy}
+                        selectedGroupActorsHydrating={selectedGroupActorsHydrating}
+                        destGroupId={destGroupId}
+                        setDestGroupId={setDestGroupId}
+                        composerGroupSettled={composerGroupSettled}
+                        composerRouteGroups={composerRouteGroups}
+                        destGroupScopeLabel={destGroupScopeLabel}
+                        busy={busy}
+                        sendInFlight={sendInFlight}
+                        uploadInFlight={uploadInFlight}
+                        onStopUploadWaiting={stopUploadWaiting}
+                        recentMessages={chatMessages}
+                        suggestionSourceMessages={suggestionSourceMessages}
+                        replyTarget={replyTarget}
+                        onCancelReply={cancelReply}
+                        quotedPresentationRef={quotedPresentationRef}
+                        onClearQuotedPresentationRef={clearQuotedPresentationRef}
+                        quotedVoiceDocumentRef={quotedVoiceDocumentRef}
+                        onQuoteVoiceDocumentRef={handleQuoteVoiceDocumentReference}
+                        onClearQuotedVoiceDocumentRef={clearQuotedVoiceDocumentRef}
+                        toTokens={toTokens}
+                        unavailableRecipients={unavailableRecipients}
+                        onToggleRecipient={toggleRecipient}
+                        onClearRecipients={clearRecipients}
+                        composerFiles={composerFiles}
+                        onRemoveComposerFile={removeComposerFile}
+                        appendComposerFiles={appendComposerFiles}
+                        fileInputRef={fileInputRef}
+                        composerRef={composerRef}
+                        setComposerText={setComposerText}
+                        composerGroupMentionTokens={composerGroupMentionTokens}
+                        setComposerGroupMentionTokens={setComposerGroupMentionTokens}
+                        composerAgentMentionTokens={composerAgentMentionTokens}
+                        setComposerAgentMentionTokens={setComposerAgentMentionTokens}
+                        messageMode={messageMode}
+                        setMessageMode={setMessageMode}
+                        onSendMessage={sendMessage}
+                        showMentionMenu={showMentionMenu}
+                        setShowMentionMenu={setShowMentionMenu}
+                        mentionSuggestions={mentionSuggestions}
+                        connectMentionStatus={
+                          mentionKind === "group" ? connectMentionStatus : undefined
+                        }
+                        mentionSelectedIndex={mentionSelectedIndex}
+                        setMentionSelectedIndex={setMentionSelectedIndex}
+                        setMentionFilter={setMentionFilter}
+                        setMentionKind={setMentionKind}
+                        setMentionActorScope={setMentionActorScope}
+                        setMentionTargetGroupId={setMentionTargetGroupId}
+                        setMentionTriggerIndex={setMentionTriggerIndex}
+                        slashCommands={slashCommands}
+                      />
+                    </WorkViewComposerSlot>
                   ) : (
                     // With no Group open there is no composer, but sends waiting to be restored
                     // still need a place to be seen and discarded.

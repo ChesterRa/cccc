@@ -31,6 +31,35 @@ describe("ActorConfigTabs", () => {
     expect(markup.match(/role="tabpanel"[^>]*hidden=""/g)).toHaveLength(2);
   });
 
+  it("sets an aside tab apart from its siblings and names what needs attention behind it", () => {
+    const markup = renderToStaticMarkup(
+      <ActorConfigTabs
+        ariaLabel="Add Agent"
+        tabs={[
+          ...tabs,
+          {
+            id: "advanced",
+            label: "Advanced",
+            aside: true,
+            attention: "2 environment variables",
+            panel: <div>Advanced panel</div>,
+          },
+        ]}
+        activeId="environment"
+        onChange={() => undefined}
+      />,
+    );
+    const tabMarkup = markup.match(/<button[^>]*role="tab".*?<\/button>/g)!;
+
+    expect(tabMarkup).toHaveLength(4);
+    expect(tabMarkup.map((tab) => tab.includes("data-aside"))).toEqual([false, false, false, true]);
+    // The attention text is part of the tab's accessible name, not only a coloured dot.
+    expect(tabMarkup[3].replace(/<svg.*?<\/svg>|<[^>]+>/g, "")).toBe(
+      "Advanced2 environment variables",
+    );
+    expect(tabMarkup[0].replace(/<[^>]+>/g, "")).toBe("Environment variables");
+  });
+
   it.each([
     ["environment", "ArrowRight", "capabilities"],
     ["environment", "ArrowLeft", "profile"],

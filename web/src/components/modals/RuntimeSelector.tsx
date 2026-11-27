@@ -20,6 +20,7 @@ export function RuntimeSelector({
   className,
   allowedRuntimes,
   showHint = true,
+  quietWhenDetected = false,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -30,6 +31,8 @@ export function RuntimeSelector({
   className?: string;
   allowedRuntimes?: readonly string[];
   showHint?: boolean;
+  /** Drop the status line when there is nothing to act on; problems and checks in progress stay. */
+  quietWhenDetected?: boolean;
 }) {
   const { t } = useTranslation("actors");
   const runtimes = useGroupStore((s) => s.runtimes);
@@ -47,6 +50,8 @@ export function RuntimeSelector({
         ? "deepseekSetup"
         : selectedKey;
   const checking = status === "idle" || status === "loading";
+  // A Web Model or custom runtime has no local CLI to find, so there is nothing to recheck.
+  const showStatus = !quietWhenDetected || !["detected", "web", "custom"].includes(captionKey);
   const modeLabel = supportsAcpMode(value)
     ? runtimeMode === "acp"
       ? "ACP"
@@ -93,48 +98,50 @@ export function RuntimeSelector({
           .sort((left, right) => Number(Boolean(left.group)) - Number(Boolean(right.group)))}
         searchable
       />
-      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs">
-        <span
-          role="status"
-          data-status-tone={
-            captionKey === "failed" || captionKey === "missing" ? "warning" : undefined
-          }
-          className={
-            captionKey === "failed" || captionKey === "missing"
-              ? "text-orange-700 dark:text-orange-300"
-              : "text-[var(--color-text-muted)]"
-          }
-        >
-          {modeLabel ? `${modeLabel}: ` : ""}
-          {captionKey === "deepseekSetup" ? (
-            <Trans
-              ns="actors"
-              i18nKey="runtimeDetection.deepseekSetup"
-              components={[<code key="command" className="whitespace-nowrap" />]}
-            />
-          ) : (
-            t(`runtimeDetection.${captionKey}`)
-          )}
-        </span>
-        <Button
-          type="button"
-          variant="ghost"
-          data-lcd-key
-          size="sm"
-          className="min-h-[44px] gap-1.5 text-xs"
-          disabled={disabled || checking}
-          onClick={() => void refresh()}
-        >
-          {checking ? (
-            <LcdSpinner className="h-[13px] w-[13px]">
+      {showStatus ? (
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs">
+          <span
+            role="status"
+            data-status-tone={
+              captionKey === "failed" || captionKey === "missing" ? "warning" : undefined
+            }
+            className={
+              captionKey === "failed" || captionKey === "missing"
+                ? "text-orange-700 dark:text-orange-300"
+                : "text-[var(--color-text-muted)]"
+            }
+          >
+            {modeLabel ? `${modeLabel}: ` : ""}
+            {captionKey === "deepseekSetup" ? (
+              <Trans
+                ns="actors"
+                i18nKey="runtimeDetection.deepseekSetup"
+                components={[<code key="command" className="whitespace-nowrap" />]}
+              />
+            ) : (
+              t(`runtimeDetection.${captionKey}`)
+            )}
+          </span>
+          <Button
+            type="button"
+            variant="ghost"
+            data-lcd-key
+            size="sm"
+            className="min-h-[44px] gap-1.5 text-xs"
+            disabled={disabled || checking}
+            onClick={() => void refresh()}
+          >
+            {checking ? (
+              <LcdSpinner className="h-[13px] w-[13px]">
+                <LcdIcon icon={RefreshCw} glyph="reload" size={13} aria-hidden="true" />
+              </LcdSpinner>
+            ) : (
               <LcdIcon icon={RefreshCw} glyph="reload" size={13} aria-hidden="true" />
-            </LcdSpinner>
-          ) : (
-            <LcdIcon icon={RefreshCw} glyph="reload" size={13} aria-hidden="true" />
-          )}
-          {t("runtimeDetection.recheck")}
-        </Button>
-      </div>
+            )}
+            {t("runtimeDetection.recheck")}
+          </Button>
+        </div>
+      ) : null}
       {showHint || value === "pi" ? (
         <p className="text-[11px] leading-4 text-[var(--color-text-muted)]">
           {showHint ? t("runtimeDetection.scope") : null}

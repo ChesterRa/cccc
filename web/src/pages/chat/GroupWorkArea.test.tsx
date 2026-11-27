@@ -155,7 +155,7 @@ describe("Group work area", () => {
     )!;
     expect(attention).not.toBeNull();
     await act(async () => attention.click());
-    expect(useUIStore.getState().chatSessions.g1.terminalPage).toBe(1);
+    expect(useUIStore.getState().chatSessions.g1.terminalPage).toBe(3);
     expect(host.querySelector('[data-terminal="actor-8"][data-visible="true"]')).not.toBeNull();
     expect(controlsHost.querySelector('[aria-label="workView.otherAttention"]')).toBeNull();
     await click('[aria-label="workView.previous"]');
@@ -167,11 +167,11 @@ describe("Group work area", () => {
     await render();
     expect(host.querySelectorAll("[data-terminal]")).toHaveLength(0);
     await click('[aria-label="workView.label"] button:last-child');
-    expect(host.querySelectorAll('[data-terminal][data-visible="true"]')).toHaveLength(4);
+    expect(host.querySelectorAll('[data-terminal][data-visible="true"]')).toHaveLength(2);
     const first = host.querySelector<HTMLTextAreaElement>('[data-terminal="actor-1"]')!;
     first.value = "retained input";
     await click('[aria-label="workView.next"]');
-    expect(host.querySelector('[data-terminal="actor-5"]')).not.toBeNull();
+    expect(host.querySelector('[data-terminal="actor-3"]')).not.toBeNull();
     expect(host.querySelector('[data-terminal="actor-1"]')).toBe(first);
     expect(first.closest("[inert]")).not.toBeNull();
     await render({ groupId: "g2" });
@@ -181,7 +181,7 @@ describe("Group work area", () => {
     expect(second).not.toBe(first);
     expect(second).not.toBeNull();
     await render({ groupId: "g1" });
-    expect(host.querySelector('[data-terminal="actor-5"]')).not.toBeNull();
+    expect(host.querySelector('[data-terminal="actor-3"]')).not.toBeNull();
     expect(useUIStore.getState().chatSessions.g1.terminalPage).toBe(1);
     expect(host.querySelector("[data-group-message-view]")?.getAttribute("inert")).not.toBeNull();
     await click('[aria-label="workView.previous"]');
@@ -192,61 +192,66 @@ describe("Group work area", () => {
   });
 
   it.each([
-    [1200, 860, 4],
-    [1920, 540, 2],
-    [1200, 540, 2],
-    [900, 1000, 1],
-    [390, 844, 1],
-  ])("keeps panes readable in a %i by %i work area", (availableWidth, availableHeight, count) => {
-    expect(terminalPageLayout(8, 0, availableWidth, availableHeight).pageSize).toBe(count);
+    // Never more than two, however tall the area: a 2x2 grid makes each terminal too small.
+    [1200, 2],
+    [1920, 2],
+    [3840, 2],
+    [900, 1],
+    [390, 1],
+  ])("keeps panes readable in a %i wide work area", (availableWidth, count) => {
+    expect(terminalPageLayout(8, 0, availableWidth).pageSize).toBe(count);
   });
 
-  it("uses two rows for three or four panes, with at most two columns", async () => {
+  it("shows two full-height panes side by side and pages the rest, at any height", async () => {
     useUIStore.getState().setGroupWorkView("g1", "terminals");
     await render({ count: 3 });
     const grid = host.querySelector<HTMLElement>('[data-group-terminal-view="visible"]')!;
+    const visible = () =>
+      [...host.querySelectorAll('[data-terminal][data-visible="true"]')].map((node) =>
+        node.getAttribute("data-terminal"),
+      );
     expect(grid.style.gridTemplateColumns).toBe("repeat(2,minmax(0,1fr))");
-    expect(grid.style.gridTemplateRows).toBe("repeat(2,minmax(0,1fr))");
-    expect(host.querySelectorAll('[data-terminal][data-visible="true"]')).toHaveLength(3);
-    height = 540;
+    expect(grid.style.gridTemplateRows).toBe("minmax(0,1fr)");
+    expect(visible()).toEqual(["actor-1", "actor-2"]);
+    height = 2000;
     await act(async () => resize());
     expect(grid.style.gridTemplateRows).toBe("minmax(0,1fr)");
-    expect(host.querySelectorAll('[data-terminal][data-visible="true"]')).toHaveLength(2);
+    expect(visible()).toEqual(["actor-1", "actor-2"]);
+    await click('[aria-label="workView.next"]');
+    expect(visible()).toEqual(["actor-3"]);
   });
 
-  it("retains the focused terminal and its input when height reduces the page capacity", async () => {
+  it("retains the focused terminal and its input when width reduces the page capacity", async () => {
     useUIStore.getState().setGroupWorkView("g1", "terminals");
-    useUIStore.getState().setGroupTerminalPage("g1", 1);
+    useUIStore.getState().setGroupTerminalPage("g1", 3);
     await render();
     const terminal = host.querySelector<HTMLTextAreaElement>('[data-terminal="actor-7"]')!;
     terminal.value = "retained input";
     terminal.focus();
-    height = 540;
+    width = 900;
     await act(async () => resize());
-    expect(useUIStore.getState().chatSessions.g1.terminalPage).toBe(3);
+    expect(useUIStore.getState().chatSessions.g1.terminalPage).toBe(6);
     expect(host.querySelector('[data-terminal="actor-7"][data-visible="true"]')).toBe(terminal);
     expect(document.activeElement).toBe(terminal);
     expect(terminal.value).toBe("retained input");
-    height = 860;
+    width = 1200;
     await act(async () => resize());
-    expect(useUIStore.getState().chatSessions.g1.terminalPage).toBe(1);
+    expect(useUIStore.getState().chatSessions.g1.terminalPage).toBe(3);
     expect(host.querySelector('[data-terminal="actor-7"][data-visible="true"]')).toBe(terminal);
     expect(terminal.value).toBe("retained input");
   });
 
   it("keeps Actor order when a non-retained Web Model returns to the grid", async () => {
     useUIStore.getState().setGroupWorkView("g1", "terminals");
-    await render({ count: 4, webActorId: "actor-3" });
-    height = 540;
-    await act(async () => resize());
-    expect(host.querySelector('[data-terminal="actor-3"]')).toBeNull();
-    height = 860;
-    await act(async () => resize());
+    await render({ count: 4, webActorId: "actor-1" });
+    await click('[aria-label="workView.next"]');
+    expect(host.querySelector('[data-terminal="actor-1"]')).toBeNull();
+    await click('[aria-label="workView.previous"]');
     expect(
       [...host.querySelectorAll('[data-terminal][data-visible="true"]')].map((node) =>
         node.getAttribute("data-terminal"),
       ),
-    ).toEqual(["actor-1", "actor-2", "actor-3", "actor-4"]);
+    ).toEqual(["actor-1", "actor-2"]);
   });
 
   it("maximizes and restores the same terminal, retaining input and terminal keys", async () => {
@@ -283,19 +288,19 @@ describe("Group work area", () => {
 
   it("clamps stale pages without erasing preferences during hydration and adapts to narrow space", async () => {
     useUIStore.getState().setGroupWorkView("g1", "terminals");
-    useUIStore.getState().setGroupTerminalPage("g1", 1);
+    useUIStore.getState().setGroupTerminalPage("g1", 2);
     await render({ count: 0, loading: true });
-    expect(useUIStore.getState().chatSessions.g1.terminalPage).toBe(1);
+    expect(useUIStore.getState().chatSessions.g1.terminalPage).toBe(2);
     await render();
     expect(host.querySelector('[data-terminal="actor-5"]')).not.toBeNull();
     width = 390;
     await act(async () => resize());
     expect(host.querySelectorAll('[data-terminal][data-visible="true"]')).toHaveLength(1);
-    expect(terminalPageLayout(2, 9, 1200, 860)).toMatchObject({ page: 0, pageCount: 1 });
+    expect(terminalPageLayout(2, 9, 1200)).toMatchObject({ page: 0, pageCount: 1 });
     expect(panelsHost.textContent).toContain("presentation");
     expect(controlsHost.textContent).not.toContain("presentation");
     expect(host.querySelector('[data-terminal="actor-5"]')).not.toBeNull();
-    // Page 1 of four panes began at actor-5; one pane keeps that terminal in view.
+    // Page 2 of two panes began at actor-5; one pane keeps that terminal in view.
     expect(useUIStore.getState().chatSessions.g1.terminalPage).toBe(4);
   });
 });

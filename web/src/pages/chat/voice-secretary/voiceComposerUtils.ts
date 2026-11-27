@@ -154,29 +154,6 @@ export function askFeedbackDisplayText(item: AssistantVoiceAskFeedback): string 
   return String(item.reply_text || item.request_preview || item.request_text || "").trim();
 }
 
-export function slugifyVoiceDocumentDownloadName(value: string): string {
-  return (
-    value
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9\u3040-\u30ff\u3400-\u9fff]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 80) || "voice-secretary-document"
-  );
-}
-
-export function voiceDocumentDownloadFileName(
-  document: AssistantVoiceDocument | null,
-  fallbackTitle: string,
-): string {
-  const workspacePath = String(document?.document_path || document?.workspace_path || "")
-    .trim()
-    .replace(/\\/g, "/");
-  const workspaceName = workspacePath.split("/").filter(Boolean).pop() || "";
-  if (workspaceName.toLowerCase().endsWith(".md")) return workspaceName;
-  return `${slugifyVoiceDocumentDownloadName(fallbackTitle)}.md`;
-}
-
 export function voiceDocumentKey(document: AssistantVoiceDocument | null | undefined): string {
   return voiceDocumentPath(document) || String(document?.document_id || "").trim();
 }
@@ -213,20 +190,6 @@ export function resolveVoiceDocumentPath(
   const directPath = documents.some((document) => voiceDocumentPath(document) === target);
   if (directPath) return target;
   return voiceDocumentPath(findVoiceDocument(documents, target));
-}
-
-export function downloadMarkdownDocument(fileName: string, content: string): void {
-  if (typeof document === "undefined") return;
-  const blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = fileName;
-  anchor.rel = "noopener";
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
 export function normalizeVoiceRecognitionLanguageForBackend(

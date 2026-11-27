@@ -1,17 +1,21 @@
-# LCD style hooks
+# Interface style hooks
 
-LCD is the Web UI's only look. Components still carry the classes of the former classic
-look (comments in this folder call them "classic") and gain `data-*` hooks; the LCD rules
-in this folder read the hooks. When you edit a component, you may drop classic palette
-classes that its hooks already override.
+Pixel (`lcd`) is the default style and uses the LCD rules in this folder. Preview is the
+modern alternative, entered through `preview.css`: `previewShell.css`, `previewMessage.css`,
+`previewDock.css` and `previewContext.css` hold its layout, and `previewTheme.css`, imported
+last so it wins equal-specificity ties, holds its palette and refinements. The theme defines
+one set of tokens for dark (`.dark`) and one for light (`:not(.dark)`); component rules read
+the tokens, so a new surface needs no per-theme rule. Every preview rule is scoped to
+`:root[data-ui-style="preview"]` and must not reach the pixel style (`previewTheme.test.ts`,
+`previewCascade.test.ts`). Shared components carry `data-*` hooks used by both styles; check
+Pixel and Preview, light and dark, when changing a shared surface.
 
 ## Scope
 
-- `index.html` sets `data-ui-style="lcd"` on `<html>` and `data-lcd-scope` on `<body>`, so
-  the whole page and every layer portalled into the body are in scope from the first
-  paint. Rules start with `:root[data-ui-style="lcd"]`, and rules that restyle shared
-  components add `[data-lcd-scope]`; follow that form in new rules so their specificity
-  matches. The prefix no longer limits where a rule applies.
+- `index.html` applies the stored `data-ui-style` on `<html>` before first paint and
+  `data-lcd-scope` on `<body>`. Pixel rules start with `:root[data-ui-style="lcd"]`;
+  preview rules start with `:root[data-ui-style="preview"]`. Both cover
+  content portalled into the body.
 - Every colour should resolve to an `--lcd-*` token. A Tailwind palette class
   (`text-rose-600`, `bg-black/5`) needs a hook below; do not add an LCD rule keyed on the
   palette class.

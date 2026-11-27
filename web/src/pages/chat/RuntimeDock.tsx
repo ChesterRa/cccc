@@ -12,7 +12,6 @@ import {
 import { useTranslation } from "react-i18next";
 import { Hourglass, Mail } from "lucide-react";
 
-import { ActorAvatar } from "../../components/ActorAvatar";
 import { HoverTooltip } from "../../components/HoverTooltip";
 import { Popover, PopoverContent, PopoverTrigger } from "../../components/ui/popover";
 import { LcdIcon, PlusIcon } from "../../components/Icons";
@@ -26,9 +25,10 @@ import { runtimeConfirmationKeys } from "../../utils/runtimeConfirmationKeys";
 import { UNOBSERVABLE_WORKING_STATE } from "../../utils/terminalWorkingState";
 import type { LiveWorkCard } from "./liveWorkCards";
 import { RuntimeDockTicker } from "./RuntimeDockTicker";
+import { RuntimeDockAvatar } from "./RuntimeDockAvatar";
 import { buildRuntimeDockTickerEntries } from "./runtimeDockTickerEntries";
 import { buildRuntimeDockItems, type RuntimeDockItem } from "./runtimeDockItems";
-import { getRuntimeRingTone, type RuntimeRingTone } from "./runtimeDockRingTone";
+import { getRuntimeRingTone, type RuntimeRingTone } from "../../utils/runtimeRingTone";
 import { useStartupInputWaiting } from "../../hooks/useStartupInputWaiting";
 import { useUiStylePrefs, type LcdMotion } from "../../utils/uiStyle";
 
@@ -221,7 +221,7 @@ function RuntimeDockActorButtonView({
 }) {
   const { t } = useTranslation(["chat", "actors", "common"]);
   const chipStatusId = useId();
-  const motionPreference = useUiStylePrefs().lcdMotion;
+  const { lcdMotion: motionPreference } = useUiStylePrefs();
   const { isRunning, workingState } = useActorDisplayState({
     groupId,
     actor: item.actor,
@@ -319,6 +319,16 @@ function RuntimeDockActorButtonView({
         <i />
       </span>
     ) : null;
+  const avatar = (
+    <RuntimeDockAvatar
+      item={item}
+      isDark={isDark}
+      isSmallScreen={isSmallScreen}
+      isInspectorOpen={isInspectorOpen}
+      isChip={variant === "chip"}
+      lcdRing={lcdRing}
+    />
+  );
 
   if (variant === "chip") {
     // The tile itself shows the state (dimmed when stopped, its line for busy, idle
@@ -364,16 +374,7 @@ function RuntimeDockActorButtonView({
               })}
             >
               <span className="lcd-member-tile">
-                <ActorAvatar
-                  avatarUrl={item.actor.avatar_url || undefined}
-                  runtime={item.runtime}
-                  title={item.actorLabel}
-                  isDark={isDark}
-                  sizeClassName="h-8 w-8"
-                  textClassName="text-[0.8125rem]"
-                  className="lcd-tile"
-                />
-                {lcdRing}
+                {avatar}
                 {mailCount > 0 ? (
                   <span className="lcd-member-mark" data-mark="mail" aria-hidden="true">
                     {mailCount > 99 ? "99+" : mailCount}
@@ -395,22 +396,6 @@ function RuntimeDockActorButtonView({
       </div>
     );
   }
-
-  const dockAvatar = (
-    <ActorAvatar
-      avatarUrl={item.actor.avatar_url || undefined}
-      runtime={item.runtime}
-      title={item.actorLabel}
-      isDark={isDark}
-      sizeClassName={isSmallScreen ? "h-[33px] w-[33px]" : "h-[37px] w-[37px]"}
-      className={classNames(
-        "relative z-10 border-transparent shadow-[0_18px_34px_-22px_rgba(15,23,42,0.68)]",
-        "lcd-tile",
-        item.runner === "headless" ? (isDark ? "bg-slate-900" : "bg-slate-50") : undefined,
-      )}
-      accentRingClassName={isInspectorOpen ? (isDark ? "ring-white/10" : "ring-black/10") : null}
-    />
-  );
 
   return (
     <div className="relative flex items-end">
@@ -452,10 +437,7 @@ function RuntimeDockActorButtonView({
           .filter(Boolean)
           .join("\n")}
       >
-        <span className="lcd-member-tile">
-          {dockAvatar}
-          {lcdRing}
-        </span>
+        <span className="lcd-member-tile">{avatar}</span>
         {queuedCount > 0 ? (
           <span
             className="pointer-events-none absolute -right-0.5 -bottom-0.5 z-20 flex h-[17px] min-w-[17px] items-center justify-center px-1 text-[9px] font-semibold leading-none"

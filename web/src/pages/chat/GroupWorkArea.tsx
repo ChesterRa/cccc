@@ -66,7 +66,6 @@ export function GroupWorkArea({
     actors.length,
     session.terminalPage,
     size.width,
-    size.height,
   );
   // Do not attach PTYs to a provisional grid before its available size is known.
   const pageActors = size.width > 0 && size.height > 0 ? actors.slice(start, start + pageSize) : [];
@@ -110,12 +109,7 @@ export function GroupWorkArea({
       const nextHeight = element.clientHeight;
       if (nextWidth <= 0 || nextHeight <= 0) return;
       const previous = layoutRef.current;
-      const nextSize = terminalPageLayout(
-        previous.actors.length,
-        0,
-        nextWidth,
-        nextHeight,
-      ).pageSize;
+      const nextSize = terminalPageLayout(previous.actors.length, 0, nextWidth).pageSize;
       if (
         measured.current &&
         nextSize !== previous.pageSize &&
@@ -291,8 +285,7 @@ export function GroupWorkArea({
           tiled
             ? {
                 gridTemplateColumns: `repeat(${Math.min(2, Math.max(1, pageActors.length))},minmax(0,1fr))`,
-                gridTemplateRows:
-                  pageActors.length > 2 ? "repeat(2,minmax(0,1fr))" : "minmax(0,1fr)",
+                gridTemplateRows: "minmax(0,1fr)",
               }
             : undefined
         }

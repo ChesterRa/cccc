@@ -11,6 +11,7 @@ import {
   type LcdBodyFont,
   type LcdMotion,
   type LcdWidth,
+  type UiStyle,
 } from "../../utils/uiStyle";
 import { SegmentedChoice, type SegmentedOption } from "../ui/segmented-choice";
 import { ChevronDownIcon } from "../Icons";
@@ -33,6 +34,7 @@ function AppearanceChoice<Value extends string | number>({
 }: {
   name:
     | "theme"
+    | "style"
     | "lcdBody"
     | "lcdWidth"
     | "lcdMotion"
@@ -94,6 +96,16 @@ export function AppearancePreferences({
           { value: "system", label: t("themeSystem") },
         ]}
       />
+      <AppearanceChoice<UiStyle>
+        name="style"
+        label={t("uiStyleLabel")}
+        value={uiStyle.style === "preview" ? "preview" : "lcd"}
+        onChange={(style) => setUiStylePrefs({ style })}
+        options={[
+          { value: "lcd", label: t("uiStylePixel") },
+          { value: "preview", label: t("uiStylePreview") },
+        ]}
+      />
       <AppearanceChoice
         name="language"
         label={t("common:language")}
@@ -121,65 +133,69 @@ export function AppearancePreferences({
         />
       </button>
       <div id={moreId} hidden={!moreOpen}>
-        <AppearanceChoice<LcdBodyFont>
-          name="lcdBody"
-          label={t("lcdBodyLabel")}
-          value={uiStyle.lcdBody}
-          onChange={(lcdBody) => setUiStylePrefs({ lcdBody })}
-          options={[
-            {
-              value: "proportional",
-              label: t("lcdBodyProportional"),
-              title: t("lcdBodyProportionalHint"),
-            },
-            { value: "mono", label: t("lcdBodyMono") },
-            { value: "pixel", label: t("lcdBodyPixel") },
-          ]}
-        />
-        {/* Below 768px messages already use the full width, so the choice would change nothing. */}
-        <AppearanceChoice<LcdWidth>
-          name="lcdWidth"
-          label={t("lcdWidthLabel")}
-          value={uiStyle.lcdWidth}
-          onChange={(lcdWidth) => setUiStylePrefs({ lcdWidth })}
-          options={[
-            { value: "column", label: t("lcdWidthColumn") },
-            { value: "wide", label: t("lcdWidthWide") },
-            { value: "full", label: t("lcdWidthFull") },
-          ]}
-          className="max-md:hidden"
-        />
-        <AppearanceChoice<LcdMotion>
-          name="lcdMotion"
-          label={t("lcdMotionLabel")}
-          value={uiStyle.lcdMotion}
-          onChange={(lcdMotion) => setUiStylePrefs({ lcdMotion })}
-          options={[
-            { value: "on", label: t("lcdMotionOn") },
-            { value: "off", label: t("lcdMotionOff") },
-          ]}
-          className={systemReducedMotion ? "pb-1" : ""}
-        />
-        {/* The system's reduced-motion setting stills it whatever is chosen; say so
+        <div hidden={uiStyle.style === "preview"}>
+          <AppearanceChoice<LcdBodyFont>
+            name="lcdBody"
+            label={t("lcdBodyLabel")}
+            value={uiStyle.lcdBody}
+            onChange={(lcdBody) => setUiStylePrefs({ lcdBody })}
+            options={[
+              {
+                value: "proportional",
+                label: t("lcdBodyProportional"),
+                title: t("lcdBodyProportionalHint"),
+              },
+              { value: "mono", label: t("lcdBodyMono") },
+              { value: "pixel", label: t("lcdBodyPixel") },
+            ]}
+          />
+          {/* Below 768px messages already use the full width, so the choice would change nothing. */}
+          <AppearanceChoice<LcdWidth>
+            name="lcdWidth"
+            label={t("lcdWidthLabel")}
+            value={uiStyle.lcdWidth}
+            onChange={(lcdWidth) => setUiStylePrefs({ lcdWidth })}
+            options={[
+              { value: "column", label: t("lcdWidthColumn") },
+              { value: "wide", label: t("lcdWidthWide") },
+              { value: "full", label: t("lcdWidthFull") },
+            ]}
+            className="max-md:hidden"
+          />
+          <AppearanceChoice<LcdMotion>
+            name="lcdMotion"
+            label={t("lcdMotionLabel")}
+            value={uiStyle.lcdMotion}
+            onChange={(lcdMotion) => setUiStylePrefs({ lcdMotion })}
+            options={[
+              { value: "on", label: t("lcdMotionOn") },
+              { value: "off", label: t("lcdMotionOff") },
+            ]}
+            className={systemReducedMotion ? "pb-1" : ""}
+          />
+          {/* The system's reduced-motion setting stills it whatever is chosen; say so
               where the choice is made, without changing the stored choice. */}
-        {systemReducedMotion ? (
-          <p
-            className="px-2 pb-2 text-xs text-[var(--color-text-secondary)]"
-            data-lcd-motion-system
-          >
-            {t("lcdMotionSystemStill")}
-          </p>
+          {systemReducedMotion ? (
+            <p
+              className="px-2 pb-2 text-xs text-[var(--color-text-secondary)]"
+              data-lcd-motion-system
+            >
+              {t("lcdMotionSystemStill")}
+            </p>
+          ) : null}
+        </div>
+        {uiStyle.style !== "preview" ? (
+          <AppearanceChoice
+            name="pendingPrompts"
+            label={t("pendingPromptsLabel")}
+            value={showPendingPrompts ? "show" : "off"}
+            onChange={(value) => setShowPendingPrompts(value === "show")}
+            options={[
+              { value: "show", label: t("pendingPromptsShow") },
+              { value: "off", label: t("pendingPromptsOff") },
+            ]}
+          />
         ) : null}
-        <AppearanceChoice
-          name="pendingPrompts"
-          label={t("pendingPromptsLabel")}
-          value={showPendingPrompts ? "show" : "off"}
-          onChange={(value) => setShowPendingPrompts(value === "show")}
-          options={[
-            { value: "show", label: t("pendingPromptsShow") },
-            { value: "off", label: t("pendingPromptsOff") },
-          ]}
-        />
         <AppearanceChoice<TextScale>
           name="textScale"
           label={t("textSizeLabel")}

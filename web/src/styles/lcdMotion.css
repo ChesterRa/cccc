@@ -6,14 +6,14 @@
    reduce rule only cuts each animation to one 0.01 ms run, so each still form is an
    explicit rule here, placed after the moving one it replaces. */
 
-:root[data-ui-style="lcd"] {
+:root:is([data-ui-style="lcd"], [data-ui-style="preview"]) {
   /* One lap of the busy ring. RuntimeDock reads it to align newly moving rings. */
   --lcd-ring-lap: 2s;
-  --lcd-ring-head: var(--lcd-ink);
+  --lcd-ring-head: var(--lcd-ink, var(--color-text-primary));
 }
 
-:root[data-ui-style="lcd"].dark {
-  --lcd-ring-head: var(--lcd-ink-strong);
+:root:is([data-ui-style="lcd"], [data-ui-style="preview"]).dark {
+  --lcd-ring-head: var(--lcd-ink-strong, var(--color-text-primary));
 }
 
 /* ---- Member tiles: header row, "+N" list and phone dock ---- */
@@ -21,7 +21,7 @@
 /* Busy: a ring of 2px pixel dots one hairline outside the 2rem plate, on a 3px pitch:
    48 dots, 12 a side. A bright head with a fading tail steps round it one dot at a time.
    Still form: every dot lit. */
-:root[data-ui-style="lcd"] .lcd-member-ring {
+:root:is([data-ui-style="lcd"], [data-ui-style="preview"]) .lcd-member-ring {
   --dot: 0.125rem;
   --pitch: 0.1875rem;
   --near: 0.0625rem;
@@ -44,14 +44,14 @@
 }
 
 /* Moving, the dots dim to a track and the head runs over them. */
-:root[data-ui-style="lcd"] .lcd-member-ring[data-ring="moving"] {
+:root:is([data-ui-style="lcd"], [data-ui-style="preview"]) .lcd-member-ring[data-ring="moving"] {
   --dots: color-mix(in srgb, var(--lcd-ring-head) 20%, transparent);
 }
 
 /* The head and six tail dots. Each trails the one before by a step (1/48 lap). A whole
    lap is taken off every delay so all are negative: no dot waits in a corner first.
    Literal lengths keep the transform cheap whenever the page draws a main frame. */
-:root[data-ui-style="lcd"] .lcd-member-ring i {
+:root:is([data-ui-style="lcd"], [data-ui-style="preview"]) .lcd-member-ring i {
   position: absolute;
   top: 0;
   left: 0;
@@ -65,40 +65,40 @@
   );
 }
 
-:root[data-ui-style="lcd"] .lcd-member-ring[data-ring="moving"] i {
+:root:is([data-ui-style="lcd"], [data-ui-style="preview"]) .lcd-member-ring[data-ring="moving"] i {
   display: block;
 }
 
-:root[data-ui-style="lcd"] .lcd-member-ring i:nth-child(1) {
+:root:is([data-ui-style="lcd"], [data-ui-style="preview"]) .lcd-member-ring i:nth-child(1) {
   --k: 0;
 }
 
-:root[data-ui-style="lcd"] .lcd-member-ring i:nth-child(2) {
+:root:is([data-ui-style="lcd"], [data-ui-style="preview"]) .lcd-member-ring i:nth-child(2) {
   --k: 1;
   opacity: 0.78;
 }
 
-:root[data-ui-style="lcd"] .lcd-member-ring i:nth-child(3) {
+:root:is([data-ui-style="lcd"], [data-ui-style="preview"]) .lcd-member-ring i:nth-child(3) {
   --k: 2;
   opacity: 0.6;
 }
 
-:root[data-ui-style="lcd"] .lcd-member-ring i:nth-child(4) {
+:root:is([data-ui-style="lcd"], [data-ui-style="preview"]) .lcd-member-ring i:nth-child(4) {
   --k: 3;
   opacity: 0.45;
 }
 
-:root[data-ui-style="lcd"] .lcd-member-ring i:nth-child(5) {
+:root:is([data-ui-style="lcd"], [data-ui-style="preview"]) .lcd-member-ring i:nth-child(5) {
   --k: 4;
   opacity: 0.32;
 }
 
-:root[data-ui-style="lcd"] .lcd-member-ring i:nth-child(6) {
+:root:is([data-ui-style="lcd"], [data-ui-style="preview"]) .lcd-member-ring i:nth-child(6) {
   --k: 5;
   opacity: 0.2;
 }
 
-:root[data-ui-style="lcd"] .lcd-member-ring i:nth-child(7) {
+:root:is([data-ui-style="lcd"], [data-ui-style="preview"]) .lcd-member-ring i:nth-child(7) {
   --k: 6;
   opacity: 0.1;
 }
@@ -122,24 +122,29 @@
   }
 }
 
-:root[data-ui-style="lcd"][data-lcd-motion="off"] .lcd-member-ring[data-ring] {
+:root:is([data-ui-style="lcd"], [data-ui-style="preview"])[data-lcd-motion="off"]
+  .lcd-member-ring[data-ring] {
   --dots: var(--lcd-ring-head);
 }
 
-:root[data-ui-style="lcd"][data-lcd-motion="off"] .lcd-member-ring[data-ring] i {
+:root:is([data-ui-style="lcd"], [data-ui-style="preview"])[data-lcd-motion="off"]
+  .lcd-member-ring[data-ring]
+  i {
   display: none;
 }
 
 /* The ring is a busy tile's line, so the plate's own edge goes and the dots sit one
    hairline off the face. A runtime logo's white (its own colour) reaches the edge. The
    finish flash keeps the same plate for its moment. */
-:root[data-ui-style="lcd"]
+:root:is([data-ui-style="lcd"], [data-ui-style="preview"])
   :is(.lcd-member, [data-lcd-dock-button]):is([data-tone="active"], [data-flourish])
   .lcd-tile {
   border-color: transparent;
 }
 
-:root[data-ui-style="lcd"] .lcd-member-tile .lcd-tile:has(> [data-runtime-logo]) {
+:root:is([data-ui-style="lcd"], [data-ui-style="preview"])
+  .lcd-member-tile
+  .lcd-tile:has(> [data-runtime-logo]) {
   background: #fff;
 }
 

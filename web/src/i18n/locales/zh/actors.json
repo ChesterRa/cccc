@@ -146,6 +146,12 @@
   "secretsSection": "环境变量",
   "capabilitiesSection": "能力",
   "profileToolsSection": "运行配置工具",
+  "commandSection": "启动命令",
+  "advancedChanged": {
+    "command": "自定义命令",
+    "environment": "{{count}} 个环境变量",
+    "capabilities": "{{count}} 项能力"
+  },
   "displayName": "显示名称",
   "leaveEmptyForId": "留空则使用智能体 ID 作为显示名称",
   "agentId": "智能体 ID",
@@ -263,6 +269,7 @@
   "rolePresetNone": "不选择预置",
   "rolePresetNoneDescription": "清空预置选择，并保留当前智能体提示词。",
   "rolePresetSelectPlaceholder": "选择一个内置预置",
+  "rolePresetFill": "从预置填入",
   "rolePresetSelectPrompt": "先选一个预置，再把它写入下面的草稿。",
   "applyPreset": "应用",
   "rolePresetCatalog": {
@@ -540,6 +547,7 @@
   "workingDirectoryEditHint": "保存只修改下次启动配置，不会重启或移动现有进程。跟随工作组会在启动时使用工作组当前目录；固定目录仅绑定此智能体。切换仓库不保证继承原会话或上下文。",
   "workingDirectoryUnavailable": "此目录已不再挂载，请选择其他目录。",
   "workingDirectoryAdd": "添加其他目录",
+  "workingDirectoryChange": "更改",
   "workingDirectoryPath": "CCCC 主机上的目录路径",
   "workingDirectoryBrowse": "浏览路径",
   "workingDirectoryUse": "添加并选择",

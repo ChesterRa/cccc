@@ -146,6 +146,12 @@
   "secretsSection": "Environment variables",
   "capabilitiesSection": "Capabilities",
   "profileToolsSection": "Runtime profile tools",
+  "commandSection": "Launch command",
+  "advancedChanged": {
+    "command": "Custom command",
+    "environment": "Environment variables: {{count}}",
+    "capabilities": "Capabilities: {{count}}"
+  },
   "displayName": "Display Name",
   "leaveEmptyForId": "Leave empty to use the agent ID as display name",
   "agentId": "Agent ID",
@@ -263,6 +269,7 @@
   "rolePresetNone": "No preset",
   "rolePresetNoneDescription": "Clear the preset selection and keep the current agent notes.",
   "rolePresetSelectPlaceholder": "Choose a built-in preset",
+  "rolePresetFill": "Fill from a preset",
   "rolePresetSelectPrompt": "Choose a preset, then apply it into the draft below.",
   "applyPreset": "Apply",
   "rolePresetCatalog": {
@@ -540,6 +547,7 @@
   "workingDirectoryEditHint": "Saving changes only the next-start configuration: it does not restart or move the current process. Follow Group uses the Group’s active directory at launch; a fixed directory is for this agent only. Changing repositories does not guarantee the old session or context will carry over.",
   "workingDirectoryUnavailable": "This directory is no longer attached. Select another directory.",
   "workingDirectoryAdd": "Add another directory",
+  "workingDirectoryChange": "Change",
   "workingDirectoryPath": "Directory path on the CCCC host",
   "workingDirectoryBrowse": "Browse path",
   "workingDirectoryUse": "Add and select",

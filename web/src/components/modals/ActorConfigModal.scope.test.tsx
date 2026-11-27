@@ -152,10 +152,25 @@ afterEach(async () => {
   vi.unstubAllGlobals();
   setAuthToken("");
 });
+// The working directory is one summary line, and the edit dialog's advanced settings are
+// closed, until the user asks for them. These tests are about what lies behind both.
+const revealFolded = async () => {
+  const folded = [...document.querySelectorAll<HTMLButtonElement>("button")].filter(
+    (node) =>
+      !node.disabled &&
+      !node.closest("[hidden]") &&
+      (node.textContent === "workingDirectoryChange" ||
+        (node.getAttribute("aria-expanded") === "false" &&
+          node.textContent?.startsWith("sectionAdvanced"))),
+  );
+  for (const node of folded) await act(async () => node.click());
+};
 const render = async (key = "g_a") => {
   await act(async () => root.render(<ActorConfigModal key={key} {...props} />));
+  await revealFolded();
 };
 const choose = async (value: string) => {
+  await revealFolded();
   const select = document.querySelector<HTMLSelectElement>(
     'select[aria-label="workingDirectory"]',
   )!;
@@ -233,12 +248,46 @@ it("does not silently retarget a removed selection to the remaining Group direct
   expect(create().disabled).toBe(false);
 });
 
+it("keeps create's advanced settings behind their own tab and flags what was set there", async () => {
+  await render();
+  const tab = (label: string) =>
+    [...document.querySelectorAll<HTMLElement>('[role="tab"]')].find((node) =>
+      node.textContent?.startsWith(label),
+    )!;
+  const reachable = (name: string) =>
+    !document.querySelector(`[data-actor-config-view="${name}"]`)!.hasAttribute("inert");
+
+  expect(tab("sectionAdvanced").textContent).toBe("sectionAdvanced");
+  expect([reachable("form"), reachable("advanced")]).toEqual([true, false]);
+
+  await act(async () => tab("sectionAdvanced").click());
+  expect(tab("sectionAdvanced").getAttribute("aria-selected")).toBe("true");
+  expect([reachable("form"), reachable("advanced")]).toEqual([false, true]);
+
+  props = { ...props, secretsSetText: "FIXTURE_KEY=synthetic" };
+  await render();
+  expect(tab("sectionAdvanced").textContent).toBe("sectionAdvancedadvancedChanged.environment");
+
+  // Every tab is laid out under one sizing rule, so switching cannot resize the dialog.
+  const sizing = () => document.querySelector('[role="dialog"]')!.className;
+  const advancedSizing = sizing();
+  await act(async () => tab("runtimeSwitch.web").click());
+  expect(sizing()).toBe(advancedSizing);
+  await act(async () => tab("runtimeSwitch.managed").click());
+  expect(tab("runtimeSwitch.managed").getAttribute("aria-selected")).toBe("true");
+  expect(sizing()).toBe(advancedSizing);
+  expect([reachable("form"), reachable("advanced")]).toEqual([true, false]);
+  // Leaving the tab does not drop the reminder about what was set there.
+  expect(tab("sectionAdvanced").textContent).toBe("sectionAdvancedadvancedChanged.environment");
+});
+
 const button = (label: string) =>
   [...document.querySelectorAll<HTMLButtonElement>("button")].find(
     (node) => node.textContent === label && !node.closest("[hidden]"),
   );
 
 async function stageFixtureSecret() {
+  await revealFolded();
   await act(async () => button("secretManager.addVariable")!.click());
   const panel = host.querySelector<HTMLElement>('[aria-label="secretManager.title"]')!;
   const key = panel.querySelector<HTMLInputElement>("label input")!;
@@ -530,6 +579,7 @@ async function editActor(
       />,
     ),
   );
+  await revealFolded();
   return { mutations, groupDoc, profile, fetch, saved: () => savedActor };
 }
 
@@ -548,6 +598,7 @@ it.each([false, true])(
     const { mutations, groupDoc, saved } = await editActor(
       linked ? { profile_id: "codex-profile", profile_scope: "global" } : {},
     );
+    await revealFolded();
     expect(directorySelect()?.value).toBe("");
     expect(document.body.textContent).toContain("workingDirectoryEffective: /fixture/a");
     expect(button("common:done")).toBeDefined();
@@ -595,6 +646,7 @@ it("keeps the directory draft across Profile switches, cancels it, and saves Fol
   await act(async () => button("common:cancel")!.click());
   expect(mutations).toEqual([]);
   await act(async () => useModalStore.getState().openActorEditor(saved()));
+  await revealFolded();
   expect(directorySelect()?.value).toBe("s_b");
   await choose("");
   const confirm = vi.fn().mockReturnValueOnce(false).mockReturnValueOnce(true);
@@ -688,6 +740,7 @@ async function setDirectoryPath(path: string) {
 }
 
 async function openDirectoryPicker() {
+  await revealFolded();
   await act(async () => button("workingDirectoryAdd")!.click());
   expect(button("workingDirectoryUse")).toBeDefined();
 }
@@ -870,6 +923,7 @@ it.each(["actor", "group", "modal", "cancel"])(
     await act(async () =>
       pending.resolve(respond({ group_id: "g_a", scope_key: "s_c", scope: addedScope })),
     );
+    await revealFolded();
     expect(directorySelect()?.value).toBe(
       change === "actor" ? "s_a" : change === "cancel" ? "s_b" : "",
     );
@@ -904,9 +958,11 @@ it.each(["create", "edit"])(
       }
       useGroupStore.setState({ selectedGroupId: "g_b" });
     });
+    await revealFolded();
     expect(button("workingDirectoryAdd")).toBeUndefined();
     expect(mutations).toEqual([]);
     await act(async () => useGroupStore.setState({ groupDoc: { ...groupDoc, group_id: "g_b" } }));
+    await revealFolded();
     expect(button("workingDirectoryAdd")).toBeDefined();
   },
 );
@@ -941,6 +997,7 @@ it.each(["group", "modal"])(
     await act(async () =>
       pending.resolve(respond({ group_id: "g_a", scope_key: "s_c", scope: addedScope })),
     );
+    await revealFolded();
     expect(directorySelect()?.value).toBe("");
     expect(useGroupStore.getState().groupDoc?.scopes).toHaveLength(2);
     expect(mutations).toHaveLength(1);
@@ -959,6 +1016,7 @@ it("keeps an attached Group directory after canceling the Actor without saving i
   expect(saved().default_scope_key).toBe("");
   expect(useGroupStore.getState().groupDoc?.scopes).toHaveLength(3);
   await act(async () => useModalStore.getState().openActorEditor(saved()));
+  await revealFolded();
   expect(directorySelect()?.value).toBe("");
   expect(directorySelect()?.querySelector('option[value="s_c"]')).not.toBeNull();
 });
