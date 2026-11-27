@@ -718,6 +718,7 @@
   "codexVoiceAnalystRuntimeMissing": "找不到 Chet 所配置的 Runtime（{{runtime}}）。请检查 Runtime Profile，或从能够运行它的终端重启 CCCC。",
   "codexVoiceAntigravityAcpSetupRequired": "Antigravity ACP 组件尚未安装。请在运行 CCCC 的机器上执行 cccc setup --runtime antigravity --runtime-mode acp --login，完成安装和独立 Google 登录，然后重试。ACP 与原生 agy 使用不同的登录环境。",
   "codexVoiceCodexLoginRequired": "Realtime Voice 尚无 ChatGPT 登录。请在 CCCC 宿主环境运行 codex login 后刷新页面；Chet 的 Profile 凭据与其相互独立。",
+  "codexVoiceDismissLoginReminder": "关闭语音登录提醒",
   "codexVoiceAnalystEmptyTitle": "Chet 尚未就绪",
   "codexVoiceAnalystTerminalPending": "Chet 的受管会话就绪后，工作过程会显示在这里。",
   "codexVoiceTerminalDisconnected": "终端已断开",

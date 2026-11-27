@@ -1510,6 +1510,7 @@
     "buildMismatchHint": "这些组件使用了不同构建。请检查实际运行的 CCCC 安装；重启或刷新前先保存草稿。"
   },
   "webAccess": {
+    "overviewTab": "概览",
     "title": "Web 访问",
     "description": "管理谁能连到 Web，以及连上后谁能登录。",
     "refresh": "刷新",

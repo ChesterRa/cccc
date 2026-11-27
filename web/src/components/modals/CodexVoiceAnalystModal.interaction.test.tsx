@@ -250,6 +250,83 @@ describe("CodexVoiceAnalystModal settings navigation", () => {
       await act(async () => root.unmount());
     },
   );
+
+  it("remembers hiding only the optional ChatGPT voice login row", async () => {
+    const preference = "cccc.chet.voiceLoginReminder.dismissed";
+    localStorage.removeItem(preference);
+    const host = document.createElement("div");
+    document.body.append(host);
+    let root = createRoot(host);
+    const voice = controller();
+    voice.phase = "idle";
+    voice.isEngaged = false;
+    voice.owned = false;
+    voice.analyst = null;
+    voice.readiness = {
+      ...voice.readiness!,
+      analyst_runtime: "opencode",
+      analyst_runtime_available: false,
+      realtime_credentials_available: false,
+    };
+    const close = vi.fn();
+    const render = (isOpen = true) =>
+      act(async () =>
+        root.render(
+          <CodexVoiceAnalystModal
+            isOpen={isOpen}
+            isDark={false}
+            isSmallScreen={false}
+            controller={voice}
+            chet={chetConversationStub()}
+            onClose={close}
+          />,
+        ),
+      );
+    const rows = () => host.querySelector("[data-codex-voice-readiness]")!;
+    try {
+      await render();
+      expect(rows().textContent).toContain("codexVoiceCodexLoginRequired");
+      expect(rows().textContent).toContain("codexVoiceAnalystRuntimeMissing");
+      const dismiss = rows().querySelector<HTMLButtonElement>(
+        '[aria-label="codexVoiceDismissLoginReminder"]',
+      );
+      expect(dismiss, "the optional login row has its own close control").not.toBeNull();
+      await act(async () => dismiss!.click());
+      expect(rows().textContent).not.toContain("codexVoiceCodexLoginRequired");
+      expect(rows().textContent).toContain("codexVoiceAnalystRuntimeMissing");
+      expect(close).not.toHaveBeenCalled();
+      await render(false);
+      await render();
+      expect(rows().textContent).not.toContain("codexVoiceCodexLoginRequired");
+
+      // A new app instance, as after a reload, reads the browser preference again.
+      await act(async () => root.unmount());
+      root = createRoot(host);
+      await render();
+      expect(rows().textContent).not.toContain("codexVoiceCodexLoginRequired");
+      expect(rows().textContent).toContain("codexVoiceAnalystRuntimeMissing");
+      await act(async () => buttonByLabel(host, "codexVoiceSettings").click());
+      expect(useModalStore.getState().settingsTarget).toMatchObject({
+        scope: "global",
+        tab: "voice",
+        voiceSection: "realtime",
+      });
+
+      voice.error = "codexVoiceErrors.codex_voice_realtime_auth_failed";
+      await render();
+      expect(host.querySelector('[role="alert"]')?.textContent).toContain(voice.error);
+      voice.readiness = { ...voice.readiness!, realtime_provider: "grok" };
+      await render();
+      expect(rows().textContent).toContain("codexVoiceGrokLoginRequired");
+      expect(voice.start).not.toHaveBeenCalled();
+      expect(voice.disconnect).not.toHaveBeenCalled();
+      expect(voice.clearError).not.toHaveBeenCalled();
+    } finally {
+      await act(async () => root.unmount());
+      host.remove();
+      localStorage.removeItem(preference);
+    }
+  });
 });
 
 it("shows a saved unattended copy again after turning the mode off and reopening history", async () => {

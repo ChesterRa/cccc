@@ -19,6 +19,7 @@ import {
 } from "../../features/codexVoice/codexVoiceControllerText";
 import type { CodexVoiceSessionController } from "../../features/codexVoice/useCodexVoiceSessionController";
 import { ChetHead } from "../../features/chet/ChetHead";
+import { ChetReadinessRows } from "../../features/chet/ChetReadinessRows";
 import { ChetConversationPane, ChetStopWorkButton } from "../../features/chet/ChetConversationPane";
 import type { ChetConversation } from "../../features/chet/useChetConversation";
 import type { ProcessRecoveryOwner } from "../../services/api/processRecovery";
@@ -418,27 +419,11 @@ export function CodexVoiceAnalystModal({
             data-status-tone="warning"
             className="flex flex-none flex-wrap items-start gap-x-4 gap-y-2 border-b border-amber-400/25 bg-amber-400/8 px-4 py-2.5 text-sm sm:px-6"
           >
-            <dl className="min-w-0 flex-1 basis-full space-y-1 leading-6 sm:basis-0">
-              {[
-                ["codexVoiceReadinessCall", callProblem],
-                ["chet.runtime", analystProblem],
-              ].map(([label, problem]) => (
-                <div key={label} className="block min-w-0 sm:flex sm:gap-2">
-                  <dt className="mr-2 inline font-semibold text-[var(--color-text-primary)] sm:mr-0 sm:block sm:flex-none">
-                    {t(label)}
-                  </dt>
-                  <dd
-                    className={`inline min-w-0 break-words sm:block ${
-                      problem
-                        ? "text-amber-700 dark:text-amber-300"
-                        : "text-[var(--color-text-muted)]"
-                    }`}
-                  >
-                    {problem || t("codexVoiceReadinessOk")}
-                  </dd>
-                </div>
-              ))}
-            </dl>
+            <ChetReadinessRows
+              readiness={controller.readiness}
+              callProblem={callProblem}
+              analystProblem={analystProblem}
+            />
             <Button
               type="button"
               variant="ghost"

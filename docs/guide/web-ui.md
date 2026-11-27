@@ -787,6 +787,7 @@ subscription login (`grok login`) and requires `grok` on CCCC's PATH. Neither pa
 API key. The console distinguishes a missing Grok executable from a missing login and offers a status
 refresh. Status reads do not start a CLI or refresh login; Start uses Grok's native authentication
 manager, including its credential lock, and gives the browser only a short-lived connection secret.
+You can close the ChatGPT voice login reminder; this browser remembers your choice, and the login instructions remain available on Chet's call control.
 Grok uses `grok-voice-3.0`, direct browser WebSocket audio and server voice-activity detection. The
 browser resamples its microphone to 24 kHz PCM and plays output through the shared selected speaker.
 An interrupted response stops locally at once. An investigation tool acknowledges reception after

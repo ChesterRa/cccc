@@ -287,10 +287,10 @@ it("opens the existing-session page for the fixed Group without mounting a secon
         .click(),
     );
     await act(async () => button("localSessions.addDevice")!.click());
-    expect(button("layout:localSessions.newSessionTab")).toBeUndefined();
+    expect(button("runtimeSwitch.managed")).toBeUndefined();
     expect(host.querySelectorAll('[role="dialog"]')).toHaveLength(1);
     await act(async () => button("sessionNodes.backToSessionList")!.click());
-    expect(button("layout:localSessions.newSessionTab")).toBeDefined();
+    expect(button("runtimeSwitch.managed")).toBeDefined();
     expect(props.onCreate).not.toHaveBeenCalled();
   } finally {
     useUIStore.setState({ isWebAdmin, webReadOnly });

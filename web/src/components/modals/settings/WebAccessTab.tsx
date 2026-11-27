@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { GroupMeta, RemoteAccessState, WebAccessSession } from "../../../types";
-import { ChevronDownIcon, InfoIcon } from "../../Icons";
+import { InfoIcon } from "../../Icons";
 import { BodyPortal } from "../../ui/BodyPortal";
 import { SelectCombobox } from "../../SelectCombobox";
 import { InfoPopover } from "./InfoPopover";
@@ -15,6 +15,8 @@ import {
 import { useReachWebLogin } from "./useReachWebLogin";
 import { useWebAccessSessionSummaries } from "./useWebAccessSessionSummaries";
 import { WebAccessReachabilityActions } from "./WebAccessReachabilityActions";
+import { WebAccessSections } from "./WebAccessSections";
+import { WebAccessTokenPages } from "./WebAccessTokenPages";
 import * as api from "../../../services/api";
 import { endConnectFrame } from "../../../features/connect/protocol";
 import { unbindBeforeSignOut } from "../../../features/pushNotifications/subscription";
@@ -138,20 +140,6 @@ export function WebAccessTab({
     stopReach,
   } = membershipController;
   const reachSectionRef = useRef<HTMLElement | null>(null);
-
-  useEffect(() => {
-    if (!isActive || !focusReach) return;
-    let innerFrame = 0;
-    const outerFrame = window.requestAnimationFrame(() => {
-      innerFrame = window.requestAnimationFrame(() => {
-        reachSectionRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
-      });
-    });
-    return () => {
-      window.cancelAnimationFrame(outerFrame);
-      if (innerFrame) window.cancelAnimationFrame(innerFrame);
-    };
-  }, [focusReach, isActive]);
 
   const [remoteState, setRemoteState] = useState<RemoteAccessState | null>(null);
   const remoteStateRef = useRef<RemoteAccessState | null>(null);
@@ -1438,8 +1426,8 @@ export function WebAccessTab({
           </button>
         </div>
 
-        <div className={settingsWorkspaceBodyClass}>
-          {(error || hint) && (
+        {(error || hint) && (
+          <div className={settingsWorkspaceBodyClass}>
             <div
               role={error ? "alert" : "status"}
               data-status-tone={error ? "error" : "ok"}
@@ -1451,867 +1439,877 @@ export function WebAccessTab({
             >
               {error || hint}
             </div>
-          )}
-
-          <div className="grid gap-4 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
-            <div className={settingsWorkspacePanelClass(isDark)}>
-              <div className="text-xs uppercase tracking-wide text-[var(--color-text-muted)]">
-                {t("webAccess.cards.reachability")}
+          </div>
+        )}
+      </div>
+      <WebAccessSections
+        isActive={isActive}
+        focusReach={focusReach}
+        reachSectionRef={reachSectionRef}
+        tokens={
+          <section className={settingsWorkspaceShellClass(isDark)}>
+            <div className={settingsWorkspaceHeaderClass(isDark)}>
+              <div className="min-w-0">
+                <h4 className="text-sm font-semibold text-[var(--color-text-primary)]">
+                  {t("webAccess.accessControlTitle")}
+                </h4>
+                <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+                  {t("webAccess.accessControlDescription")}
+                </p>
               </div>
-              <div
-                className={`mt-2 inline-flex rounded-full border px-2.5 py-1 text-xs ${statusChipClass(isDark, reachabilitySummary.tone)}`}
-                data-status-tone={lcdStatusTone(reachabilitySummary.tone)}
-              >
-                {reachabilitySummary.label}
-              </div>
-              <div className="mt-3 text-sm leading-6 text-[var(--color-text-secondary)]">
-                {reachabilitySummary.detail}
-              </div>
+              <span className="flex shrink-0 items-center gap-2">
+                <span
+                  className={`rounded-full border px-2.5 py-1 text-xs ${statusChipClass(isDark, accessSummary.tone)}`}
+                  data-status-tone={lcdStatusTone(accessSummary.tone)}
+                >
+                  {accessSummary.label}
+                </span>
+              </span>
             </div>
 
-            <div className={settingsWorkspacePanelClass(isDark)}>
-              <div className="text-xs uppercase tracking-wide text-[var(--color-text-muted)]">
-                {t("webAccess.cards.accessControl")}
-              </div>
-              <div
-                className={`mt-2 inline-flex rounded-full border px-2.5 py-1 text-xs ${statusChipClass(isDark, accessSummary.tone)}`}
-                data-status-tone={lcdStatusTone(accessSummary.tone)}
-              >
-                {accessSummary.label}
-              </div>
-              <div className="mt-3 text-sm leading-6 text-[var(--color-text-secondary)]">
-                {accessSummary.detail}
-              </div>
-
-              <div className={`mt-4 ${settingsWorkspaceSectionClass}`}>
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="text-xs uppercase tracking-wide text-[var(--color-text-muted)]">
-                      {t("webAccess.currentBrowserTitle")}
-                    </div>
-                    <div className="mt-1 text-sm font-medium text-[var(--color-text-primary)]">
-                      {currentBrowserSummary.label}
-                    </div>
-                    <div className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
-                      {currentBrowserSummary.detail}
-                    </div>
-                  </div>
-                  {loginActive || canSignOutCurrentBrowser ? (
-                    <InfoPopover
-                      isDark={isDark}
-                      title={t("webAccess.currentBrowserTitle")}
-                      content={
-                        <div className="space-y-2">
-                          {loginActive ? (
-                            <div>{t("webAccess.currentBrowserVerifyHint")}</div>
-                          ) : null}
-                          {canSignOutCurrentBrowser ? (
-                            <div>{t("webAccess.signOutHint")}</div>
-                          ) : null}
-                        </div>
-                      }
-                    >
-                      {(getReferenceProps, setReference) => (
-                        <button
-                          type="button"
-                          ref={setReference as never}
-                          {...getReferenceProps()}
-                          className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border transition-colors ${statusChipClass(isDark, currentBrowserSummary.tone)}`}
-                          aria-label={t("webAccess.currentBrowserTitle")}
-                          data-status-tone={lcdStatusTone(currentBrowserSummary.tone)}
-                        >
-                          <InfoIcon size={12} />
-                        </button>
-                      )}
-                    </InfoPopover>
-                  ) : null}
-                </div>
-                {canSignOutCurrentBrowser ? (
-                  <div className="mt-3 flex flex-wrap gap-2">
+            <div className={settingsWorkspaceBodyClass}>
+              <div className="space-y-3">
+                {canAccessGlobalSettings && knownAccessTokenCount > 0 ? (
+                  <div className="flex justify-end">
                     <button
                       type="button"
-                      onClick={() => void handleSignOut()}
-                      disabled={signOutBusy}
-                      className={secondaryButtonClass()}
+                      onClick={() => openCreateDialog()}
+                      className={primaryButtonClass(false)}
                     >
-                      {signOutBusy ? t("common:loading") : t("webAccess.signOut")}
+                      {t("common:create")}
                     </button>
                   </div>
                 ) : null}
+                {!canAccessGlobalSettings ? (
+                  <div
+                    className="rounded-lg border border-amber-500/30 bg-amber-500/15 p-6 text-sm text-amber-600 dark:text-amber-400"
+                    data-status-tone="warning"
+                  >
+                    <div className="font-medium">{t("webAccess.managementLockedTitle")}</div>
+                    <div className="mt-2 text-xs leading-6">
+                      {t("webAccess.managementLockedHint")}
+                    </div>
+                  </div>
+                ) : busy && accessTokens.length === 0 ? (
+                  <p role="status" className="py-4 text-sm text-[var(--color-text-muted)]">
+                    {t("common:loading")}
+                  </p>
+                ) : accessTokens.length === 0 ? (
+                  <div className="rounded-xl border border-dashed border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] p-6 text-[var(--color-text-secondary)]">
+                    <div className="text-sm font-medium">{t("webAccess.noAccessTokens")}</div>
+                    <div className="mt-2 text-xs leading-6 text-[var(--color-text-muted)]">
+                      {t("webAccess.firstTokenAdminHint")}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => openCreateDialog()}
+                      className={`mt-4 ${primaryButtonClass(false)}`}
+                    >
+                      {t("common:create")}
+                    </button>
+                  </div>
+                ) : (
+                  <WebAccessTokenPages entries={accessTokens}>
+                    {(token) => {
+                      const tokenId = token.token_id || "";
+                      const isEditing = editingTokenId === tokenId;
+                      return (
+                        <div
+                          key={tokenId || token.user_id}
+                          className={settingsWorkspacePanelClass(isDark)}
+                        >
+                          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                            <div>
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <div className="text-sm font-semibold text-[var(--color-text-primary)]">
+                                  {token.user_id}
+                                </div>
+                                <span
+                                  className={`rounded-full border px-2 py-0.5 text-xs ${statusChipClass(isDark, token.is_admin ? "good" : "neutral")}`}
+                                  data-status-tone={token.is_admin ? "ok" : undefined}
+                                >
+                                  {token.is_admin
+                                    ? t("webAccess.adminBadge")
+                                    : t("webAccess.scopedBadge")}
+                                </span>
+                                <span
+                                  className={`rounded-full border px-2 py-0.5 text-xs ${statusChipClass(isDark, "neutral")}`}
+                                >
+                                  {token.token_preview || "****"}
+                                </span>
+                              </div>
+                              <div className="mt-1 text-xs text-[var(--color-text-muted)]">
+                                {token.is_admin
+                                  ? t("webAccess.allGroupsAccess")
+                                  : (token.allowed_groups || []).length > 0
+                                    ? t("webAccess.scopedGroupsHint", {
+                                        count: token.allowed_groups.length,
+                                      })
+                                    : t("webAccess.noGroupsAssigned")}
+                              </div>
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              {!token.is_admin ? (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (!tokenId) return;
+                                    startEdit(token);
+                                  }}
+                                  disabled={!tokenId || deleteBusyTokenId === tokenId}
+                                  className={secondaryButtonClass("sm")}
+                                >
+                                  {t("webAccess.edit")}
+                                </button>
+                              ) : null}
+                              <button
+                                type="button"
+                                onClick={() => void revealAndCopy(tokenId)}
+                                disabled={!tokenId || deleteBusyTokenId === tokenId}
+                                className={secondaryButtonClass("sm")}
+                              >
+                                {copiedTokenId === tokenId
+                                  ? t("webAccess.copied")
+                                  : t("webAccess.copyToken")}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (!tokenId) return;
+                                  setEditingTokenId(null);
+                                  setPendingDeleteTokenId((prev) =>
+                                    prev === tokenId ? null : tokenId,
+                                  );
+                                }}
+                                disabled={!tokenId || deleteBusyTokenId === tokenId}
+                                className="inline-flex min-h-[36px] items-center justify-center rounded-xl border border-rose-500/30 bg-rose-500/12 px-3 py-1.5 text-xs font-medium text-rose-600 transition-colors hover:bg-rose-500/18 disabled:opacity-50 dark:text-rose-300"
+                                data-status-tone="error"
+                              >
+                                {t("webAccess.delete")}
+                              </button>
+                            </div>
+                          </div>
+
+                          {pendingDeleteTokenId === tokenId && (
+                            <div
+                              className="mt-3 rounded-lg border border-red-500/30 bg-red-500/15 p-3"
+                              data-status-tone="error"
+                            >
+                              <div
+                                className="text-xs text-red-600 dark:text-red-400"
+                                data-status-tone="error"
+                              >
+                                {t("webAccess.deleteConfirm")}
+                              </div>
+                              <div className="mt-3 flex flex-wrap gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => void handleDeleteAccessToken(tokenId)}
+                                  disabled={deleteBusyTokenId === tokenId}
+                                  className="inline-flex min-h-[36px] items-center justify-center rounded-xl border border-rose-600 bg-rose-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-rose-700 disabled:opacity-50"
+                                  data-status-tone="error"
+                                >
+                                  {deleteBusyTokenId === tokenId
+                                    ? t("common:loading")
+                                    : t("webAccess.delete")}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setPendingDeleteTokenId(null)}
+                                  disabled={deleteBusyTokenId === tokenId}
+                                  className={secondaryButtonClass("sm")}
+                                >
+                                  {t("webAccess.cancel")}
+                                </button>
+                              </div>
+                            </div>
+                          )}
+
+                          {isEditing && (
+                            <div className={`mt-3 ${settingsWorkspaceSoftPanelClass(isDark)}`}>
+                              <div className="text-xs font-medium text-[var(--color-text-secondary)]">
+                                {t("webAccess.editScopeTitle")}
+                              </div>
+                              <div className="mt-2 max-h-44 overflow-y-auto space-y-2 pr-1">
+                                {groups.length === 0 ? (
+                                  <div className="text-xs text-[var(--color-text-muted)]">
+                                    {t("webAccess.noGroups")}
+                                  </div>
+                                ) : (
+                                  groups.map((group) => {
+                                    const groupId = group.group_id;
+                                    return (
+                                      <label
+                                        key={groupId}
+                                        className="flex items-center gap-2 text-sm"
+                                      >
+                                        <input
+                                          type="checkbox"
+                                          checked={editGroups.has(groupId)}
+                                          onChange={(e) => {
+                                            setEditGroups((prev) => {
+                                              const next = new Set(prev);
+                                              if (e.target.checked) next.add(groupId);
+                                              else next.delete(groupId);
+                                              return next;
+                                            });
+                                          }}
+                                        />
+                                        <span className="text-[var(--color-text-primary)]">
+                                          {group.title || groupId}
+                                        </span>
+                                      </label>
+                                    );
+                                  })
+                                )}
+                              </div>
+                              <div className="mt-3 flex gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => void saveEdit()}
+                                  disabled={editBusy}
+                                  className={primaryButtonClass(editBusy)}
+                                >
+                                  {editBusy ? t("webAccess.saving") : t("webAccess.save")}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setEditingTokenId(null);
+                                    setEditGroups(new Set());
+                                  }}
+                                  className={secondaryButtonClass("sm")}
+                                >
+                                  {t("webAccess.cancel")}
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    }}
+                  </WebAccessTokenPages>
+                )}
               </div>
             </div>
+          </section>
+        }
+      >
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
+          <div className={settingsWorkspacePanelClass(isDark)}>
+            <div className="text-xs uppercase tracking-wide text-[var(--color-text-muted)]">
+              {t("webAccess.cards.reachability")}
+            </div>
+            <div
+              className={`mt-2 inline-flex rounded-full border px-2.5 py-1 text-xs ${statusChipClass(isDark, reachabilitySummary.tone)}`}
+              data-status-tone={lcdStatusTone(reachabilitySummary.tone)}
+            >
+              {reachabilitySummary.label}
+            </div>
+            <div className="mt-3 text-sm leading-6 text-[var(--color-text-secondary)]">
+              {reachabilitySummary.detail}
+            </div>
           </div>
-        </div>
-      </div>
 
-      <details className={`group ${settingsWorkspaceShellClass(isDark)}`}>
-        <summary
-          className={`${settingsWorkspaceHeaderClass(isDark)} cursor-pointer list-none select-none [&::-webkit-details-marker]:hidden`}
-        >
-          <div className="min-w-0">
-            <h4 className="text-sm font-semibold text-[var(--color-text-primary)]">
-              {t("webAccess.accessControlTitle")}
-            </h4>
-            <p className="mt-1 text-xs text-[var(--color-text-muted)]">
-              {t("webAccess.accessControlDescription")}
-            </p>
-          </div>
-          <span className="flex shrink-0 items-center gap-2">
-            <span
-              className={`rounded-full border px-2.5 py-1 text-xs ${statusChipClass(isDark, accessSummary.tone)}`}
+          <div className={settingsWorkspacePanelClass(isDark)}>
+            <div className="text-xs uppercase tracking-wide text-[var(--color-text-muted)]">
+              {t("webAccess.cards.accessControl")}
+            </div>
+            <div
+              className={`mt-2 inline-flex rounded-full border px-2.5 py-1 text-xs ${statusChipClass(isDark, accessSummary.tone)}`}
               data-status-tone={lcdStatusTone(accessSummary.tone)}
             >
               {accessSummary.label}
-            </span>
-            <ChevronDownIcon
-              size={16}
-              className="text-[var(--color-text-muted)] transition-transform group-open:rotate-180"
-            />
-          </span>
-        </summary>
+            </div>
+            <div className="mt-3 text-sm leading-6 text-[var(--color-text-secondary)]">
+              {accessSummary.detail}
+            </div>
 
-        <div className={settingsWorkspaceBodyClass}>
-          <div className="space-y-3">
-            {canAccessGlobalSettings && knownAccessTokenCount > 0 ? (
-              <div className="flex justify-end">
-                <button
-                  type="button"
-                  onClick={() => openCreateDialog()}
-                  className={primaryButtonClass(false)}
-                >
-                  {t("common:create")}
-                </button>
-              </div>
-            ) : null}
-            {!canAccessGlobalSettings ? (
-              <div
-                className="rounded-lg border border-amber-500/30 bg-amber-500/15 p-6 text-sm text-amber-600 dark:text-amber-400"
-                data-status-tone="warning"
-              >
-                <div className="font-medium">{t("webAccess.managementLockedTitle")}</div>
-                <div className="mt-2 text-xs leading-6">{t("webAccess.managementLockedHint")}</div>
-              </div>
-            ) : accessTokens.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] p-6 text-[var(--color-text-secondary)]">
-                <div className="text-sm font-medium">{t("webAccess.noAccessTokens")}</div>
-                <div className="mt-2 text-xs leading-6 text-[var(--color-text-muted)]">
-                  {t("webAccess.firstTokenAdminHint")}
+            <div className={`mt-4 ${settingsWorkspaceSectionClass}`}>
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-xs uppercase tracking-wide text-[var(--color-text-muted)]">
+                    {t("webAccess.currentBrowserTitle")}
+                  </div>
+                  <div className="mt-1 text-sm font-medium text-[var(--color-text-primary)]">
+                    {currentBrowserSummary.label}
+                  </div>
+                  <div className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
+                    {currentBrowserSummary.detail}
+                  </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => openCreateDialog()}
-                  className={`mt-4 ${primaryButtonClass(false)}`}
-                >
-                  {t("common:create")}
-                </button>
-              </div>
-            ) : (
-              accessTokens.map((token) => {
-                const tokenId = token.token_id || "";
-                const isEditing = editingTokenId === tokenId;
-                return (
-                  <div
-                    key={tokenId || token.user_id}
-                    className={settingsWorkspacePanelClass(isDark)}
-                  >
-                    <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                      <div>
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <div className="text-sm font-semibold text-[var(--color-text-primary)]">
-                            {token.user_id}
-                          </div>
-                          <span
-                            className={`rounded-full border px-2 py-0.5 text-xs ${statusChipClass(isDark, token.is_admin ? "good" : "neutral")}`}
-                            data-status-tone={token.is_admin ? "ok" : undefined}
-                          >
-                            {token.is_admin
-                              ? t("webAccess.adminBadge")
-                              : t("webAccess.scopedBadge")}
-                          </span>
-                          <span
-                            className={`rounded-full border px-2 py-0.5 text-xs ${statusChipClass(isDark, "neutral")}`}
-                          >
-                            {token.token_preview || "****"}
-                          </span>
-                        </div>
-                        <div className="mt-1 text-xs text-[var(--color-text-muted)]">
-                          {token.is_admin
-                            ? t("webAccess.allGroupsAccess")
-                            : (token.allowed_groups || []).length > 0
-                              ? t("webAccess.scopedGroupsHint", {
-                                  count: token.allowed_groups.length,
-                                })
-                              : t("webAccess.noGroupsAssigned")}
-                        </div>
+                {loginActive || canSignOutCurrentBrowser ? (
+                  <InfoPopover
+                    isDark={isDark}
+                    title={t("webAccess.currentBrowserTitle")}
+                    content={
+                      <div className="space-y-2">
+                        {loginActive ? <div>{t("webAccess.currentBrowserVerifyHint")}</div> : null}
+                        {canSignOutCurrentBrowser ? <div>{t("webAccess.signOutHint")}</div> : null}
                       </div>
-                      <div className="flex flex-wrap gap-2">
-                        {!token.is_admin ? (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (!tokenId) return;
-                              startEdit(token);
-                            }}
-                            disabled={!tokenId || deleteBusyTokenId === tokenId}
-                            className={secondaryButtonClass("sm")}
+                    }
+                  >
+                    {(getReferenceProps, setReference) => (
+                      <button
+                        type="button"
+                        ref={setReference as never}
+                        {...getReferenceProps()}
+                        className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border transition-colors ${statusChipClass(isDark, currentBrowserSummary.tone)}`}
+                        aria-label={t("webAccess.currentBrowserTitle")}
+                        data-status-tone={lcdStatusTone(currentBrowserSummary.tone)}
+                      >
+                        <InfoIcon size={12} />
+                      </button>
+                    )}
+                  </InfoPopover>
+                ) : null}
+              </div>
+              {canSignOutCurrentBrowser ? (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void handleSignOut()}
+                    disabled={signOutBusy}
+                    className={secondaryButtonClass()}
+                  >
+                    {signOutBusy ? t("common:loading") : t("webAccess.signOut")}
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </div>
+        <section ref={reachSectionRef} className={settingsWorkspaceShellClass(isDark)}>
+          <div className={settingsWorkspaceHeaderClass(isDark)}>
+            <div>
+              <h4 className="text-sm font-semibold text-[var(--color-text-primary)]">
+                {t("webAccess.reachabilityTitle")}
+              </h4>
+              <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+                {t("webAccess.reachabilityDescription")}
+              </p>
+            </div>
+          </div>
+
+          <div className={settingsWorkspaceBodyClass}>
+            <ReachMembershipSection
+              membership={membership}
+              membershipBusy={membershipBusy}
+              membershipError={membershipError}
+              membershipPollReady={membershipPollReady}
+              hasAdminToken={hasAdminToken || session?.principal_kind === "local"}
+              reachBusy={reachBusy}
+              reachAction={reachAction}
+              reachChecking={reachChecking}
+              reachCheckExpired={reachCheckExpired}
+              onCheckReach={checkReach}
+              onConnectAccount={() => void connectMembership()}
+              onPollAccount={() => void pollMembership().then(() => load())}
+              onOpenAccount={onOpenAccount}
+              onCreateAdminToken={openCreateDialog}
+              onCreateWebLogin={createReachWebLogin}
+              onReachOn={() => {
+                void startReach().then((changed) => {
+                  if (changed) void load();
+                });
+              }}
+              onReachOff={() => {
+                void stopReach().then((changed) => {
+                  if (changed) void load();
+                });
+              }}
+              onCopied={() => pushHint(t("webAccess.copied"))}
+              onCopyFailed={() => setError(t("common:copyFailed"))}
+            />
+
+            <div className={reachOwned ? "hidden" : settingsWorkspacePanelClass(isDark)}>
+              <div className="text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
+                {t("webAccess.accessGoalTitle")}
+              </div>
+              <div className="mt-1 text-xs leading-6 text-[var(--color-text-muted)]">
+                {t("webAccess.accessGoalDescription")}
+              </div>
+              <div className="mt-3 grid gap-2 xl:grid-cols-3">
+                {(["local", "lan", "public"] as const).map((goal) => {
+                  const active = accessGoal === goal;
+                  const current = savedAccessGoal === goal;
+                  return (
+                    <button
+                      key={goal}
+                      type="button"
+                      onClick={() => applyAccessGoal(goal)}
+                      aria-pressed={active}
+                      data-settings-choice={active ? "active" : "inactive"}
+                      className={`rounded-xl border px-3 py-3 text-left transition-colors ${
+                        active
+                          ? "border-emerald-500/35 bg-emerald-500/12"
+                          : "border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] hover:bg-[var(--glass-bg-hover)]"
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div
+                          className="text-sm font-medium text-[var(--color-text-primary)]"
+                          data-settings-choice-title
+                        >
+                          {t(`webAccess.goals.${goal}.title`)}
+                        </div>
+                        {current ? (
+                          <span
+                            className="inline-flex rounded-full border border-emerald-500/30 bg-emerald-500/12 px-2 py-0.5 text-xs font-medium text-emerald-600 dark:text-emerald-400"
+                            data-settings-choice-saved
+                            data-status-tone="ok"
                           >
-                            {t("webAccess.edit")}
-                          </button>
+                            {t("webAccess.goalSelected")}
+                          </span>
                         ) : null}
-                        <button
-                          type="button"
-                          onClick={() => void revealAndCopy(tokenId)}
-                          disabled={!tokenId || deleteBusyTokenId === tokenId}
-                          className={secondaryButtonClass("sm")}
-                        >
-                          {copiedTokenId === tokenId
-                            ? t("webAccess.copied")
-                            : t("webAccess.copyToken")}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (!tokenId) return;
-                            setEditingTokenId(null);
-                            setPendingDeleteTokenId((prev) => (prev === tokenId ? null : tokenId));
-                          }}
-                          disabled={!tokenId || deleteBusyTokenId === tokenId}
-                          className="inline-flex min-h-[36px] items-center justify-center rounded-xl border border-rose-500/30 bg-rose-500/12 px-3 py-1.5 text-xs font-medium text-rose-600 transition-colors hover:bg-rose-500/18 disabled:opacity-50 dark:text-rose-300"
-                          data-status-tone="error"
-                        >
-                          {t("webAccess.delete")}
-                        </button>
+                      </div>
+                      <div
+                        className="mt-1 text-xs leading-6 text-[var(--color-text-muted)]"
+                        data-settings-choice-hint
+                      >
+                        {t(`webAccess.goals.${goal}.hint`)}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className={reachOwned ? "hidden" : settingsWorkspacePanelClass(isDark)}>
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
+                    {t("webAccess.selectedGoalTitle")}
+                  </div>
+                  <div className="mt-1 text-sm font-medium text-[var(--color-text-primary)]">
+                    {t(`webAccess.goals.${accessGoal}.title`)}
+                  </div>
+                  <div className="mt-1 text-xs leading-6 text-[var(--color-text-muted)]">
+                    {t(`webAccess.goals.${accessGoal}.editorHint`)}
+                  </div>
+                </div>
+                <div
+                  className={`inline-flex rounded-full border px-2.5 py-1 text-xs ${statusChipClass(
+                    isDark,
+                    accessGoal === "public"
+                      ? publicAccessTokenConfigured
+                        ? "good"
+                        : "warn"
+                      : "neutral",
+                  )}`}
+                  data-status-tone={
+                    accessGoal === "public"
+                      ? publicAccessTokenConfigured
+                        ? "ok"
+                        : "warning"
+                      : undefined
+                  }
+                >
+                  {accessGoal === "public"
+                    ? publicAccessTokenConfigured
+                      ? t("webAccess.publicTokenProtectedBadge")
+                      : t("webAccess.publicTokenRequiredBadge")
+                    : accessGoal === "lan"
+                      ? t("webAccess.lanGoalBadge")
+                      : t("webAccess.localGoalBadge")}
+                </div>
+              </div>
+
+              {accessGoal === "local" ? (
+                <div className="mt-4 max-w-sm">
+                  <label className={labelClass()}>{t("webAccess.webPortLabel")}</label>
+                  <input
+                    value={webPort}
+                    onChange={(e) => setWebPort(e.target.value)}
+                    className={inputClass()}
+                    inputMode="numeric"
+                    placeholder="8848"
+                  />
+                  <div className="mt-1 text-xs leading-6 text-[var(--color-text-muted)]">
+                    {t("webAccess.goalPortHintLocal")}
+                  </div>
+                </div>
+              ) : null}
+
+              {accessGoal === "lan" ? (
+                <>
+                  <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,240px)_minmax(0,240px)]">
+                    <div>
+                      <label className={labelClass()}>{t("webAccess.providerLabel")}</label>
+                      <SelectCombobox
+                        items={[
+                          { value: "manual", label: t("webAccess.providers.manual") },
+                          { value: "tailscale", label: t("webAccess.providers.tailscale") },
+                        ]}
+                        value={remoteMethodValue}
+                        onChange={(value) => {
+                          const nextProvider = (value as "manual" | "tailscale") || "manual";
+                          setProvider(nextProvider);
+                        }}
+                        ariaLabel={t("webAccess.providerLabel")}
+                        className={inputClass()}
+                      />
+                      <div className="mt-1 text-xs leading-6 text-[var(--color-text-muted)]">
+                        {remoteMethodValue === "tailscale"
+                          ? t("webAccess.modeHintTailscale")
+                          : t("webAccess.remoteMethodLanHint")}
                       </div>
                     </div>
-
-                    {pendingDeleteTokenId === tokenId && (
-                      <div
-                        className="mt-3 rounded-lg border border-red-500/30 bg-red-500/15 p-3"
-                        data-status-tone="error"
-                      >
-                        <div
-                          className="text-xs text-red-600 dark:text-red-400"
-                          data-status-tone="error"
-                        >
-                          {t("webAccess.deleteConfirm")}
-                        </div>
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          <button
-                            type="button"
-                            onClick={() => void handleDeleteAccessToken(tokenId)}
-                            disabled={deleteBusyTokenId === tokenId}
-                            className="inline-flex min-h-[36px] items-center justify-center rounded-xl border border-rose-600 bg-rose-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-rose-700 disabled:opacity-50"
-                            data-status-tone="error"
-                          >
-                            {deleteBusyTokenId === tokenId
-                              ? t("common:loading")
-                              : t("webAccess.delete")}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setPendingDeleteTokenId(null)}
-                            disabled={deleteBusyTokenId === tokenId}
-                            className={secondaryButtonClass("sm")}
-                          >
-                            {t("webAccess.cancel")}
-                          </button>
-                        </div>
+                    <div>
+                      <label className={labelClass()}>{t("webAccess.webPortLabel")}</label>
+                      <input
+                        value={webPort}
+                        onChange={(e) => setWebPort(e.target.value)}
+                        className={inputClass()}
+                        inputMode="numeric"
+                        placeholder="8848"
+                      />
+                      <div className="mt-1 text-xs leading-6 text-[var(--color-text-muted)]">
+                        {t("webAccess.goalPortHintLan")}
                       </div>
-                    )}
-
-                    {isEditing && (
-                      <div className={`mt-3 ${settingsWorkspaceSoftPanelClass(isDark)}`}>
-                        <div className="text-xs font-medium text-[var(--color-text-secondary)]">
-                          {t("webAccess.editScopeTitle")}
-                        </div>
-                        <div className="mt-2 max-h-44 overflow-y-auto space-y-2 pr-1">
-                          {groups.length === 0 ? (
-                            <div className="text-xs text-[var(--color-text-muted)]">
-                              {t("webAccess.noGroups")}
-                            </div>
-                          ) : (
-                            groups.map((group) => {
-                              const groupId = group.group_id;
-                              return (
-                                <label key={groupId} className="flex items-center gap-2 text-sm">
-                                  <input
-                                    type="checkbox"
-                                    checked={editGroups.has(groupId)}
-                                    onChange={(e) => {
-                                      setEditGroups((prev) => {
-                                        const next = new Set(prev);
-                                        if (e.target.checked) next.add(groupId);
-                                        else next.delete(groupId);
-                                        return next;
-                                      });
-                                    }}
-                                  />
-                                  <span className="text-[var(--color-text-primary)]">
-                                    {group.title || groupId}
-                                  </span>
-                                </label>
-                              );
-                            })
-                          )}
-                        </div>
-                        <div className="mt-3 flex gap-2">
-                          <button
-                            type="button"
-                            onClick={() => void saveEdit()}
-                            disabled={editBusy}
-                            className={primaryButtonClass(editBusy)}
-                          >
-                            {editBusy ? t("webAccess.saving") : t("webAccess.save")}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setEditingTokenId(null);
-                              setEditGroups(new Set());
-                            }}
-                            className={secondaryButtonClass("sm")}
-                          >
-                            {t("webAccess.cancel")}
-                          </button>
-                        </div>
-                      </div>
-                    )}
+                    </div>
                   </div>
-                );
-              })
-            )}
-          </div>
-        </div>
-      </details>
-
-      <section ref={reachSectionRef} className={settingsWorkspaceShellClass(isDark)}>
-        <div className={settingsWorkspaceHeaderClass(isDark)}>
-          <div>
-            <h4 className="text-sm font-semibold text-[var(--color-text-primary)]">
-              {t("webAccess.reachabilityTitle")}
-            </h4>
-            <p className="mt-1 text-xs text-[var(--color-text-muted)]">
-              {t("webAccess.reachabilityDescription")}
-            </p>
-          </div>
-        </div>
-
-        <div className={settingsWorkspaceBodyClass}>
-          <ReachMembershipSection
-            membership={membership}
-            membershipBusy={membershipBusy}
-            membershipError={membershipError}
-            membershipPollReady={membershipPollReady}
-            hasAdminToken={hasAdminToken || session?.principal_kind === "local"}
-            reachBusy={reachBusy}
-            reachAction={reachAction}
-            reachChecking={reachChecking}
-            reachCheckExpired={reachCheckExpired}
-            onCheckReach={checkReach}
-            onConnectAccount={() => void connectMembership()}
-            onPollAccount={() => void pollMembership().then(() => load())}
-            onOpenAccount={onOpenAccount}
-            onCreateAdminToken={openCreateDialog}
-            onCreateWebLogin={createReachWebLogin}
-            onReachOn={() => {
-              void startReach().then((changed) => {
-                if (changed) void load();
-              });
-            }}
-            onReachOff={() => {
-              void stopReach().then((changed) => {
-                if (changed) void load();
-              });
-            }}
-            onCopied={() => pushHint(t("webAccess.copied"))}
-            onCopyFailed={() => setError(t("common:copyFailed"))}
-          />
-
-          <div className={reachOwned ? "hidden" : settingsWorkspacePanelClass(isDark)}>
-            <div className="text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
-              {t("webAccess.accessGoalTitle")}
-            </div>
-            <div className="mt-1 text-xs leading-6 text-[var(--color-text-muted)]">
-              {t("webAccess.accessGoalDescription")}
-            </div>
-            <div className="mt-3 grid gap-2 xl:grid-cols-3">
-              {(["local", "lan", "public"] as const).map((goal) => {
-                const active = accessGoal === goal;
-                const current = savedAccessGoal === goal;
-                return (
-                  <button
-                    key={goal}
-                    type="button"
-                    onClick={() => applyAccessGoal(goal)}
-                    aria-pressed={active}
-                    data-settings-choice={active ? "active" : "inactive"}
-                    className={`rounded-xl border px-3 py-3 text-left transition-colors ${
-                      active
-                        ? "border-emerald-500/35 bg-emerald-500/12"
-                        : "border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] hover:bg-[var(--glass-bg-hover)]"
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div
-                        className="text-sm font-medium text-[var(--color-text-primary)]"
-                        data-settings-choice-title
-                      >
-                        {t(`webAccess.goals.${goal}.title`)}
+                  {remoteMethodValue === "tailscale" ? (
+                    <div className="mt-3 rounded-lg border border-black/10 bg-[rgb(245,245,245)] px-3 py-3 text-xs leading-6 text-[rgb(35,36,37)] dark:border-white/12 dark:bg-white/[0.08] dark:text-white">
+                      <div className="font-medium">
+                        {t("webAccess.privateMethodTailscaleTitle")}
                       </div>
-                      {current ? (
-                        <span
-                          className="inline-flex rounded-full border border-emerald-500/30 bg-emerald-500/12 px-2 py-0.5 text-xs font-medium text-emerald-600 dark:text-emerald-400"
-                          data-settings-choice-saved
-                          data-status-tone="ok"
-                        >
-                          {t("webAccess.goalSelected")}
-                        </span>
-                      ) : null}
+                      <div className="mt-1">{t("webAccess.privateMethodTailscaleHint")}</div>
+                    </div>
+                  ) : null}
+                  {runningInWsl ? (
+                    <div
+                      className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/12 px-3 py-3 text-xs leading-6 text-amber-700 dark:text-amber-300"
+                      data-status-tone="warning"
+                    >
+                      <div className="font-medium">{t("webAccess.wslHintTitle")}</div>
+                      <div className="mt-1">{t("webAccess.wslHintBody")}</div>
+                    </div>
+                  ) : null}
+                </>
+              ) : null}
+
+              {accessGoal === "public" ? (
+                <>
+                  <div className="mt-4">
+                    <label className={labelClass()}>{t("webAccess.webPublicUrlLabel")}</label>
+                    <input
+                      value={webPublicUrl}
+                      onChange={(e) => {
+                        const nextValue = e.target.value;
+                        setWebPublicUrl(nextValue);
+                        if (nextValue.trim()) {
+                          setSelectedAccessGoal("public");
+                        }
+                      }}
+                      className={inputClass()}
+                      placeholder="https://example.com/ui/"
+                    />
+                    <div className="mt-1 text-xs leading-6 text-[var(--color-text-muted)]">
+                      {t("webAccess.goalPublicUrlHint")}
+                    </div>
+                  </div>
+                  <div
+                    className={`mt-3 rounded-lg border px-3 py-3 ${
+                      publicAccessTokenConfigured
+                        ? "border-emerald-500/30 bg-emerald-500/12"
+                        : "border-amber-500/30 bg-amber-500/12"
+                    }`}
+                    data-status-tone={publicAccessTokenConfigured ? "ok" : "warning"}
+                  >
+                    <div
+                      className={`text-sm font-medium ${
+                        publicAccessTokenConfigured
+                          ? "text-emerald-700 dark:text-emerald-300"
+                          : "text-amber-700 dark:text-amber-300"
+                      }`}
+                      data-status-tone={publicAccessTokenConfigured ? "ok" : "warning"}
+                    >
+                      {publicAccessTokenConfigured
+                        ? t("webAccess.publicTokenProtectedTitle")
+                        : t("webAccess.publicTokenRequiredTitle")}
                     </div>
                     <div
-                      className="mt-1 text-xs leading-6 text-[var(--color-text-muted)]"
-                      data-settings-choice-hint
+                      className={`mt-1 text-xs leading-6 ${
+                        publicAccessTokenConfigured
+                          ? "text-emerald-700 dark:text-emerald-300"
+                          : "text-amber-700 dark:text-amber-300"
+                      }`}
+                      data-status-tone={publicAccessTokenConfigured ? "ok" : "warning"}
                     >
-                      {t(`webAccess.goals.${goal}.hint`)}
+                      {publicAccessTokenConfigured
+                        ? t("webAccess.publicTokenProtectedHint")
+                        : t("webAccess.publicTokenRequiredHint")}
                     </div>
-                  </button>
-                );
-              })}
+                  </div>
+                </>
+              ) : null}
             </div>
-          </div>
 
-          <div className={reachOwned ? "hidden" : settingsWorkspacePanelClass(isDark)}>
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-              <div>
-                <div className="text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
-                  {t("webAccess.selectedGoalTitle")}
-                </div>
-                <div className="mt-1 text-sm font-medium text-[var(--color-text-primary)]">
-                  {t(`webAccess.goals.${accessGoal}.title`)}
-                </div>
-                <div className="mt-1 text-xs leading-6 text-[var(--color-text-muted)]">
-                  {t(`webAccess.goals.${accessGoal}.editorHint`)}
-                </div>
-              </div>
-              <div
-                className={`inline-flex rounded-full border px-2.5 py-1 text-xs ${statusChipClass(
-                  isDark,
-                  accessGoal === "public"
-                    ? publicAccessTokenConfigured
-                      ? "good"
-                      : "warn"
-                    : "neutral",
-                )}`}
-                data-status-tone={
-                  accessGoal === "public"
-                    ? publicAccessTokenConfigured
-                      ? "ok"
-                      : "warning"
-                    : undefined
+            {!reachOwned ? (
+              <WebAccessReachabilityActions
+                action={primaryReachabilityAction}
+                actionHint={
+                  primaryReachabilityAction === "save"
+                    ? t("webAccess.primaryActionSaveHint")
+                    : t(actionHintKey)
                 }
-              >
-                {accessGoal === "public"
-                  ? publicAccessTokenConfigured
-                    ? t("webAccess.publicTokenProtectedBadge")
-                    : t("webAccess.publicTokenRequiredBadge")
-                  : accessGoal === "lan"
-                    ? t("webAccess.lanGoalBadge")
-                    : t("webAccess.localGoalBadge")}
-              </div>
-            </div>
-
-            {accessGoal === "local" ? (
-              <div className="mt-4 max-w-sm">
-                <label className={labelClass()}>{t("webAccess.webPortLabel")}</label>
-                <input
-                  value={webPort}
-                  onChange={(e) => setWebPort(e.target.value)}
-                  className={inputClass()}
-                  inputMode="numeric"
-                  placeholder="8848"
-                />
-                <div className="mt-1 text-xs leading-6 text-[var(--color-text-muted)]">
-                  {t("webAccess.goalPortHintLocal")}
-                </div>
-              </div>
+                draftGoal={accessGoal}
+                savedGoal={savedAccessGoal}
+                hasAdminToken={hasAdminToken}
+                saveBusy={saveBusy}
+                applyBusy={applyBusy}
+                endpoint={reachOwned ? null : remoteState?.endpoint || null}
+                onSave={() => void handleSaveReachability()}
+                onApply={() => void handleApplyReachability()}
+                onCopyEndpoint={async () => {
+                  const ok = await copyTextToClipboard(remoteState?.endpoint || "");
+                  if (ok) pushHint(t("webAccess.copied"));
+                }}
+              />
             ) : null}
 
-            {accessGoal === "lan" ? (
-              <>
-                <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,240px)_minmax(0,240px)]">
-                  <div>
-                    <label className={labelClass()}>{t("webAccess.providerLabel")}</label>
-                    <SelectCombobox
-                      items={[
-                        { value: "manual", label: t("webAccess.providers.manual") },
-                        { value: "tailscale", label: t("webAccess.providers.tailscale") },
-                      ]}
-                      value={remoteMethodValue}
-                      onChange={(value) => {
-                        const nextProvider = (value as "manual" | "tailscale") || "manual";
-                        setProvider(nextProvider);
-                      }}
-                      ariaLabel={t("webAccess.providerLabel")}
-                      className={inputClass()}
-                    />
+            <div ref={advancedDisclosureRef} className={reachOwned ? "hidden" : "mt-4"}>
+              <button
+                type="button"
+                onClick={toggleAdvanced}
+                className="w-full rounded-xl border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-4 py-3 text-left transition-colors hover:bg-[var(--glass-bg-hover)]"
+                aria-expanded={showAdvanced}
+              >
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium text-[var(--color-text-primary)]">
+                      {t("webAccess.advancedDisclosureTitle")}
+                    </div>
                     <div className="mt-1 text-xs leading-6 text-[var(--color-text-muted)]">
-                      {remoteMethodValue === "tailscale"
-                        ? t("webAccess.modeHintTailscale")
-                        : t("webAccess.remoteMethodLanHint")}
+                      {t("webAccess.advancedDisclosureHint")}
                     </div>
                   </div>
-                  <div>
-                    <label className={labelClass()}>{t("webAccess.webPortLabel")}</label>
-                    <input
-                      value={webPort}
-                      onChange={(e) => setWebPort(e.target.value)}
-                      className={inputClass()}
-                      inputMode="numeric"
-                      placeholder="8848"
-                    />
-                    <div className="mt-1 text-xs leading-6 text-[var(--color-text-muted)]">
-                      {t("webAccess.goalPortHintLan")}
-                    </div>
+                  <div className="inline-flex shrink-0 rounded-full border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] px-2.5 py-1 text-xs text-[var(--color-text-secondary)]">
+                    {showAdvanced ? t("webAccess.hideAdvanced") : t("webAccess.showAdvanced")}
                   </div>
                 </div>
-                {remoteMethodValue === "tailscale" ? (
-                  <div className="mt-3 rounded-lg border border-black/10 bg-[rgb(245,245,245)] px-3 py-3 text-xs leading-6 text-[rgb(35,36,37)] dark:border-white/12 dark:bg-white/[0.08] dark:text-white">
-                    <div className="font-medium">{t("webAccess.privateMethodTailscaleTitle")}</div>
-                    <div className="mt-1">{t("webAccess.privateMethodTailscaleHint")}</div>
+              </button>
+            </div>
+
+            {showAdvanced && !reachOwned ? (
+              <div className={settingsWorkspacePanelClass(isDark)}>
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
+                    {t("webAccess.advancedTitle")}
+                  </div>
+                  <div className="mt-1 text-xs leading-6 text-[var(--color-text-muted)]">
+                    {t("webAccess.advancedDescription")}
+                  </div>
+                </div>
+
+                <div className="mt-4 grid gap-3 md:grid-cols-2">
+                  <div>
+                    <label className={labelClass()}>{t("webAccess.webHostLabel")}</label>
+                    <input
+                      value={webHost}
+                      onChange={(e) => {
+                        const nextHost = e.target.value;
+                        setWebHost(nextHost);
+                        if (selectedAccessGoal !== "public" && !webPublicUrl.trim()) {
+                          setSelectedAccessGoal(
+                            provider === "tailscale"
+                              ? "lan"
+                              : isLoopbackHost(nextHost)
+                                ? "local"
+                                : "lan",
+                          );
+                        }
+                      }}
+                      className={inputClass()}
+                      placeholder="127.0.0.1"
+                    />
+                    <div className="mt-1 text-xs leading-6 text-[var(--color-text-muted)]">
+                      {t("webAccess.webHostHint")}
+                    </div>
+                  </div>
+                  {accessGoal === "public" ? (
+                    <div>
+                      <label className={labelClass()}>{t("webAccess.webPortLabel")}</label>
+                      <input
+                        value={webPort}
+                        onChange={(e) => setWebPort(e.target.value)}
+                        className={inputClass()}
+                        inputMode="numeric"
+                        placeholder="8848"
+                      />
+                      <div className="mt-1 text-xs leading-6 text-[var(--color-text-muted)]">
+                        {t("webAccess.goalPortHintAdvanced")}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+
+                {accessGoal === "lan" && isTailscaleProvider ? (
+                  <div className="mt-4 rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-3 py-3">
+                    <div className="text-sm font-medium text-[var(--color-text-primary)]">
+                      {t("webAccess.tailscaleTitle")}
+                    </div>
+                    <div className="mt-1 text-xs leading-6 text-[var(--color-text-muted)]">
+                      {t("webAccess.tailscaleDescription")}
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void handleStart()}
+                        disabled={startBusy}
+                        className={secondaryButtonClass()}
+                      >
+                        {startBusy ? t("common:loading") : t("webAccess.startTailscale")}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleStop()}
+                        disabled={stopBusy || remoteState?.enabled !== true}
+                        className={secondaryButtonClass()}
+                      >
+                        {stopBusy ? t("common:loading") : t("webAccess.stopTailscale")}
+                      </button>
+                    </div>
                   </div>
                 ) : null}
-                {runningInWsl ? (
+
+                {lastApplyError ? (
                   <div
-                    className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/12 px-3 py-3 text-xs leading-6 text-amber-700 dark:text-amber-300"
+                    className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/12 px-3 py-3 text-xs leading-6 text-amber-700 dark:text-amber-300"
                     data-status-tone="warning"
                   >
-                    <div className="font-medium">{t("webAccess.wslHintTitle")}</div>
-                    <div className="mt-1">{t("webAccess.wslHintBody")}</div>
+                    <div className="font-medium">{t("webAccess.lastApplyErrorTitle")}</div>
+                    <div className="mt-1 break-words">{lastApplyError}</div>
                   </div>
                 ) : null}
-              </>
-            ) : null}
 
-            {accessGoal === "public" ? (
-              <>
-                <div className="mt-4">
-                  <label className={labelClass()}>{t("webAccess.webPublicUrlLabel")}</label>
-                  <input
-                    value={webPublicUrl}
-                    onChange={(e) => {
-                      const nextValue = e.target.value;
-                      setWebPublicUrl(nextValue);
-                      if (nextValue.trim()) {
-                        setSelectedAccessGoal("public");
-                      }
-                    }}
-                    className={inputClass()}
-                    placeholder="https://example.com/ui/"
-                  />
-                  <div className="mt-1 text-xs leading-6 text-[var(--color-text-muted)]">
-                    {t("webAccess.goalPublicUrlHint")}
+                <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_300px]">
+                  <div className="rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] p-3">
+                    <div className="text-xs font-medium text-[var(--color-text-secondary)]">
+                      {t("webAccess.reachabilityStatusTitle")}
+                    </div>
+                    <div className="mt-2 text-sm text-[var(--color-text-primary)]">
+                      {remoteState?.endpoint || t("webAccess.noEndpoint")}
+                    </div>
+                    <dl className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
+                      <div>
+                        <dt className="text-[var(--color-text-muted)]">
+                          {t("webAccess.requirementLabel")}
+                        </dt>
+                        <dd className="text-[var(--color-text-primary)]">
+                          {exposureClass === "local"
+                            ? t("webAccess.localOnlyPolicy")
+                            : effectiveRequireAccessToken
+                              ? t("webAccess.required")
+                              : t("webAccess.optional")}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="text-[var(--color-text-muted)]">
+                          {t("webAccess.accessTokenPresenceLabel")}
+                        </dt>
+                        <dd className="text-[var(--color-text-primary)]">
+                          {remoteState?.config?.access_token_configured
+                            ? t("webAccess.configured")
+                            : t("webAccess.notConfigured")}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="text-[var(--color-text-muted)]">
+                          {t("webAccess.savedBindingLabel")}
+                        </dt>
+                        <dd className="text-[var(--color-text-primary)]">{`${savedWebHost}:${savedWebPort}`}</dd>
+                      </div>
+                      <div>
+                        <dt className="text-[var(--color-text-muted)]">
+                          {t("webAccess.liveBindingLabel")}
+                        </dt>
+                        <dd className="text-[var(--color-text-primary)]">
+                          {liveBindingLabel || t("webAccess.notReported")}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="text-[var(--color-text-muted)]">
+                          {t("webAccess.applyStateLabel")}
+                        </dt>
+                        <dd className="text-[var(--color-text-primary)]">
+                          {restartRequired
+                            ? t("webAccess.applyStatePending")
+                            : liveRuntimePresent
+                              ? t("webAccess.applyStateLive")
+                              : t("webAccess.notReported")}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="text-[var(--color-text-muted)]">
+                          {t("webAccess.updatedAtLabel")}
+                        </dt>
+                        <dd className="text-[var(--color-text-primary)]">
+                          {remoteState?.updated_at || "-"}
+                        </dd>
+                      </div>
+                    </dl>
+                    <div className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
+                      <div>
+                        <div className="text-[var(--color-text-muted)]">
+                          {t("webAccess.localEntryLabel")}
+                        </div>
+                        <div className="mt-1 break-all text-[var(--color-text-primary)]">
+                          {desiredLocalUrl}
+                        </div>
+                      </div>
+                      {desiredRemoteUrl ? (
+                        <div>
+                          <div className="text-[var(--color-text-muted)]">
+                            {t("webAccess.remoteEntryLabel")}
+                          </div>
+                          <div className="mt-1 break-all text-[var(--color-text-primary)]">
+                            {desiredRemoteUrl}
+                          </div>
+                        </div>
+                      ) : null}
+                      {liveLocalUrl ? (
+                        <div>
+                          <div className="text-[var(--color-text-muted)]">
+                            {t("webAccess.liveLocalEntryLabel")}
+                          </div>
+                          <div className="mt-1 break-all text-[var(--color-text-primary)]">
+                            {liveLocalUrl}
+                          </div>
+                        </div>
+                      ) : null}
+                      {liveRemoteUrl ? (
+                        <div>
+                          <div className="text-[var(--color-text-muted)]">
+                            {t("webAccess.liveRemoteEntryLabel")}
+                          </div>
+                          <div className="mt-1 break-all text-[var(--color-text-primary)]">
+                            {liveRemoteUrl}
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] p-3">
+                    <div className="text-xs font-medium text-[var(--color-text-secondary)]">
+                      {t("webAccess.nextStepsTitle")}
+                    </div>
+                    <ul className="mt-2 space-y-2 text-xs text-[var(--color-text-secondary)]">
+                      {(remoteState?.next_steps || []).length > 0 ? (
+                        (remoteState?.next_steps || []).map((step) => <li key={step}>• {step}</li>)
+                      ) : (
+                        <li>• {t("webAccess.noNextSteps")}</li>
+                      )}
+                    </ul>
                   </div>
                 </div>
-                <div
-                  className={`mt-3 rounded-lg border px-3 py-3 ${
-                    publicAccessTokenConfigured
-                      ? "border-emerald-500/30 bg-emerald-500/12"
-                      : "border-amber-500/30 bg-amber-500/12"
-                  }`}
-                  data-status-tone={publicAccessTokenConfigured ? "ok" : "warning"}
-                >
-                  <div
-                    className={`text-sm font-medium ${
-                      publicAccessTokenConfigured
-                        ? "text-emerald-700 dark:text-emerald-300"
-                        : "text-amber-700 dark:text-amber-300"
-                    }`}
-                    data-status-tone={publicAccessTokenConfigured ? "ok" : "warning"}
-                  >
-                    {publicAccessTokenConfigured
-                      ? t("webAccess.publicTokenProtectedTitle")
-                      : t("webAccess.publicTokenRequiredTitle")}
-                  </div>
-                  <div
-                    className={`mt-1 text-xs leading-6 ${
-                      publicAccessTokenConfigured
-                        ? "text-emerald-700 dark:text-emerald-300"
-                        : "text-amber-700 dark:text-amber-300"
-                    }`}
-                    data-status-tone={publicAccessTokenConfigured ? "ok" : "warning"}
-                  >
-                    {publicAccessTokenConfigured
-                      ? t("webAccess.publicTokenProtectedHint")
-                      : t("webAccess.publicTokenRequiredHint")}
-                  </div>
-                </div>
-              </>
+              </div>
             ) : null}
           </div>
-
-          {!reachOwned ? (
-            <WebAccessReachabilityActions
-              action={primaryReachabilityAction}
-              actionHint={
-                primaryReachabilityAction === "save"
-                  ? t("webAccess.primaryActionSaveHint")
-                  : t(actionHintKey)
-              }
-              draftGoal={accessGoal}
-              savedGoal={savedAccessGoal}
-              hasAdminToken={hasAdminToken}
-              saveBusy={saveBusy}
-              applyBusy={applyBusy}
-              endpoint={reachOwned ? null : remoteState?.endpoint || null}
-              onSave={() => void handleSaveReachability()}
-              onApply={() => void handleApplyReachability()}
-              onCopyEndpoint={async () => {
-                const ok = await copyTextToClipboard(remoteState?.endpoint || "");
-                if (ok) pushHint(t("webAccess.copied"));
-              }}
-            />
-          ) : null}
-
-          <div ref={advancedDisclosureRef} className={reachOwned ? "hidden" : "mt-4"}>
-            <button
-              type="button"
-              onClick={toggleAdvanced}
-              className="w-full rounded-xl border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-4 py-3 text-left transition-colors hover:bg-[var(--glass-bg-hover)]"
-              aria-expanded={showAdvanced}
-            >
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <div className="min-w-0">
-                  <div className="text-sm font-medium text-[var(--color-text-primary)]">
-                    {t("webAccess.advancedDisclosureTitle")}
-                  </div>
-                  <div className="mt-1 text-xs leading-6 text-[var(--color-text-muted)]">
-                    {t("webAccess.advancedDisclosureHint")}
-                  </div>
-                </div>
-                <div className="inline-flex shrink-0 rounded-full border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] px-2.5 py-1 text-xs text-[var(--color-text-secondary)]">
-                  {showAdvanced ? t("webAccess.hideAdvanced") : t("webAccess.showAdvanced")}
-                </div>
-              </div>
-            </button>
-          </div>
-
-          {showAdvanced && !reachOwned ? (
-            <div className={settingsWorkspacePanelClass(isDark)}>
-              <div>
-                <div className="text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
-                  {t("webAccess.advancedTitle")}
-                </div>
-                <div className="mt-1 text-xs leading-6 text-[var(--color-text-muted)]">
-                  {t("webAccess.advancedDescription")}
-                </div>
-              </div>
-
-              <div className="mt-4 grid gap-3 md:grid-cols-2">
-                <div>
-                  <label className={labelClass()}>{t("webAccess.webHostLabel")}</label>
-                  <input
-                    value={webHost}
-                    onChange={(e) => {
-                      const nextHost = e.target.value;
-                      setWebHost(nextHost);
-                      if (selectedAccessGoal !== "public" && !webPublicUrl.trim()) {
-                        setSelectedAccessGoal(
-                          provider === "tailscale"
-                            ? "lan"
-                            : isLoopbackHost(nextHost)
-                              ? "local"
-                              : "lan",
-                        );
-                      }
-                    }}
-                    className={inputClass()}
-                    placeholder="127.0.0.1"
-                  />
-                  <div className="mt-1 text-xs leading-6 text-[var(--color-text-muted)]">
-                    {t("webAccess.webHostHint")}
-                  </div>
-                </div>
-                {accessGoal === "public" ? (
-                  <div>
-                    <label className={labelClass()}>{t("webAccess.webPortLabel")}</label>
-                    <input
-                      value={webPort}
-                      onChange={(e) => setWebPort(e.target.value)}
-                      className={inputClass()}
-                      inputMode="numeric"
-                      placeholder="8848"
-                    />
-                    <div className="mt-1 text-xs leading-6 text-[var(--color-text-muted)]">
-                      {t("webAccess.goalPortHintAdvanced")}
-                    </div>
-                  </div>
-                ) : null}
-              </div>
-
-              {accessGoal === "lan" && isTailscaleProvider ? (
-                <div className="mt-4 rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-3 py-3">
-                  <div className="text-sm font-medium text-[var(--color-text-primary)]">
-                    {t("webAccess.tailscaleTitle")}
-                  </div>
-                  <div className="mt-1 text-xs leading-6 text-[var(--color-text-muted)]">
-                    {t("webAccess.tailscaleDescription")}
-                  </div>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={() => void handleStart()}
-                      disabled={startBusy}
-                      className={secondaryButtonClass()}
-                    >
-                      {startBusy ? t("common:loading") : t("webAccess.startTailscale")}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void handleStop()}
-                      disabled={stopBusy || remoteState?.enabled !== true}
-                      className={secondaryButtonClass()}
-                    >
-                      {stopBusy ? t("common:loading") : t("webAccess.stopTailscale")}
-                    </button>
-                  </div>
-                </div>
-              ) : null}
-
-              {lastApplyError ? (
-                <div
-                  className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/12 px-3 py-3 text-xs leading-6 text-amber-700 dark:text-amber-300"
-                  data-status-tone="warning"
-                >
-                  <div className="font-medium">{t("webAccess.lastApplyErrorTitle")}</div>
-                  <div className="mt-1 break-words">{lastApplyError}</div>
-                </div>
-              ) : null}
-
-              <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_300px]">
-                <div className="rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] p-3">
-                  <div className="text-xs font-medium text-[var(--color-text-secondary)]">
-                    {t("webAccess.reachabilityStatusTitle")}
-                  </div>
-                  <div className="mt-2 text-sm text-[var(--color-text-primary)]">
-                    {remoteState?.endpoint || t("webAccess.noEndpoint")}
-                  </div>
-                  <dl className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
-                    <div>
-                      <dt className="text-[var(--color-text-muted)]">
-                        {t("webAccess.requirementLabel")}
-                      </dt>
-                      <dd className="text-[var(--color-text-primary)]">
-                        {exposureClass === "local"
-                          ? t("webAccess.localOnlyPolicy")
-                          : effectiveRequireAccessToken
-                            ? t("webAccess.required")
-                            : t("webAccess.optional")}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt className="text-[var(--color-text-muted)]">
-                        {t("webAccess.accessTokenPresenceLabel")}
-                      </dt>
-                      <dd className="text-[var(--color-text-primary)]">
-                        {remoteState?.config?.access_token_configured
-                          ? t("webAccess.configured")
-                          : t("webAccess.notConfigured")}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt className="text-[var(--color-text-muted)]">
-                        {t("webAccess.savedBindingLabel")}
-                      </dt>
-                      <dd className="text-[var(--color-text-primary)]">{`${savedWebHost}:${savedWebPort}`}</dd>
-                    </div>
-                    <div>
-                      <dt className="text-[var(--color-text-muted)]">
-                        {t("webAccess.liveBindingLabel")}
-                      </dt>
-                      <dd className="text-[var(--color-text-primary)]">
-                        {liveBindingLabel || t("webAccess.notReported")}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt className="text-[var(--color-text-muted)]">
-                        {t("webAccess.applyStateLabel")}
-                      </dt>
-                      <dd className="text-[var(--color-text-primary)]">
-                        {restartRequired
-                          ? t("webAccess.applyStatePending")
-                          : liveRuntimePresent
-                            ? t("webAccess.applyStateLive")
-                            : t("webAccess.notReported")}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt className="text-[var(--color-text-muted)]">
-                        {t("webAccess.updatedAtLabel")}
-                      </dt>
-                      <dd className="text-[var(--color-text-primary)]">
-                        {remoteState?.updated_at || "-"}
-                      </dd>
-                    </div>
-                  </dl>
-                  <div className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
-                    <div>
-                      <div className="text-[var(--color-text-muted)]">
-                        {t("webAccess.localEntryLabel")}
-                      </div>
-                      <div className="mt-1 break-all text-[var(--color-text-primary)]">
-                        {desiredLocalUrl}
-                      </div>
-                    </div>
-                    {desiredRemoteUrl ? (
-                      <div>
-                        <div className="text-[var(--color-text-muted)]">
-                          {t("webAccess.remoteEntryLabel")}
-                        </div>
-                        <div className="mt-1 break-all text-[var(--color-text-primary)]">
-                          {desiredRemoteUrl}
-                        </div>
-                      </div>
-                    ) : null}
-                    {liveLocalUrl ? (
-                      <div>
-                        <div className="text-[var(--color-text-muted)]">
-                          {t("webAccess.liveLocalEntryLabel")}
-                        </div>
-                        <div className="mt-1 break-all text-[var(--color-text-primary)]">
-                          {liveLocalUrl}
-                        </div>
-                      </div>
-                    ) : null}
-                    {liveRemoteUrl ? (
-                      <div>
-                        <div className="text-[var(--color-text-muted)]">
-                          {t("webAccess.liveRemoteEntryLabel")}
-                        </div>
-                        <div className="mt-1 break-all text-[var(--color-text-primary)]">
-                          {liveRemoteUrl}
-                        </div>
-                      </div>
-                    ) : null}
-                  </div>
-                </div>
-
-                <div className="rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] p-3">
-                  <div className="text-xs font-medium text-[var(--color-text-secondary)]">
-                    {t("webAccess.nextStepsTitle")}
-                  </div>
-                  <ul className="mt-2 space-y-2 text-xs text-[var(--color-text-secondary)]">
-                    {(remoteState?.next_steps || []).length > 0 ? (
-                      (remoteState?.next_steps || []).map((step) => <li key={step}>• {step}</li>)
-                    ) : (
-                      <li>• {t("webAccess.noNextSteps")}</li>
-                    )}
-                  </ul>
-                </div>
-              </div>
-            </div>
-          ) : null}
-        </div>
-      </section>
+        </section>
+      </WebAccessSections>
 
       {createDialog ? <BodyPortal>{createDialog}</BodyPortal> : null}
       {restartRequiredDialog ? <BodyPortal>{restartRequiredDialog}</BodyPortal> : null}

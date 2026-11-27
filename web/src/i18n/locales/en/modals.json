@@ -718,6 +718,7 @@
   "codexVoiceAnalystRuntimeMissing": "Chet's configured runtime ({{runtime}}) is unavailable. Check its Runtime Profile or restart CCCC from a shell that can run it.",
   "codexVoiceAntigravityAcpSetupRequired": "The Antigravity ACP component is not installed. On the machine running CCCC, run cccc setup --runtime antigravity --runtime-mode acp --login to install it and complete its separate Google login, then try again. ACP uses a different login environment from native agy.",
   "codexVoiceCodexLoginRequired": "Realtime Voice has no ChatGPT login. Run codex login for the CCCC host, then refresh this page. Chet's Profile credentials are separate.",
+  "codexVoiceDismissLoginReminder": "Hide voice login reminder",
   "codexVoiceAnalystEmptyTitle": "Chet isn't ready yet",
   "codexVoiceAnalystTerminalPending": "Chet's activity appears here once its managed session is ready.",
   "codexVoiceTerminalDisconnected": "Terminal disconnected",

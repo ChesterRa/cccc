@@ -718,6 +718,7 @@
   "codexVoiceAnalystRuntimeMissing": "Chet に設定された Runtime（{{runtime}}）が利用できません。Runtime Profile を確認するか、その Runtime を実行できるシェルから CCCC を再起動してください。",
   "codexVoiceAntigravityAcpSetupRequired": "Antigravity ACP がまだインストールされていません。CCCC が動作するマシンで cccc setup --runtime antigravity --runtime-mode acp --login を実行し、インストールと専用の Google ログインを完了してから再試行してください。ACP とネイティブ agy のログイン環境は異なります。",
   "codexVoiceCodexLoginRequired": "Realtime Voice 用の ChatGPT ログインがありません。CCCC ホストで codex login を実行してから更新してください。Chet の Profile の認証情報とは独立しています。",
+  "codexVoiceDismissLoginReminder": "音声ログインの案内を閉じる",
   "codexVoiceAnalystEmptyTitle": "Chet はまだ準備できていません",
   "codexVoiceAnalystTerminalPending": "Chet の管理セッションが準備できると、作業状況がここに表示されます。",
   "codexVoiceTerminalDisconnected": "端末が切断されました",

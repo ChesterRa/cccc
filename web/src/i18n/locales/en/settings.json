@@ -1513,6 +1513,7 @@
     "buildMismatchHint": "These components use different builds. Check the running CCCC installation; save your drafts before restarting or reloading."
   },
   "webAccess": {
+    "overviewTab": "Overview",
     "title": "Web Access",
     "description": "Manage who can reach Web and who can sign in.",
     "refresh": "Refresh",

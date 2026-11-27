@@ -1513,6 +1513,7 @@
     "buildMismatchHint": "コンポーネントのビルドが異なります。実行中の CCCC を確認してください。再起動や再読み込みの前に下書きを保存してください。"
   },
   "webAccess": {
+    "overviewTab": "概要",
     "title": "Web アクセス",
     "description": "Web に到達できる相手と、到達後にサインインできる相手を管理します。",
     "refresh": "更新",

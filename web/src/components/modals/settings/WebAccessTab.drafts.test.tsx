@@ -20,6 +20,8 @@ vi.mock("../../../services/api", async (original) => ({
   fetchMembership: vi.fn(async () => ({ ok: true, result: { membership: { logged_in: false } } })),
   fetchGroups: vi.fn(async () => ({ ok: true, result: { groups: [] } })),
   fetchAccessTokens: vi.fn(),
+  createAccessToken: vi.fn(),
+  deleteAccessToken: vi.fn(),
   fetchRemoteAccessState: vi.fn(),
   updateRemoteAccessConfig: vi.fn(),
 }));
@@ -37,6 +39,13 @@ const privateState: RemoteAccessState = {
   provider: "manual",
   config: { ...localState.config, web_host: "0.0.0.0" },
 };
+const adminEntry = {
+  token_id: "admin",
+  user_id: "owner",
+  is_admin: true,
+  allowed_groups: [],
+  created_at: "2026-09-18T00:00:00Z",
+};
 
 describe("Web Access connection drafts", () => {
   let root: ReturnType<typeof createRoot>;
@@ -49,17 +58,7 @@ describe("Web Access connection drafts", () => {
     saved = localState;
     vi.mocked(api.fetchAccessTokens).mockResolvedValue({
       ok: true,
-      result: {
-        access_tokens: [
-          {
-            token_id: "admin",
-            user_id: "owner",
-            is_admin: true,
-            allowed_groups: [],
-            created_at: "2026-09-18T00:00:00Z",
-          },
-        ],
-      },
+      result: { access_tokens: [adminEntry] },
     });
     vi.mocked(api.fetchRemoteAccessState).mockImplementation(async () => ({
       ok: true,
@@ -88,8 +87,14 @@ describe("Web Access connection drafts", () => {
     host.remove();
   });
 
-  const render = async () => {
+  const render = async (view: "overview" | "tokens" = "overview") => {
     await act(async () => root.render(<WebAccessTab isDark={false} onOpenAccount={() => {}} />));
+    if (view === "overview") {
+      const overview = [...host.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(
+        (tab) => tab.textContent === "webAccess.overviewTab",
+      );
+      if (overview) await act(async () => overview.click());
+    }
   };
   const button = (text: string) => {
     const match = [...host.querySelectorAll("button")].find((item) =>
@@ -123,13 +128,122 @@ describe("Web Access connection drafts", () => {
   });
 
   it("opens the access-token dialog in a portal", async () => {
-    await render();
+    await render("tokens");
     await click("common:create");
     const dialog = document.querySelector<HTMLElement>(
       '[role="dialog"][aria-label="webAccess.createAccessToken"]',
     );
     expect(dialog).not.toBeNull();
     expect(host.contains(dialog)).toBe(false);
+  });
+
+  it("opens directly on the expanded token view and keeps overview reachable by Tab", async () => {
+    let finish!: (value: Awaited<ReturnType<typeof api.fetchAccessTokens>>) => void;
+    vi.mocked(api.fetchAccessTokens).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    await render("tokens");
+    const tokens = button("webAccess.accessControlTitle");
+    const overview = button("webAccess.overviewTab");
+    expect(tokens.getAttribute("role")).toBe("tab");
+    expect(tokens.getAttribute("aria-selected")).toBe("true");
+    const panel = [...host.querySelectorAll<HTMLElement>('[role="tabpanel"]')].find(
+      (panel) => panel.getAttribute("aria-labelledby") === tokens.id,
+    )!;
+    expect(panel.hidden).toBe(false);
+    expect(panel.querySelector("details")).toBeNull();
+    expect(panel.textContent).toContain("common:loading");
+    expect(panel.textContent).not.toContain("webAccess.noAccessTokens");
+    await act(async () => finish({ ok: true, result: { access_tokens: [adminEntry] } }));
+    expect(panel.textContent).toContain("owner");
+    await act(async () => overview.click());
+    expect(overview.getAttribute("aria-selected")).toBe("true");
+    expect(panel.hidden).toBe(true);
+    await act(async () => tokens.click());
+    expect(panel.hidden).toBe(false);
+  });
+
+  it("pages tokens and keeps a valid page after deleting or creating an entry", async () => {
+    let entries = Array.from({ length: 11 }, (_, index) => ({
+      token_id: `token-${index}`,
+      user_id: index === 0 ? "owner" : `reader-${String(index).padStart(2, "0")}`,
+      is_admin: index === 0,
+      allowed_groups: [],
+      token_preview: "masked",
+      created_at: "2026-09-18T00:00:00Z",
+    }));
+    vi.mocked(api.fetchAccessTokens).mockImplementation(async () => ({
+      ok: true,
+      result: { access_tokens: entries },
+    }));
+    vi.mocked(api.deleteAccessToken).mockImplementation(async (id) => {
+      entries = entries.filter((entry) => entry.token_id !== id);
+      return {
+        ok: true,
+        result: { deleted: true, access_tokens_remain: true, deleted_current_session: false },
+      };
+    });
+    vi.mocked(api.createAccessToken).mockImplementation(async (userId) => {
+      const created = { ...entries[0], token_id: "created", user_id: userId };
+      entries = [...entries, created];
+      return { ok: true, result: { access_token: { ...created, token: "synthetic-new-token" } } };
+    });
+    await render("tokens");
+    const panel = () =>
+      [...host.querySelectorAll<HTMLElement>('[role="tabpanel"]')].find((panel) => !panel.hidden)!;
+    expect(panel().textContent).toContain("reader-09");
+    expect(panel().textContent).not.toContain("reader-10");
+    expect(button("capabilityCenter.pagination.prev").disabled).toBe(true);
+    await click("capabilityCenter.pagination.next");
+    expect(panel().textContent).toContain("reader-10");
+    expect(panel().textContent).not.toContain("reader-09");
+    expect(button("capabilityCenter.pagination.next").disabled).toBe(true);
+
+    await click("webAccess.delete");
+    const confirm = [...panel().querySelectorAll<HTMLButtonElement>("button")]
+      .filter((button) => button.textContent === "webAccess.delete")
+      .at(-1)!;
+    await act(async () => confirm.click());
+    expect(api.deleteAccessToken).toHaveBeenCalledWith("token-10");
+    expect(panel().textContent).toContain("owner");
+    expect(panel().textContent).toContain("1 / 1");
+    expect(button("capabilityCenter.pagination.next").disabled).toBe(true);
+
+    await click("common:create");
+    const dialog = document.querySelector<HTMLElement>(
+      '[role="dialog"][aria-label="webAccess.createAccessToken"]',
+    )!;
+    await act(async () => {
+      const input = dialog.querySelector<HTMLInputElement>(
+        '[placeholder="webAccess.userIdPlaceholder"]',
+      )!;
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
+        input,
+        "new-owner",
+      );
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      dialog.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click();
+    });
+    const create = [...dialog.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent === "webAccess.createAccessToken",
+    )!;
+    await act(async () => create.click());
+    expect(api.createAccessToken).toHaveBeenCalledWith("new-owner", true, [], undefined, undefined);
+    const close = [...dialog.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent === "webAccess.close",
+    )!;
+    await act(async () => close.click());
+    expect(panel().textContent).toContain("1 / 2");
+    await click("capabilityCenter.pagination.next");
+    expect(panel().textContent).toContain("new-owner");
+
+    await act(async () =>
+      root.render(<WebAccessTab isDark={false} focusReach onOpenAccount={() => {}} />),
+    );
+    expect(button("webAccess.overviewTab").getAttribute("aria-selected")).toBe("true");
   });
 
   it("opens the restart instructions when a saved change needs a restart", async () => {
