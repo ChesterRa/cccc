@@ -52,7 +52,9 @@ interface UseDragDropOptions {
 }
 
 export function useDragDrop({ selectedGroupId }: UseDragDropOptions) {
-  const { showError } = useUIStore(useShallow((s) => ({ showError: s.showError })));
+  const { showError, setGroupWorkView } = useUIStore(
+    useShallow((s) => ({ showError: s.showError, setGroupWorkView: s.setGroupWorkView })),
+  );
   const { appendComposerFiles, composerFiles } = useComposerStore(
     useShallow((s) => ({
       appendComposerFiles: s.appendComposerFiles,
@@ -81,9 +83,10 @@ export function useDragDrop({ selectedGroupId }: UseDragDropOptions) {
 
       if (ok.length > 0) {
         appendComposerFiles(ok);
+        if (selectedGroupId) setGroupWorkView(selectedGroupId, "messages");
       }
     },
-    [showError, appendComposerFiles, composerFiles],
+    [showError, appendComposerFiles, composerFiles, selectedGroupId, setGroupWorkView],
   );
 
   // Drag/drop event listeners.

@@ -1,5 +1,4 @@
 import { type KeyboardEvent, type ReactNode, useId } from "react";
-import { SettingsIcon } from "../Icons";
 import { nextActorConfigTabId } from "./actorConfigTabsModel";
 
 export interface ActorConfigTab {
@@ -8,10 +7,6 @@ export interface ActorConfigTab {
   panel: ReactNode;
   disabledReason?: string;
   panelId?: string;
-  /** A secondary view: set apart at the end of the strip instead of among its siblings. */
-  aside?: boolean;
-  /** Something behind this tab that needs noticing, such as changed settings. */
-  attention?: string;
 }
 
 interface ActorConfigTabsProps {
@@ -102,23 +97,11 @@ export function ActorConfigTabs({
                 title={tab.disabledReason}
                 aria-controls={`${baseId}-panel-${tab.panelId ?? tab.id}`}
                 tabIndex={selected ? 0 : -1}
-                data-aside={tab.aside || undefined}
-                className={`${tab.aside ? "ml-auto inline-flex items-center gap-1.5 border-l border-l-[var(--glass-border-subtle)] pl-4 " : ""}shrink-0 border-b-2 px-3 py-2 text-xs font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)]/45 ${selected ? "border-[var(--color-accent-primary)] text-[var(--color-text-primary)] dark:border-white dark:text-white dark:shadow-[0_1px_8px_rgba(255,255,255,0.18)]" : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] dark:hover:text-zinc-200"}`}
+                className={`shrink-0 border-b-2 px-3 py-2 text-xs font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)]/45 ${selected ? "border-[var(--color-accent-primary)] text-[var(--color-text-primary)] dark:border-white dark:text-white dark:shadow-[0_1px_8px_rgba(255,255,255,0.18)]" : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] dark:hover:text-zinc-200"}`}
                 onClick={tab.disabledReason ? undefined : () => onChange(tab.id)}
                 onKeyDown={tab.disabledReason ? undefined : handleKeyDown}
               >
-                {tab.aside ? <SettingsIcon size={13} aria-hidden="true" /> : null}
                 {tab.label}
-                {tab.attention ? (
-                  <>
-                    <span
-                      aria-hidden="true"
-                      title={tab.attention}
-                      className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500"
-                    />
-                    <span className="sr-only">{tab.attention}</span>
-                  </>
-                ) : null}
               </button>
             );
           })}

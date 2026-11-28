@@ -1,12 +1,10 @@
-import type { CSSProperties } from "react";
 import { useComposerDraftViewer, useComposerFileUrls } from "./composerDraftAttachments";
 import { ComposerFilePreview } from "./ComposerFilePreview";
 
 /**
- * Files waiting to be sent, floating over the conversation on the composer's top edge. The
- * tray is out of the composer's flow, so attaching a file never changes the composer's height
- * or moves the text being typed. Only the files themselves take the pointer; the gaps between
- * them stay clickable for whatever lies underneath.
+ * Files waiting to be sent, laid out in-flow inside the composer so they never cover messages,
+ * banners, or the dock above it. Waiting pictures still open in the Group's shared attachment
+ * viewer when clicked.
  */
 export function ComposerFileTray({
   groupId,
@@ -24,15 +22,13 @@ export function ComposerFileTray({
   const enlarge = useComposerDraftViewer(groupId, files, urls);
   if (files.length === 0) return null;
   return (
-    <ul data-composer-file-tray className="composer-file-tray" aria-live="polite">
+    <ul
+      data-composer-file-tray
+      className="mb-2 flex max-h-40 list-none flex-wrap gap-2 overflow-y-auto px-2 pt-2 pb-1"
+      aria-live="polite"
+    >
       {files.map((file, index) => (
-        <li
-          key={`${file.name}:${index}`}
-          className="composer-file-tray-item"
-          // Each file leans and bobs a little differently, so a row of them does not move as
-          // one block.
-          style={{ "--tray-index": index } as CSSProperties}
-        >
+        <li key={`${file.name}:${index}`} className="max-w-full">
           <ComposerFilePreview
             file={file}
             previewUrl={urls.get(file)}

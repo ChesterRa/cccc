@@ -22,6 +22,7 @@ pub fn search(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let query = Query {
         kind: kind(request, "all"),
         text: string_arg(request, "q").unwrap_or_default(),
+        task_id: task_filter(request)?,
         by: string_arg(request, "by").unwrap_or_default(),
         by_any: sender_ids(request)?,
         recipient: recipient(request)?,
@@ -132,6 +133,7 @@ impl Kind {
 struct Query {
     kind: Kind,
     text: String,
+    task_id: Option<String>,
     by: String,
     by_any: HashSet<String>,
     recipient: Option<String>,
@@ -172,6 +174,10 @@ fn page(
                     })
             })
             && matches_time(event, query.since, query.until)
+            && query
+                .task_id
+                .as_deref()
+                .is_none_or(|task_id| matches_task(event, task_id))
             && (text.is_empty()
                 || serde_json::to_string(event)
                     .unwrap_or_default()
@@ -211,6 +217,53 @@ fn page(
         events: matches,
         has_more,
     })
+}
+
+fn task_filter(request: &DaemonRequest) -> Result<Option<String>, OpError> {
+    request
+        .args
+        .get("task_id")
+        .filter(|value| !value.is_null())
+        .map(|value| {
+            value
+                .as_str()
+                .map(str::trim)
+                .filter(|id| cccc_core::context::is_task_id(id))
+                .map(str::to_owned)
+                .ok_or_else(|| OpError::invalid("task_id must be a task ID in T<number> format"))
+        })
+        .transpose()
+}
+
+fn matches_task(event: &Event, task_id: &str) -> bool {
+    if event.kind != "chat.message" {
+        return false;
+    }
+    if event
+        .data
+        .get("refs")
+        .and_then(Value::as_array)
+        .is_some_and(|refs| {
+            refs.iter().any(|reference| {
+                reference.get("kind").and_then(Value::as_str).map(str::trim) == Some("task_ref")
+                    && reference
+                        .get("task_id")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        == Some(task_id)
+            })
+        })
+    {
+        return true;
+    }
+    event
+        .data
+        .get("text")
+        .and_then(Value::as_str)
+        .is_some_and(|text| {
+            text.split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
+                .any(|word| word.eq_ignore_ascii_case(task_id))
+        })
 }
 
 fn cursor(

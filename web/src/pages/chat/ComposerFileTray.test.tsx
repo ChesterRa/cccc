@@ -1,4 +1,6 @@
 // @vitest-environment happy-dom
+import { readFileSync } from "node:fs";
+import { fileURLToPath, URL as NodeURL } from "node:url";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -61,5 +63,20 @@ describe("ComposerFileTray", () => {
     await act(async () => buttons[1].click());
 
     expect(onRemove.mock.calls).toEqual([[2], [1]]);
+  });
+
+  it("lays waiting files out in-flow inside the composer without floating drift rules", async () => {
+    await render([file("notes.md"), file("plan.txt")]);
+    const tray = host.querySelector<HTMLElement>("[data-composer-file-tray]")!;
+    expect(tray.classList.contains("flex-wrap")).toBe(true);
+    expect(tray.classList.contains("overflow-y-auto")).toBe(true);
+    expect(tray.classList.contains("composer-file-tray")).toBe(false);
+
+    const css = readFileSync(
+      fileURLToPath(new NodeURL("../../styles/chatComposer.css", import.meta.url)),
+      "utf8",
+    );
+    expect(css).not.toContain(".composer-file-tray");
+    expect(css).not.toContain("composer-file-drift");
   });
 });

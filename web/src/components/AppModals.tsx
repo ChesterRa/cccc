@@ -208,6 +208,7 @@ export function AppModals({
     showNotice,
     setActiveTab,
     setChatMobileSurface,
+    setGroupWorkView,
   } = useUIStore(
     useShallow((s) => ({
       busy: s.busy,
@@ -217,6 +218,7 @@ export function AppModals({
       showNotice: s.showNotice,
       setActiveTab: s.setActiveTab,
       setChatMobileSurface: s.setChatMobileSurface,
+      setGroupWorkView: s.setGroupWorkView,
     })),
   );
   const resourcePanel = useGroupResourcePanel(selectedGroupId);
@@ -1323,6 +1325,7 @@ export function AppModals({
       setComposerDestGroupId(gid);
       setActiveTab("chat");
       setChatMobileSurface(gid, "messages");
+      setGroupWorkView(gid, "messages");
       setPresentationViewer(null);
       window.setTimeout(() => composerRef.current?.focus(), 0);
     },
@@ -1333,6 +1336,7 @@ export function AppModals({
       setActiveTab,
       setChatMobileSurface,
       setComposerDestGroupId,
+      setGroupWorkView,
       setPresentationViewer,
       setQuotedPresentationRef,
       showError,
@@ -1450,6 +1454,7 @@ export function AppModals({
         onReply={(ev) => {
           onStartReply(ev);
           setActiveTab("chat");
+          if (selectedGroupId) setGroupWorkView(selectedGroupId, "messages");
           closeModal("search");
           window.setTimeout(() => composerRef.current?.focus(), 0);
         }}

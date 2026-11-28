@@ -39,7 +39,7 @@ import { ComposerFailedSends } from "./ComposerFailedSends";
 import { ChatFilterTabs } from "./ChatFilterTabs";
 import { SidePanelPresence } from "../../components/layout/SidePanelPresence";
 import { TaskViewBanner } from "../../features/taskView/TaskViewBanner";
-import { useTaskViewStore } from "../../features/taskView/taskViewStore";
+import { openTaskConversation, useTaskViewStore } from "../../features/taskView/taskViewStore";
 import { usePinnedIds } from "../../features/pins/pinStore";
 import { GroupWorkArea, type RuntimeActorRenderer } from "./GroupWorkArea";
 import { WorkViewComposerSlot } from "./WorkViewComposerSlot";
@@ -409,7 +409,6 @@ export function ChatTab({
     (state) => state.clearPresentationSlotAttention,
   );
   const openContextTask = useModalStore((state) => state.openContextTask);
-  const openTaskView = useTaskViewStore((state) => state.open);
   const closeTaskView = useTaskViewStore((state) => state.close);
   const mobileSurface = useUIStore((state) =>
     selectedGroupId
@@ -808,9 +807,9 @@ export function ChatTab({
       // In the conversation a task opens its own conversation; the banner leads to its details.
       // An exhibit or a Group not yet chosen keeps the details, which need no chat view.
       if (readOnly || !selectedGroupId) openContextTask(taskId);
-      else openTaskView(selectedGroupId, taskId, String(ref.title || ""));
+      else openTaskConversation(selectedGroupId, taskId, String(ref.title || ""));
     },
-    [openContextTask, openTaskView, readOnly, selectedGroupId],
+    [openContextTask, readOnly, selectedGroupId],
   );
 
   const pinPresentationSlot = useCallback(
@@ -829,9 +828,10 @@ export function ChatTab({
         const trimmed = previous.replace(/\s+$/, "");
         return trimmed ? `${trimmed} ${reference} ` : `${reference} `;
       });
-      composerRef.current?.focus();
+      if (selectedGroupId) setGroupWorkView(selectedGroupId, "messages");
+      window.setTimeout(() => composerRef.current?.focus(), 0);
     },
-    [composerRef, setComposerText],
+    [composerRef, selectedGroupId, setComposerText, setGroupWorkView],
   );
 
   const pinWorkspacePath = useCallback(
@@ -909,6 +909,7 @@ export function ChatTab({
       setQuotedPresentationRef(ref);
       setComposerDestGroupId(gid);
       setChatMobileSurface(gid, "messages");
+      setGroupWorkView(gid, "messages");
       setPresentationViewer(null);
       // A phone's panel or a maximized one covers the composer the reference goes into.
       if (isSmallScreen || resourcePanel.maximized) setResourcePanelOpen(gid, false);
@@ -922,6 +923,7 @@ export function ChatTab({
       selectedGroupId,
       setChatMobileSurface,
       setComposerDestGroupId,
+      setGroupWorkView,
       setPresentationViewer,
       setQuotedPresentationRef,
       setResourcePanelOpen,
@@ -937,6 +939,7 @@ export function ChatTab({
       setQuotedVoiceDocumentRef(ref);
       setComposerDestGroupId(gid);
       setChatMobileSurface(gid, "messages");
+      setGroupWorkView(gid, "messages");
       window.setTimeout(() => composerRef.current?.focus(), 0);
     },
     [
@@ -944,6 +947,7 @@ export function ChatTab({
       selectedGroupId,
       setChatMobileSurface,
       setComposerDestGroupId,
+      setGroupWorkView,
       setQuotedVoiceDocumentRef,
     ],
   );
@@ -1090,12 +1094,13 @@ export function ChatTab({
   const windowReturnKeyRef = useRef<HTMLButtonElement | null>(null);
   const showInConversation = useCallback(
     (eventId: string) => {
+      if (taskView) closeTaskView();
       viewMessageContext(eventId);
       requestAnimationFrame(() => {
         if (document.activeElement === document.body) windowReturnKeyRef.current?.focus();
       });
     },
-    [viewMessageContext],
+    [closeTaskView, taskView, viewMessageContext],
   );
   // Keep the scroll viewport fixed beneath the mobile header and filters, so
   // showing or hiding those controls cannot move the reader's anchor. The

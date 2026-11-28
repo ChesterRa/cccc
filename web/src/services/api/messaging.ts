@@ -79,6 +79,7 @@ export async function searchChatMessages(
     includeStatuses?: boolean;
     by?: string;
     byAny?: string[];
+    taskId?: string;
   },
   init?: RequestInit,
 ) {
@@ -90,6 +91,7 @@ export async function searchChatMessages(
   if (opts?.after) params.set("after", opts.after);
   if (opts?.by) params.set("by", opts.by);
   if (opts?.byAny?.length) params.set("by_any", JSON.stringify(opts.byAny));
+  if (opts?.taskId !== undefined) params.set("task_id", opts.taskId);
   return apiJson<{ events: LedgerEvent[]; has_more: boolean; count: number }>(
     `/api/v1/groups/${encodeURIComponent(groupId)}/ledger/search?${params.toString()}`,
     init,

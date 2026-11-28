@@ -37,7 +37,7 @@ import { Surface } from "../ui/surface";
 import { Textarea } from "../ui/textarea";
 import { ActorWorkingDirectory } from "./ActorWorkingDirectory";
 import { actorAdvancedChanges } from "./actorConfigAdvancedModel";
-import { ActorConfigAdvanced, ActorConfigForm, ActorConfigViews } from "./ActorConfigSections";
+import { ActorConfigAdvanced, ActorConfigForm } from "./ActorConfigSections";
 import { ActorNotesField } from "./ActorNotesField";
 import { ActorConfigTabs } from "./ActorConfigTabs";
 import { ActorSecretManager } from "./ActorSecretManager";
@@ -351,8 +351,8 @@ function CreateActorConfigModal({
   const [directoryBusy, setDirectoryBusy] = useState(false);
   const [avatarFile, setAvatarFile] = useState<File | null>(null);
   const [capabilitiesPrimed, setCapabilitiesPrimed] = useState(false);
-  const [advancedTab, setAdvancedTab] = useState<AdvancedTabId>("environment");
-  const [advancedView, setAdvancedView] = useState(false);
+  const [advancedTab, setAdvancedTab] = useState<AdvancedTabId | null>(null);
+  const [advancedOpenChoice, setAdvancedOpenChoice] = useState<boolean | null>(null);
   const [deepSeekChanges, setDeepSeekChanges] =
     useState<ActorSecretChanges>(emptyActorSecretChanges);
   const avatarPreviewUrl = useMemo(
@@ -366,6 +366,9 @@ function CreateActorConfigModal({
       setExistingBusy(false);
       setPairing(false);
       setDeepSeekChanges(emptyActorSecretChanges());
+      setAdvancedTab(null);
+      setAdvancedOpenChoice(null);
+      setCapabilitiesPrimed(false);
     }
   }, [isOpen]);
 
@@ -442,32 +445,26 @@ function CreateActorConfigModal({
     ...(previewRuntime ? ["capabilities" as const] : []),
     ...(!useProfile ? ["profile" as const] : []),
   ];
-  const activeAdvancedTab = createAdvancedTabIds.includes(advancedTab)
-    ? advancedTab
-    : createAdvancedTabIds[0];
+  const activeAdvancedTab =
+    advancedTab && createAdvancedTabIds.includes(advancedTab)
+      ? advancedTab
+      : createAdvancedTabIds[0];
   const selectAdvancedTab = (id: string) => {
     const next = id as AdvancedTabId;
     setAdvancedTab(next);
     if (next === "capabilities") setCapabilitiesPrimed(true);
   };
-  const advancedAvailable = createAdvancedTabIds.length > 0 && !existingActive;
-  const advancedActive = advancedView && advancedAvailable;
+  const advancedOpen = advancedOpenChoice ?? showRuntimeSetup;
   const advancedChanges = actorAdvancedChanges({
     commandOverridden: createAdvancedTabIds.includes("command") && !useDefaultCommand,
     environmentText: createAdvancedTabIds.includes("environment") ? secretsSetText : "",
     capabilityIds: parseCapabilityIdInput(capabilityAutoloadText),
   });
-  // Shown on the Advanced tab itself, so nothing set or required there is out of sight.
-  const advancedAttention =
-    advancedChanges.length > 0
-      ? advancedChanges
-          .map((change) =>
-            t(`advancedChanged.${change.kind}`, { count: "count" in change ? change.count : 0 }),
-          )
-          .join(" · ")
-      : showRuntimeSetup
-        ? t("manualMcpRequired")
-        : undefined;
+  const advancedSummary = advancedChanges
+    .map((change) =>
+      t(`advancedChanged.${change.kind}`, { count: "count" in change ? change.count : 0 }),
+    )
+    .join(" · ");
 
   const handleSubmit = async () => {
     if (scopeUnavailable || directoryBusy) return;
@@ -505,11 +502,6 @@ function CreateActorConfigModal({
   };
 
   const handleTabChange = (nextId: string) => {
-    if (nextId === "advanced") {
-      setAdvancedView(true);
-      return;
-    }
-    setAdvancedView(false);
     const next = nextId as "managed" | "web" | "existing";
     if (next === createTab) return;
 
@@ -636,373 +628,378 @@ function CreateActorConfigModal({
         const formPanelContent = (
           <div className="flex-1 min-h-0 overflow-y-auto scrollbar-hide bg-[var(--color-bg-primary)] p-4 sm:p-6">
             <div className="mx-auto flex min-h-full w-full max-w-6xl flex-col">
-              <ActorConfigViews
-                showAdvanced={advancedActive}
-                form={
-                  <ActorConfigForm
-                    identityLabel={t("sectionBasics")}
-                    runtimeLabel={t("sectionRuntime", "Runtime & Profile")}
-                    identity={
-                      <div className="grid grid-cols-1 gap-4 sm:grid-cols-[88px_minmax(0,1fr)] sm:items-start">
-                        <ActorAvatarField
-                          label={null}
-                          avatarUrl={undefined}
-                          previewUrl={avatarPreviewUrl}
-                          runtime={previewRuntime}
-                          title={previewTitle}
-                          isDark={isDark}
-                          sizeClassName="h-16 w-16 sm:h-[4.5rem] sm:w-[4.5rem]"
+              <ActorConfigForm
+                identityLabel={t("sectionBasics")}
+                runtimeLabel={t("sectionRuntime", "Runtime & Profile")}
+                identity={
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-[88px_minmax(0,1fr)] sm:items-start">
+                    <ActorAvatarField
+                      label={null}
+                      avatarUrl={undefined}
+                      previewUrl={avatarPreviewUrl}
+                      runtime={previewRuntime}
+                      title={previewTitle}
+                      isDark={isDark}
+                      sizeClassName="h-16 w-16 sm:h-[4.5rem] sm:w-[4.5rem]"
+                      disabled={busy === "actor-add"}
+                      resetDisabled={!avatarFile}
+                      onSelectFile={setAvatarFile}
+                      onReset={() => setAvatarFile(null)}
+                    />
+
+                    <div className="min-w-0 space-y-4">
+                      <div>
+                        <label className="block text-xs font-medium mb-2 text-[var(--color-text-muted)]">
+                          {t("agentId", { defaultValue: "Agent ID" })}
+                        </label>
+                        <Input
+                          value={actorId}
+                          onChange={(e) => onChangeActorId(e.target.value)}
+                          placeholder={suggestedActorId}
                           disabled={busy === "actor-add"}
-                          resetDisabled={!avatarFile}
-                          onSelectFile={setAvatarFile}
-                          onReset={() => setAvatarFile(null)}
                         />
-
-                        <div className="min-w-0 space-y-4">
-                          <div>
-                            <label className="block text-xs font-medium mb-2 text-[var(--color-text-muted)]">
-                              {t("agentId", { defaultValue: "Agent ID" })}
-                            </label>
-                            <Input
-                              value={actorId}
-                              onChange={(e) => onChangeActorId(e.target.value)}
-                              placeholder={suggestedActorId}
-                              disabled={busy === "actor-add"}
-                            />
-                          </div>
-
-                          <div>
-                            <label className="block text-xs font-medium mb-2 text-[var(--color-text-muted)]">
-                              {t("agentRole", { defaultValue: "Agent role" })}
-                            </label>
-                            <div className="grid grid-cols-2 gap-2">
-                              <Button
-                                type="button"
-                                variant="outline"
-                                {...modeChoiceProps(role === "peer")}
-                                onClick={() => onChangeRole("peer")}
-                                disabled={busy === "actor-add"}
-                              >
-                                {t("peerRole")}
-                              </Button>
-                              <Button
-                                type="button"
-                                variant="outline"
-                                {...modeChoiceProps(role === "foreman")}
-                                onClick={() => onChangeRole("foreman")}
-                                disabled={busy === "actor-add" || hasForeman}
-                                title={
-                                  hasForeman
-                                    ? t("foremanAlreadyConfigured", {
-                                        defaultValue: "Foreman already configured",
-                                      })
-                                    : undefined
-                                }
-                              >
-                                {t("foremanRole")}
-                              </Button>
-                            </div>
-                            {!hasForeman ? (
-                              <div className="text-xs mt-1.5 text-[var(--color-text-muted)]">
-                                {t("firstAgentForeman")}
-                              </div>
-                            ) : null}
-                          </div>
-                        </div>
                       </div>
-                    }
-                    runtime={
-                      <>
-                        <div>
-                          <RuntimeConfigurationModePicker
-                            value={useProfile ? "profile" : "custom"}
+
+                      <div>
+                        <label className="block text-xs font-medium mb-2 text-[var(--color-text-muted)]">
+                          {t("agentRole", { defaultValue: "Agent role" })}
+                        </label>
+                        <div className="grid grid-cols-2 gap-2">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            {...modeChoiceProps(role === "peer")}
+                            onClick={() => onChangeRole("peer")}
                             disabled={busy === "actor-add"}
-                            onChange={(mode) => {
-                              const nextUsesProfile = mode === "profile";
-                              onChangeUseProfile(nextUsesProfile);
-                              if (!nextUsesProfile) return;
-                              if (!actorProfilesBusy && selectableActorProfiles.length <= 0)
-                                void onRequestActorProfiles?.();
-                              if (selectableActorProfiles.length > 0 && !profileId)
-                                onChangeProfileId(
-                                  actorProfileIdentityKey(selectableActorProfiles[0]),
-                                );
-                            }}
-                          />
+                          >
+                            {t("peerRole")}
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            {...modeChoiceProps(role === "foreman")}
+                            onClick={() => onChangeRole("foreman")}
+                            disabled={busy === "actor-add" || hasForeman}
+                            title={
+                              hasForeman
+                                ? t("foremanAlreadyConfigured", {
+                                    defaultValue: "Foreman already configured",
+                                  })
+                                : undefined
+                            }
+                          >
+                            {t("foremanRole")}
+                          </Button>
                         </div>
-
-                        <div className="mt-4 space-y-4">
-                          {useProfile ? (
-                            <RuntimeProfilePicker
-                              value={profileId}
-                              profiles={selectableActorProfiles}
-                              busy={actorProfilesBusy}
-                              disabled={busy === "actor-add"}
-                              onChange={onChangeProfileId}
-                            />
-                          ) : (
-                            <div className="space-y-4">
-                              <div>
-                                <label className="block text-xs font-medium mb-2 text-[var(--color-text-muted)]">
-                                  {t("runtime")}
-                                </label>
-                                <RuntimeSelector
-                                  quietWhenDetected
-                                  showHint={false}
-                                  className="w-full rounded-xl border px-4 py-2.5 text-sm min-h-[44px] transition-colors glass-input text-[var(--color-text-primary)]"
-                                  value={runtime}
-                                  runtimeMode={runtimeMode}
-                                  disabled={busy === "actor-add"}
-                                  allowedRuntimes={SUPPORTED_RUNTIMES.filter(
-                                    (item) =>
-                                      isWebModelRuntime(item) === (createCategory === "web"),
-                                  )}
-                                  onChange={(value) => {
-                                    const next = value as SupportedRuntime;
-                                    onChangeRuntime(next);
-                                    if (next === "custom") onChangeUseDefaultCommand(false);
-                                    else onChangeUseDefaultCommand(true);
-                                    const nextInfo = runtimes.find((r) => r.name === next);
-                                    onChangeCommand(
-                                      String(nextInfo?.recommended_command || "").trim(),
-                                    );
-                                  }}
-                                  ariaLabel={t("runtime")}
-                                />
-                                <OpenCodeManagedModelHint runtime={runtime} />
-                                {supportsAcpMode(runtime) && (
-                                  <AcpRuntimeMode
-                                    runtime={runtime}
-                                    value={runtimeMode}
-                                    onChange={setRuntimeMode}
-                                    disabled={busy === "actor-add"}
-                                  />
-                                )}
-                              </div>
-
-                              {runtime === "deepseek" ? (
-                                <DeepSeekConnectionFields
-                                  changes={deepSeekChanges}
-                                  initialValues={initialSecrets}
-                                  creating
-                                  onChange={setDeepSeekChanges}
-                                  disabled={busy === "actor-add"}
-                                />
-                              ) : null}
-                              {runtime === "custom" ? (
-                                <RuntimeCommandControl
-                                  runtime={runtime}
-                                  command={command}
-                                  defaultCommand={defaultCommand}
-                                  useDefaultCommand={useDefaultCommand}
-                                  disabled={busy === "actor-add"}
-                                  onCommandChange={onChangeCommand}
-                                  onUseDefaultCommandChange={onChangeUseDefaultCommand}
-                                />
-                              ) : null}
-
-                              {webModelSetupIsActorBound ? (
-                                <div
-                                  className="rounded-xl border px-3 py-2 text-[11px] border-sky-500/20 bg-sky-500/5 text-sky-700 dark:text-sky-300"
-                                  data-status-tone="info"
-                                >
-                                  <div className="font-medium">
-                                    {runtime === "grok_web_model"
-                                      ? "Grok Bot Web Model"
-                                      : runtime === "chatgpt_dots"
-                                        ? "ChatGPT Dots"
-                                        : t("webModelActorBoundConnectorTitle", {
-                                            defaultValue: "ChatGPT Web Model",
-                                          })}
-                                  </div>
-                                  <div className="mt-1">
-                                    {runtime === "grok_web_model"
-                                      ? t("settings:grokActor.hint")
-                                      : runtime === "chatgpt_dots"
-                                        ? t("settings:dotsActor.createHint")
-                                        : t("webModelActorBoundConnectorHint", {
-                                            defaultValue:
-                                              "Use shared login and one connector in global Web Model settings. After saving this Actor, pair its own conversation below.",
-                                          })}
-                                  </div>
-                                </div>
-                              ) : null}
-                            </div>
-                          )}
-                        </div>
-                      </>
-                    }
-                    directory={
-                      attachedScopes.length > 0 || defaultScopeKey || groupId ? (
-                        <ActorWorkingDirectory
-                          collapsible
-                          key={`${groupId}/${isOpen}`}
-                          groupId={groupId}
-                          scopes={attachedScopes}
-                          activeScopeKey={activeScopeKey}
-                          value={defaultScopeKey}
-                          onChange={setDefaultScopeKey}
-                          onScopeAttached={onScopeAttached}
-                          onBusyChange={setDirectoryBusy}
-                          disabled={busy === "actor-add"}
-                          hint={defaultScopeKey ? t("workingDirectoryHint") : undefined}
-                        />
-                      ) : null
-                    }
-                    notes={
-                      <ActorNotesField
-                        value={actorNotes}
-                        onChange={onChangeActorNotes}
+                        {!hasForeman ? (
+                          <div className="text-xs mt-1.5 text-[var(--color-text-muted)]">
+                            {t("firstAgentForeman")}
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                  </div>
+                }
+                runtime={
+                  <>
+                    <div>
+                      <RuntimeConfigurationModePicker
+                        value={useProfile ? "profile" : "custom"}
                         disabled={busy === "actor-add"}
+                        onChange={(mode) => {
+                          const nextUsesProfile = mode === "profile";
+                          onChangeUseProfile(nextUsesProfile);
+                          if (!nextUsesProfile) return;
+                          if (!actorProfilesBusy && selectableActorProfiles.length <= 0)
+                            void onRequestActorProfiles?.();
+                          if (selectableActorProfiles.length > 0 && !profileId)
+                            onChangeProfileId(actorProfileIdentityKey(selectableActorProfiles[0]));
+                        }}
                       />
-                    }
+                    </div>
+
+                    <div className="mt-4 space-y-4">
+                      {useProfile ? (
+                        <RuntimeProfilePicker
+                          value={profileId}
+                          profiles={selectableActorProfiles}
+                          busy={actorProfilesBusy}
+                          disabled={busy === "actor-add"}
+                          onChange={onChangeProfileId}
+                        />
+                      ) : (
+                        <div className="space-y-4">
+                          <div>
+                            <label className="block text-xs font-medium mb-2 text-[var(--color-text-muted)]">
+                              {t("runtime")}
+                            </label>
+                            <RuntimeSelector
+                              quietWhenDetected
+                              showHint={false}
+                              className="w-full rounded-xl border px-4 py-2.5 text-sm min-h-[44px] transition-colors glass-input text-[var(--color-text-primary)]"
+                              value={runtime}
+                              runtimeMode={runtimeMode}
+                              disabled={busy === "actor-add"}
+                              allowedRuntimes={SUPPORTED_RUNTIMES.filter(
+                                (item) => isWebModelRuntime(item) === (createCategory === "web"),
+                              )}
+                              onChange={(value) => {
+                                const next = value as SupportedRuntime;
+                                onChangeRuntime(next);
+                                if (next === "custom") onChangeUseDefaultCommand(false);
+                                else onChangeUseDefaultCommand(true);
+                                const nextInfo = runtimes.find((r) => r.name === next);
+                                onChangeCommand(String(nextInfo?.recommended_command || "").trim());
+                              }}
+                              ariaLabel={t("runtime")}
+                            />
+                            <OpenCodeManagedModelHint runtime={runtime} />
+                            {supportsAcpMode(runtime) && (
+                              <AcpRuntimeMode
+                                runtime={runtime}
+                                value={runtimeMode}
+                                onChange={setRuntimeMode}
+                                disabled={busy === "actor-add"}
+                              />
+                            )}
+                          </div>
+
+                          {runtime === "deepseek" ? (
+                            <DeepSeekConnectionFields
+                              changes={deepSeekChanges}
+                              initialValues={initialSecrets}
+                              creating
+                              onChange={setDeepSeekChanges}
+                              disabled={busy === "actor-add"}
+                            />
+                          ) : null}
+                          {runtime === "custom" ? (
+                            <RuntimeCommandControl
+                              runtime={runtime}
+                              command={command}
+                              defaultCommand={defaultCommand}
+                              useDefaultCommand={useDefaultCommand}
+                              disabled={busy === "actor-add"}
+                              onCommandChange={onChangeCommand}
+                              onUseDefaultCommandChange={onChangeUseDefaultCommand}
+                            />
+                          ) : null}
+
+                          {webModelSetupIsActorBound ? (
+                            <div
+                              className="rounded-xl border px-3 py-2 text-[11px] border-sky-500/20 bg-sky-500/5 text-sky-700 dark:text-sky-300"
+                              data-status-tone="info"
+                            >
+                              <div className="font-medium">
+                                {runtime === "grok_web_model"
+                                  ? "Grok Bot Web Model"
+                                  : runtime === "chatgpt_dots"
+                                    ? "ChatGPT Dots"
+                                    : t("webModelActorBoundConnectorTitle", {
+                                        defaultValue: "ChatGPT Web Model",
+                                      })}
+                              </div>
+                              <div className="mt-1">
+                                {runtime === "grok_web_model"
+                                  ? t("settings:grokActor.hint")
+                                  : runtime === "chatgpt_dots"
+                                    ? t("settings:dotsActor.createHint")
+                                    : t("webModelActorBoundConnectorHint", {
+                                        defaultValue:
+                                          "Use shared login and one connector in global Web Model settings. After saving this Actor, pair its own conversation below.",
+                                      })}
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
+                      )}
+                    </div>
+                  </>
+                }
+                directory={
+                  attachedScopes.length > 0 || defaultScopeKey || groupId ? (
+                    <ActorWorkingDirectory
+                      collapsible
+                      key={`${groupId}/${isOpen}`}
+                      groupId={groupId}
+                      scopes={attachedScopes}
+                      activeScopeKey={activeScopeKey}
+                      value={defaultScopeKey}
+                      onChange={setDefaultScopeKey}
+                      onScopeAttached={onScopeAttached}
+                      onBusyChange={setDirectoryBusy}
+                      disabled={busy === "actor-add"}
+                      hint={defaultScopeKey ? t("workingDirectoryHint") : undefined}
+                    />
+                  ) : null
+                }
+                notes={
+                  <ActorNotesField
+                    value={actorNotes}
+                    onChange={onChangeActorNotes}
+                    disabled={busy === "actor-add"}
                   />
                 }
                 advanced={
                   createAdvancedTabIds.length > 0 ? (
-                    <ActorConfigTabs
-                      ariaLabel={t("sectionAdvanced")}
-                      activeId={activeAdvancedTab || ""}
-                      onChange={selectAdvancedTab}
-                      tabs={[
-                        ...(createAdvancedTabIds.includes("command")
-                          ? [
-                              {
-                                id: "command",
-                                label: t("commandSection"),
-                                panel: (
-                                  <RuntimeCommandControl
-                                    runtime={runtime}
-                                    command={command}
-                                    defaultCommand={defaultCommand}
-                                    useDefaultCommand={useDefaultCommand}
-                                    disabled={busy === "actor-add"}
-                                    onCommandChange={onChangeCommand}
-                                    onUseDefaultCommandChange={onChangeUseDefaultCommand}
-                                  />
-                                ),
-                              },
-                            ]
-                          : []),
-                        ...(showRuntimeSetup
-                          ? [
-                              {
-                                id: "connection",
-                                label: t("runtimeSetupSection"),
-                                panel: (
-                                  <div
-                                    className="rounded-xl border px-3 py-2 text-[11px] border-amber-500/20 bg-amber-500/5 text-amber-700 dark:text-amber-400"
-                                    data-status-tone="warning"
-                                  >
-                                    <div className="font-medium">{t("manualMcpRequired")}</div>
-                                    <div className="mt-1">
-                                      {t("configureMcpStdio")}{" "}
-                                      <code className="px-1 rounded bg-amber-500/15">cccc</code>{" "}
-                                      {t("thatRuns")}{" "}
-                                      <code className="px-1 rounded bg-amber-500/15">cccc mcp</code>
-                                      .
-                                    </div>
-                                    <pre className="mt-1.5 p-2 rounded overflow-x-auto whitespace-pre bg-amber-500/10 text-amber-800 dark:text-amber-100">
-                                      <code>{BASIC_MCP_CONFIG_SNIPPET}</code>
-                                    </pre>
-                                    <div className="mt-1 text-[10px] text-amber-700/80 dark:text-amber-400/80">
-                                      {t("restartAfterConfig")}
-                                    </div>
-                                  </div>
-                                ),
-                              },
-                            ]
-                          : []),
-                        ...(!useProfile && !isWebModelRuntime(runtime)
-                          ? [
-                              {
-                                id: "environment",
-                                label: t("secretsSection"),
-                                panel: (
-                                  <div>
-                                    <label className="block text-xs font-medium mb-2 text-[var(--color-text-muted)]">
-                                      {t("secretsWriteOnly")}
-                                    </label>
-                                    <Textarea
-                                      className="min-h-[96px] font-mono"
-                                      value={secretsSetText}
-                                      onChange={(e) => onChangeSecretsSetText(e.target.value)}
-                                      placeholder={secretsPlaceholder}
+                    <ActorConfigAdvanced
+                      title={t("sectionAdvanced")}
+                      summary={advancedSummary}
+                      open={advancedOpen}
+                      onOpenChange={setAdvancedOpenChoice}
+                    >
+                      <ActorConfigTabs
+                        ariaLabel={t("sectionAdvanced")}
+                        activeId={activeAdvancedTab || ""}
+                        onChange={selectAdvancedTab}
+                        tabs={[
+                          ...(createAdvancedTabIds.includes("command")
+                            ? [
+                                {
+                                  id: "command",
+                                  label: t("commandSection"),
+                                  panel: (
+                                    <RuntimeCommandControl
+                                      runtime={runtime}
+                                      command={command}
+                                      defaultCommand={defaultCommand}
+                                      useDefaultCommand={useDefaultCommand}
                                       disabled={busy === "actor-add"}
+                                      onCommandChange={onChangeCommand}
+                                      onUseDefaultCommandChange={onChangeUseDefaultCommand}
                                     />
-                                    <div className="text-[10px] mt-1.5 text-[var(--color-text-muted)]">
-                                      {t("secretsStoredLocally").replace(/<1>|<\/1>/g, "")}
+                                  ),
+                                },
+                              ]
+                            : []),
+                          ...(showRuntimeSetup
+                            ? [
+                                {
+                                  id: "connection",
+                                  label: t("runtimeSetupSection"),
+                                  panel: (
+                                    <div
+                                      className="rounded-xl border px-3 py-2 text-[11px] border-amber-500/20 bg-amber-500/5 text-amber-700 dark:text-amber-400"
+                                      data-status-tone="warning"
+                                    >
+                                      <div className="font-medium">{t("manualMcpRequired")}</div>
+                                      <div className="mt-1">
+                                        {t("configureMcpStdio")}{" "}
+                                        <code className="px-1 rounded bg-amber-500/15">cccc</code>{" "}
+                                        {t("thatRuns")}{" "}
+                                        <code className="px-1 rounded bg-amber-500/15">
+                                          cccc mcp
+                                        </code>
+                                        .
+                                      </div>
+                                      <pre className="mt-1.5 p-2 rounded overflow-x-auto whitespace-pre bg-amber-500/10 text-amber-800 dark:text-amber-100">
+                                        <code>{BASIC_MCP_CONFIG_SNIPPET}</code>
+                                      </pre>
+                                      <div className="mt-1 text-[10px] text-amber-700/80 dark:text-amber-400/80">
+                                        {t("restartAfterConfig")}
+                                      </div>
                                     </div>
-                                    <div className="text-[10px] mt-1 text-[var(--color-text-muted)]">
-                                      {t("secretsFormat").replace(/<1>|<\/1>|<2>|<\/2>/g, "")}
+                                  ),
+                                },
+                              ]
+                            : []),
+                          ...(!useProfile && !isWebModelRuntime(runtime)
+                            ? [
+                                {
+                                  id: "environment",
+                                  label: t("secretsSection"),
+                                  panel: (
+                                    <div>
+                                      <label className="block text-xs font-medium mb-2 text-[var(--color-text-muted)]">
+                                        {t("secretsWriteOnly")}
+                                      </label>
+                                      <Textarea
+                                        className="min-h-[96px] font-mono"
+                                        value={secretsSetText}
+                                        onChange={(e) => onChangeSecretsSetText(e.target.value)}
+                                        placeholder={secretsPlaceholder}
+                                        disabled={busy === "actor-add"}
+                                      />
+                                      <div className="text-[10px] mt-1.5 text-[var(--color-text-muted)]">
+                                        {t("secretsStoredLocally").replace(/<1>|<\/1>/g, "")}
+                                      </div>
+                                      <div className="text-[10px] mt-1 text-[var(--color-text-muted)]">
+                                        {t("secretsFormat").replace(/<1>|<\/1>|<2>|<\/2>/g, "")}
+                                      </div>
                                     </div>
-                                  </div>
-                                ),
-                              },
-                            ]
-                          : []),
-                        ...(previewRuntime
-                          ? [
-                              {
-                                id: "capabilities",
-                                label: t("capabilitiesSection"),
-                                panel: (
-                                  <CapabilityPicker
-                                    isDark={isDark}
-                                    value={parseCapabilityIdInput(capabilityAutoloadText)}
-                                    onChange={(next) =>
-                                      onChangeCapabilityAutoloadText(formatCapabilityIdInput(next))
-                                    }
-                                    disabled={busy === "actor-add"}
-                                    active={
-                                      capabilitiesPrimed ||
-                                      (advancedActive && activeAdvancedTab === "capabilities")
-                                    }
-                                    label={t("autoloadCapabilities")}
-                                    hint={t("autoloadCapabilitiesHint")}
-                                  />
-                                ),
-                              },
-                            ]
-                          : []),
-                        ...(!useProfile
-                          ? [
-                              {
-                                id: "profile",
-                                label: t("profileToolsSection"),
-                                panel: (
-                                  <div className="flex flex-wrap gap-3">
-                                    {isWebModelRuntime(runtime) && (
-                                      <p className="w-full text-sm text-[var(--color-text-secondary)]">
-                                        {t("webModelProfileHint")}
-                                      </p>
-                                    )}
-                                    <Button
-                                      type="button"
-                                      variant="secondary"
-                                      onClick={() =>
-                                        void onSaveAsProfile(
-                                          runtime === "deepseek" ? deepSeekSaveChanges : undefined,
-                                          supportsAcpMode(runtime) ? runtimeMode : "default",
+                                  ),
+                                },
+                              ]
+                            : []),
+                          ...(previewRuntime
+                            ? [
+                                {
+                                  id: "capabilities",
+                                  label: t("capabilitiesSection"),
+                                  panel: (
+                                    <CapabilityPicker
+                                      isDark={isDark}
+                                      value={parseCapabilityIdInput(capabilityAutoloadText)}
+                                      onChange={(next) =>
+                                        onChangeCapabilityAutoloadText(
+                                          formatCapabilityIdInput(next),
                                         )
                                       }
-                                      disabled={
-                                        busy === "actor-profile-save" ||
-                                        busy === "actor-add" ||
-                                        Boolean(deepSeekError)
+                                      disabled={busy === "actor-add"}
+                                      active={
+                                        capabilitiesPrimed ||
+                                        (!existingActive &&
+                                          advancedOpen &&
+                                          activeAdvancedTab === "capabilities")
                                       }
-                                    >
-                                      {busy === "actor-profile-save"
-                                        ? t("savingProfile")
-                                        : t("addToActorProfiles")}
-                                    </Button>
-                                  </div>
-                                ),
-                              },
-                            ]
-                          : []),
-                      ]}
-                    />
+                                      label={t("autoloadCapabilities")}
+                                      hint={t("autoloadCapabilitiesHint")}
+                                    />
+                                  ),
+                                },
+                              ]
+                            : []),
+                          ...(!useProfile
+                            ? [
+                                {
+                                  id: "profile",
+                                  label: t("profileToolsSection"),
+                                  panel: (
+                                    <div className="flex flex-wrap gap-3">
+                                      {isWebModelRuntime(runtime) && (
+                                        <p className="w-full text-sm text-[var(--color-text-secondary)]">
+                                          {t("webModelProfileHint")}
+                                        </p>
+                                      )}
+                                      <Button
+                                        type="button"
+                                        variant="secondary"
+                                        onClick={() =>
+                                          void onSaveAsProfile(
+                                            runtime === "deepseek"
+                                              ? deepSeekSaveChanges
+                                              : undefined,
+                                            supportsAcpMode(runtime) ? runtimeMode : "default",
+                                          )
+                                        }
+                                        disabled={
+                                          busy === "actor-profile-save" ||
+                                          busy === "actor-add" ||
+                                          Boolean(deepSeekError)
+                                        }
+                                      >
+                                        {busy === "actor-profile-save"
+                                          ? t("savingProfile")
+                                          : t("addToActorProfiles")}
+                                      </Button>
+                                    </div>
+                                  ),
+                                },
+                              ]
+                            : []),
+                        ]}
+                      />
+                    </ActorConfigAdvanced>
                   ) : null
                 }
               />
@@ -1014,7 +1011,7 @@ function CreateActorConfigModal({
             fill
             hideTabs={existingActive && pairing}
             ariaLabel={t("addAgent")}
-            activeId={advancedActive ? "advanced" : activeCreateTab}
+            activeId={activeCreateTab}
             onChange={handleTabChange}
             tabs={[
               {
@@ -1062,19 +1059,6 @@ function CreateActorConfigModal({
                     />
                   ) : null,
               },
-              ...(advancedAvailable
-                ? [
-                    {
-                      id: "advanced",
-                      label: t("sectionAdvanced"),
-                      panelId: "form",
-                      aside: true,
-                      attention: advancedAttention,
-                      disabledReason: busy === "actor-add" ? t("adding") : undefined,
-                      panel: formPanelContent,
-                    },
-                  ]
-                : []),
             ]}
           />
         );
@@ -1318,7 +1302,7 @@ function EditActorConfigModal({
   const [localNotice, setLocalNotice] = useState("");
   const [avatarBusy, setAvatarBusy] = useState<"" | "upload" | "clear">("");
   const [capabilitiesPrimed, setCapabilitiesPrimed] = useState(false);
-  const [advancedTab, setAdvancedTab] = useState<AdvancedTabId>("environment");
+  const [advancedTab, setAdvancedTab] = useState<AdvancedTabId | null>(null);
   const [advancedOpenChoice, setAdvancedOpenChoice] = useState<boolean | null>(null);
   const secretFetchSeqRef = useRef(0);
   const initializedDraftIdentityRef = useRef("");
@@ -1368,6 +1352,10 @@ function EditActorConfigModal({
     launchChanges.clear ||
     launchChanges.unsetKeys.length > 0 ||
     Object.keys(launchChanges.setVars).length > 0;
+  const capabilityAutoload = parseCapabilityIdInput(capabilityAutoloadText);
+  const capabilityChanged =
+    JSON.stringify(capabilityAutoload) !==
+    JSON.stringify(parseCapabilityIdInput(baseline.current.capabilityAutoloadText));
   const basicsChanged =
     title.trim() !== baseline.current.title.trim() ||
     (baseline.current.notesLoaded && actorNotes.trim() !== baseline.current.actorNotes.trim());
@@ -1375,8 +1363,7 @@ function EditActorConfigModal({
     scopeUnavailable ||
     hasSecretChanges ||
     defaultScopeKey !== savedDefaultScopeKey ||
-    JSON.stringify(parseCapabilityIdInput(capabilityAutoloadText)) !==
-      JSON.stringify(parseCapabilityIdInput(baseline.current.capabilityAutoloadText)) ||
+    capabilityChanged ||
     grokTargetChanged ||
     pendingConvertToCustom ||
     (editMode === "custom" &&
@@ -1401,9 +1388,8 @@ function EditActorConfigModal({
     "capabilities",
     ...(editMode === "custom" ? ["profile" as const] : []),
   ];
-  const activeAdvancedTab = editAdvancedTabIds.includes(advancedTab)
-    ? advancedTab
-    : editAdvancedTabIds[0];
+  const activeAdvancedTab =
+    advancedTab && editAdvancedTabIds.includes(advancedTab) ? advancedTab : editAdvancedTabIds[0];
   const selectedProfileName = String(selectedProfile?.name || "").trim();
   const changeCategory = (next: RuntimeCategory) => {
     if (next !== category && secretEditorOpen) {
@@ -1603,6 +1589,8 @@ function EditActorConfigModal({
     setManagedSwitchDone(false);
     setWebSetupRuntime("");
     setDefaultScopeKey(savedDefaultScopeKey);
+    setAdvancedTab(null);
+    setAdvancedOpenChoice(null);
     secretFetchSeqRef.current += 1;
     setEditMode(hasLinked ? "profile" : "custom");
     setPendingConvertToCustom(false);
@@ -1673,25 +1661,10 @@ function EditActorConfigModal({
   };
   // Required manual setup must be seen, so it opens the section until the user closes it.
   const advancedOpen = advancedOpenChoice ?? showRuntimeSetup;
-  const advancedChanges = actorAdvancedChanges({
-    commandOverridden: false,
-    environmentText: "",
-    capabilityIds: parseCapabilityIdInput(capabilityAutoloadText),
-  });
-  const advancedTabLabels: Record<AdvancedTabId, string> = {
-    connection: t("runtimeSetupSection", "Connection setup"),
-    command: t("commandSection"),
-    environment: t("secretsSection", "Environment variables"),
-    capabilities: t("capabilitiesSection", "Capabilities"),
-    profile: t("profileToolsSection", "Profile tools"),
-  };
-  const advancedSummary = (
-    advancedChanges.length > 0
-      ? advancedChanges.map((change) =>
-          t(`advancedChanged.${change.kind}`, { count: "count" in change ? change.count : 0 }),
-        )
-      : editAdvancedTabIds.map((id) => advancedTabLabels[id])
-  ).join(" · ");
+  const advancedSummary = [
+    ...(hasSecretChanges || secretEditorOpen ? [t("secretsSection", "Environment variables")] : []),
+    ...(capabilityChanged ? [t("capabilitiesSection", "Capabilities")] : []),
+  ].join(" · ");
 
   const convertToCustomDraft = () => {
     if (!linked || busy === "actor-update") return;
@@ -1855,9 +1828,6 @@ function EditActorConfigModal({
           setSecretsError(t("runtimeSwitch.unknown"));
           return;
         }
-        const capabilityChanged =
-          JSON.stringify(parseCapabilityIdInput(capabilityAutoloadText)) !==
-          JSON.stringify(parseCapabilityIdInput(baseline.current.capabilityAutoloadText));
         if (
           basicsChanged ||
           actorNotesBusy ||
@@ -1930,7 +1900,7 @@ function EditActorConfigModal({
           setVars: {},
           unsetKeys: [],
           clear: false,
-          capabilityAutoload: parseCapabilityIdInput(capabilityAutoloadText),
+          capabilityAutoload,
           defaultScopeKey,
           profileId,
           ...(grokTargetChanged ? { grokBotUrl: grokBotUrl!.trim() } : {}),
@@ -1967,7 +1937,7 @@ function EditActorConfigModal({
         setVars: secretSaveChanges.setVars,
         unsetKeys: secretSaveChanges.unsetKeys,
         clear: secretSaveChanges.clear,
-        capabilityAutoload: parseCapabilityIdInput(capabilityAutoloadText),
+        capabilityAutoload,
         defaultScopeKey,
         convertToCustom: linked && pendingConvertToCustom,
         onSecretsSaved: (keys) => {
@@ -2561,7 +2531,6 @@ function EditActorConfigModal({
                 <ActorConfigAdvanced
                   title={t("sectionAdvanced", "Advanced")}
                   summary={advancedSummary}
-                  changed={advancedChanges.length > 0}
                   open={advancedOpen}
                   onOpenChange={setAdvancedOpenChoice}
                 >
@@ -2636,7 +2605,7 @@ function EditActorConfigModal({
                         panel: (
                           <CapabilityPicker
                             isDark={isDark}
-                            value={parseCapabilityIdInput(capabilityAutoloadText)}
+                            value={capabilityAutoload}
                             onChange={(next) =>
                               onChangeCapabilityAutoloadText(formatCapabilityIdInput(next))
                             }

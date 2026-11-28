@@ -2,6 +2,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { useTaskViewStore } from "../features/taskView/taskViewStore";
 import * as api from "../services/api";
 import { useComposerStore, useGroupStore, useUIStore } from "../stores";
 import { useChatTab } from "./useChatTab";
@@ -12,6 +13,8 @@ vi.mock("../services/api", () => ({
   sendMessage: vi.fn(),
   replyMessage: vi.fn(),
   sendCrossGroupMessage: vi.fn(),
+  searchChatMessages: vi.fn(),
+  fetchTasksByIds: vi.fn(),
 }));
 vi.mock("./useSlashCommandState", () => ({
   useSlashCommandState: () => ({ items: [], loading: false }),
@@ -59,6 +62,15 @@ async function send(text?: string) {
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  vi.mocked(api.searchChatMessages).mockResolvedValue({
+    ok: true,
+    result: { events: [], count: 0, has_more: false },
+  });
+  vi.mocked(api.fetchTasksByIds).mockResolvedValue({
+    ok: true,
+    result: { tasks: [], tasksVersion: "fixture" },
+  });
+  useTaskViewStore.getState().close();
   useComposerStore.setState({ ...useComposerStore.getInitialState() });
   useGroupStore.setState({
     selectedGroupId: "g-a",
@@ -82,6 +94,49 @@ afterEach(async () => {
     root.unmount();
   });
   host.remove();
+  useTaskViewStore.getState().close();
+});
+
+it("tags a send only while the task is the current conversation", async () => {
+  vi.mocked(api.sendMessage).mockImplementation(async (...args) => accepted(String(args[5])));
+  await act(async () => useTaskViewStore.getState().open("g-a", "T7", "Ship it"));
+  await send("from the task");
+  expect(vi.mocked(api.sendMessage).mock.calls[0][6]).toEqual([
+    { kind: "task_ref", task_id: "T7", title: "Ship it" },
+  ]);
+
+  await act(async () =>
+    useGroupStore
+      .getState()
+      .setChatWindow(
+        {
+          groupId: "g-a",
+          centerEventId: "old",
+          centerIndex: 0,
+          events: [],
+          hasMoreBefore: false,
+          hasMoreAfter: true,
+        },
+        "g-a",
+      ),
+  );
+  expect(chat.taskView).toBeNull();
+  await send("from the history window");
+  expect(vi.mocked(api.sendMessage).mock.calls[1][6]).toEqual([]);
+});
+
+it.each([
+  { eventId: "connect-event", by: "another peer", text: "", connectInstanceId: "remote" },
+  { eventId: "cross-group-event", by: "g-other::peer", text: "" },
+])("keeps the task ref out of a reply to $eventId", async (target) => {
+  vi.mocked(api.replyMessage).mockResolvedValueOnce(lost);
+  await act(async () => {
+    useTaskViewStore.getState().open("g-a", "T7");
+    useComposerStore.getState().setReplyToText("");
+    useComposerStore.getState().setReplyTarget(target);
+  });
+  await send("reply to the source");
+  expect(vi.mocked(api.replyMessage).mock.calls[0][6]).toEqual([]);
 });
 
 it("resends an unchanged draft after a lost response under the same client ID", async () => {

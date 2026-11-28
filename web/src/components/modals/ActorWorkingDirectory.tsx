@@ -120,14 +120,12 @@ export function ActorWorkingDirectory({
     return (
       <div className="min-w-0 space-y-2">
         <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
-          <span className="shrink-0 text-xs font-medium text-[var(--color-text-muted)]">
-            {t("workingDirectory")}
-          </span>
           <span
             className="min-w-0 flex-1 truncate text-sm text-[var(--color-text-secondary)]"
             title={selectedScope?.url}
           >
-            {t(value ? "fixedDirectory" : "followGroupDirectory")} · {selectedScope?.url}
+            {t("workingDirectoryEffective", { directory: selectedScope?.url })} ·{" "}
+            {t(value ? "fixedDirectory" : "followGroupDirectory")}
           </span>
           <Button
             type="button"

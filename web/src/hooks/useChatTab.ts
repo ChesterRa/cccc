@@ -1,10 +1,11 @@
 import { withTaskViewRef } from "../features/taskView/taskConversationModel";
 import {
-  getTaskView,
+  getDisplayedTaskView,
   useEndTaskViewOnGroupChange,
   useTaskView,
 } from "../features/taskView/taskViewStore";
 import { chatSetupRequirements, projectScopeRoot } from "./chat/chatSetupRequirements";
+import { clearOpenedMessageFromUrl } from "./chat/chatTabBasics";
 import { groupMessagesVisible } from "../stores/useUIStore";
 import { useMemo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useVisiblePendingSummary } from "../features/pendingReplies/useVisiblePendingSummary";
@@ -581,7 +582,7 @@ export function useChatTab({
     chatWindow,
     chatFilter,
     senders,
-    taskId: taskView?.taskId,
+    taskId: webReadOnly ? undefined : taskView?.taskId,
     scrollSnapshot,
     hasLoadedTail,
     hasMoreHistory,
@@ -1047,8 +1048,12 @@ export function useChatTab({
   const sendMessage = useCallback(async () => {
     if (sendInFlightRef.current) return; // keyboard shortcut can bypass UI state; keep send single-flight locally
     if (!selectedGroupId) return;
-    const latestSelectedGroupId = String(useGroupStore.getState().selectedGroupId || "").trim();
+    const groupAtSend = useGroupStore.getState();
+    const latestSelectedGroupId = String(groupAtSend.selectedGroupId || "").trim();
     if (latestSelectedGroupId !== selectedGroupId) return;
+    const contextEventAtSend = selectChatBucketState(groupAtSend, selectedGroupId).chatWindow
+      ?.centerEventId;
+    const displayedTaskAtSend = getDisplayedTaskView(selectedGroupId);
     const composerStateSnapshot = useComposerStore.getState();
     const routingSnapshot = buildComposerSendRoutingSnapshot({
       selectedGroupId: latestSelectedGroupId,
@@ -1147,10 +1152,18 @@ export function useChatTab({
         groups: composerRouteGroups,
       }),
     ];
-    // A message written in a task's view belongs to that task. One that goes to another Group
-    // does not: the task is this Group's, and its ID means nothing there.
-    const sendingTaskView =
-      sendsCrossGroup || remoteReplyDstGroupId ? null : getTaskView(selectedGroupId);
+    // An empty reply audience can route to the original cross-Group sender on the daemon.
+    const replyRecipients = localToTokensSnapshot.length
+      ? localToTokensSnapshot
+      : replyTargetSnapshot
+        ? [replyTargetSnapshot.by]
+        : [];
+    const remoteReply =
+      !!replyTargetSnapshot &&
+      (replyTargetSnapshot.connectInstanceId ||
+        remoteReplyDstGroupId ||
+        replyRecipients.some((recipient) => recipient.includes("::")));
+    const sendingTaskView = sendsCrossGroup || remoteReply ? null : displayedTaskAtSend;
     const refsSnapshot = sendingTaskView
       ? withTaskViewRef(composedRefs, sendingTaskView.taskId, sendingTaskView.title)
       : composedRefs;
@@ -1340,12 +1353,15 @@ export function useChatTab({
         completeCanonicalOutboxReconciliation(selectedGroupId, reconciliation);
       }
       if (fileInputRef?.current) fileInputRef.current.value = "";
-      if (inChatWindow) {
-        closeChatWindow();
-        const url = new URL(window.location.href);
-        url.searchParams.delete("event");
-        url.searchParams.delete("tab");
-        window.history.replaceState({}, "", url.pathname + (url.search ? url.search : ""));
+      const currentGroups = useGroupStore.getState();
+      if (
+        contextEventAtSend &&
+        currentGroups.selectedGroupId === selectedGroupId &&
+        selectChatBucketState(currentGroups, selectedGroupId).chatWindow?.centerEventId ===
+          contextEventAtSend
+      ) {
+        closeChatWindow(selectedGroupId);
+        clearOpenedMessageFromUrl();
       }
       if (selectedGroupId) {
         if (groupMessagesVisible(selectedGroupId, useUIStore.getState()))
@@ -1364,7 +1380,7 @@ export function useChatTab({
         sourceEvent?.id &&
         useGroupStore.getState().selectedGroupId === selectedGroupId &&
         // In a task's view the sent message carries the task and is shown there.
-        !getTaskView(selectedGroupId) &&
+        !getDisplayedTaskView(selectedGroupId) &&
         !matchesChatFilters(sourceEvent, currentFilter, currentSession.chatSenderFilter)
       ) {
         const eventId = sourceEvent.id;
@@ -1401,7 +1417,6 @@ export function useChatTab({
     slashCommands,
     validRecipientSet,
     crossGroupValidRecipientSet,
-    inChatWindow,
     appendEvent,
     enqueueOutbox,
     removeOutbox,

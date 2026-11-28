@@ -88,6 +88,15 @@ describe("a task's conversation", () => {
     expect(ids(view.events)).toEqual(["root", "mid", "seed"]);
   });
 
+  it("follows all descendants through a reply also included as a task message's ancestor", () => {
+    const root = message("root", "T98 kickoff");
+    const middle = message("mid", "details", { reply_to: "root" });
+    const seed = message("seed", "T98 update", { reply_to: "mid" });
+    const reply = message("reply", "confirmed", { reply_to: "mid" });
+    const view = collectTaskConversation([], [root, middle, seed, reply], "T98");
+    expect(ids(view.events)).toEqual(["root", "mid", "seed", "reply"]);
+  });
+
   it("orders by time and shows each message once", () => {
     const first = message("1", "T98 one");
     const second = message("2", "T98 two");

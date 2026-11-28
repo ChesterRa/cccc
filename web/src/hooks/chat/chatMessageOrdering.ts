@@ -2,7 +2,7 @@ import type { ChatMessageData, LedgerEvent } from "../../types";
 import type { OutboxEntry } from "../../stores/chatOutboxStore";
 import { isFormalChatMessageEvent } from "../../utils/chatSend";
 import { hasRenderableChatMessageContent } from "../../utils/ledgerEventHandlers";
-import { shouldShowInConversation, toVisibleConversationEvent } from "./chatTabBasics";
+import { shouldShowInConversation } from "./chatTabBasics";
 import { getReplySlotKey } from "./chatReplySlots";
 import {
   getCanonicalStreamingSupersededStreamIds,
@@ -244,10 +244,7 @@ export function buildUnfilteredLiveChatMessages(
   outboxEntries: Pick<OutboxEntry, "localId" | "event">[],
   orderState: LogicalMessageOrderState,
 ): LedgerEvent[] {
-  const all = events
-    .filter(isFormalChatMessageEvent)
-    .filter(shouldShowInConversation)
-    .map(toVisibleConversationEvent);
+  const all = events.filter(isFormalChatMessageEvent).filter(shouldShowInConversation);
   const renderableCanonicalClientIds = new Set(
     all
       .filter((ev: LedgerEvent) => hasRenderableChatMessageContent(ev))

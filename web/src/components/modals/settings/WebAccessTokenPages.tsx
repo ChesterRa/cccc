@@ -28,41 +28,43 @@ export function WebAccessTokenPages({
   return (
     <div className="space-y-3">
       {entries.slice(start, start + PAGE_SIZE).map(children)}
-      <nav
-        aria-label={t("webAccess.accessControlTitle")}
-        className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--glass-border-subtle)] pt-3 text-xs text-[var(--color-text-secondary)]"
-      >
-        <span role="status">
-          {t("capabilityCenter.pagination.showing", {
-            from: start + 1,
-            to: Math.min(start + PAGE_SIZE, entries.length),
-            total: entries.length,
-          })}
-        </span>
-        <div className="flex items-center gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={current === 0}
-            onClick={() => setPage(Math.max(0, current - 1))}
-          >
-            {t("capabilityCenter.pagination.prev")}
-          </Button>
-          <span className="min-w-12 text-center tabular-nums">
-            {current + 1} / {pages}
+      {pages > 1 ? (
+        <nav
+          aria-label={t("webAccess.accessControlTitle")}
+          className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--glass-border-subtle)] pt-3 text-xs text-[var(--color-text-secondary)]"
+        >
+          <span role="status">
+            {t("capabilityCenter.pagination.showing", {
+              from: start + 1,
+              to: Math.min(start + PAGE_SIZE, entries.length),
+              total: entries.length,
+            })}
           </span>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={current + 1 === pages}
-            onClick={() => setPage(Math.min(pages - 1, current + 1))}
-          >
-            {t("capabilityCenter.pagination.next")}
-          </Button>
-        </div>
-      </nav>
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={current === 0}
+              onClick={() => setPage(Math.max(0, current - 1))}
+            >
+              {t("capabilityCenter.pagination.prev")}
+            </Button>
+            <span className="min-w-12 text-center tabular-nums">
+              {current + 1} / {pages}
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={current + 1 === pages}
+              onClick={() => setPage(Math.min(pages - 1, current + 1))}
+            >
+              {t("capabilityCenter.pagination.next")}
+            </Button>
+          </div>
+        </nav>
+      ) : null}
     </div>
   );
 }

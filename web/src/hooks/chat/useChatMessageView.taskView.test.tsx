@@ -85,7 +85,12 @@ it("shows only the task's messages: older ones from the search, loaded ones and 
     result: { events: [message("z", "T98 kickoff, long ago")], has_more: false, count: 1 },
   });
   const mounted = await mount("T98");
-  expect(search).toHaveBeenCalledWith("g1", "T98", { limit: 200, before: undefined });
+  expect(search).toHaveBeenCalledWith(
+    "g1",
+    "",
+    { taskId: "T98", limit: 200, before: undefined },
+    { signal: expect.any(AbortSignal) },
+  );
   expect(shown()).toEqual(["z", "aa", "cccc"]);
   expect(view.taskViewActive).toBe(true);
   // The view is complete in one read: there is no older page to ask the list for.

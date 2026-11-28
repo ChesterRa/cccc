@@ -90,4 +90,25 @@ describe("RolePresetPicker", () => {
     expect(draft()).toBe(second.content);
     expect(trigger().textContent).toContain(second.name);
   });
+
+  it("returns to the fill action when notes diverge and after closing and reopening", async () => {
+    const onChange = vi.fn();
+    const render = (value: string) =>
+      act(async () =>
+        root.render(<RolePresetPicker label="Notes" draftValue={value} onChangeDraft={onChange} />),
+      );
+    await render(first.content);
+    await choose(first.name);
+    expect(trigger().textContent).toContain(first.name);
+
+    const edited = `${first.content}\nMy addition`;
+    await render(edited);
+    expect(trigger().textContent).toContain("rolePresetFill");
+    expect(host.querySelector('[role="status"]')).toBeNull();
+    expect(onChange).not.toHaveBeenCalled();
+
+    await act(async () => root.render(null));
+    await render(edited);
+    expect(trigger().textContent).toContain("rolePresetFill");
+  });
 });

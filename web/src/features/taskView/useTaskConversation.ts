@@ -1,8 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  shouldShowInConversation,
-  toVisibleConversationEvent,
-} from "../../hooks/chat/chatTabBasics";
+import { shouldShowInConversation } from "../../hooks/chat/chatTabBasics";
 import { searchChatMessages } from "../../services/api";
 import type { LedgerEvent } from "../../types";
 import { isFormalChatMessageEvent } from "../../utils/chatSend";
@@ -25,18 +22,19 @@ function empty(key: string): State {
 }
 
 /**
- * Every message in the Group's history whose record contains the task's ID, read from the
- * server search, newest page first. The server matches the ID anywhere in a record, so the
- * caller still decides which of these belong to the task.
+ * Messages that reference or name the task, newest page first. The daemon applies
+ * the task filter before counting results and advancing the history cursor.
  */
 export function useTaskConversation(groupId: string, taskId: string) {
   const key = groupId && taskId ? JSON.stringify([groupId, taskId]) : "";
   const [state, setState] = useState<State>(() => empty(key));
-  const visit = useRef(0);
+  const visit = useRef<AbortController | null>(null);
 
   const load = useCallback(() => {
     if (!key) return;
-    const request = ++visit.current;
+    visit.current?.abort();
+    const request = new AbortController();
+    visit.current = request;
     setState((current) => ({
       ...(current.key === key ? current : empty(key)),
       loading: true,
@@ -51,11 +49,13 @@ export function useTaskConversation(groupId: string, taskId: string) {
           truncated = true;
           break;
         }
-        const response = await searchChatMessages(groupId, taskId, {
-          limit: PAGE_SIZE,
-          before: before || undefined,
-        });
-        if (request !== visit.current) return;
+        const response = await searchChatMessages(
+          groupId,
+          "",
+          { taskId, limit: PAGE_SIZE, before: before || undefined },
+          { signal: request.signal },
+        );
+        if (request.signal.aborted) return;
         if (!response.ok) {
           setState((current) => ({ ...current, loading: false, error: true }));
           return;
@@ -68,11 +68,7 @@ export function useTaskConversation(groupId: string, taskId: string) {
       }
       setState({
         key,
-        events: pages
-          .flat()
-          .filter(isFormalChatMessageEvent)
-          .filter(shouldShowInConversation)
-          .map(toVisibleConversationEvent),
+        events: pages.flat().filter(isFormalChatMessageEvent).filter(shouldShowInConversation),
         loaded: true,
         loading: false,
         error: false,
@@ -83,11 +79,11 @@ export function useTaskConversation(groupId: string, taskId: string) {
 
   useEffect(() => {
     if (!key) {
-      visit.current += 1;
       setState(empty(""));
       return;
     }
     load();
+    return () => visit.current?.abort();
   }, [key, load]);
 
   const current = state.key === key ? state : empty(key);

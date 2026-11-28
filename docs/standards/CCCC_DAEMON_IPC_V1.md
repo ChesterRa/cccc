@@ -5930,6 +5930,7 @@ Read events from one Group without delivering messages or creating runtime work.
   group_id: string
   kind?: "all" | "chat" | "notify" // default all
   q?: string                     // case-insensitive text search; default empty
+  task_id?: string               // a task ID in T<number> format
   by?: string                    // exact event.by filter; empty means unrestricted
   by_any?: string[]              // OR of concrete event.by identities; empty/omitted means unrestricted
   to?: string                    // exact member of event.data.to
@@ -5948,7 +5949,11 @@ Filters combine with AND; `by_any` matches any identity in its set. Both sender
 filters may be used together, in which case both must match. Entries in `by_any`
 MUST be nonblank strings; invalid collections return `invalid_args`.
 Recipient filtering matches a stored recipient identity; it does not expand roles or
-selectors. Events without that recipient do not match. Timestamp bounds compare
+selectors. Events without that recipient do not match. The task filter matches chat
+messages with that exact structured `task_ref` or the ID in the message's own
+`data.text`, ignoring ASCII case for text. Text matches must be bounded by the start
+or end of the text or by characters other than ASCII letters, digits and underscore.
+Timestamp bounds compare
 instants (including offsets), not timestamp strings. Invalid or blank filter
 values and a lower bound later than the upper bound return `invalid_args`.
 Null or omitted filters are unrestricted. With a time bound, an event with an

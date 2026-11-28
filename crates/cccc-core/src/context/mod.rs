@@ -14,3 +14,4 @@ pub use store::ContextStore;
 pub use task_apply::task_is_unexecuted;
 pub use task_dependencies::{project_task_dependencies, task_is_blocked, task_is_completed};
 pub use task_revision::TaskConflict;
+pub use yaml_files::is_task_id;

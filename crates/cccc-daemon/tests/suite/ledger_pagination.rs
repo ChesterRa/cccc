@@ -605,6 +605,54 @@ fn recorded_ledger_recipient_and_time_filters_compose_with_pagination() {
 }
 
 #[test]
+fn ledger_search_filters_exact_task_membership_before_paging() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path()).expect("home");
+    let created = call(&home, "group_create", json!({"title":"task filters"}));
+    let group_id = created.result["group"]["group_id"].as_str().expect("group");
+    for (id, kind, data) in [
+        (
+            "old-ref",
+            "chat.message",
+            json!({"text":"starting work","refs":[{"kind":"task_ref","task_id":"T7"}]}),
+        ),
+        ("text", "chat.message", json!({"text":"已完成t7。"})),
+        ("larger", "chat.message", json!({"text":"T701 is separate"})),
+        ("word", "chat.message", json!({"text":"_T7 is a token"})),
+        (
+            "quote",
+            "chat.message",
+            json!({"text":"unrelated","quote_text":"T7","refs":[{"kind":"task_ref","task_id":"T701"}]}),
+        ),
+        ("notify", "system.notify", json!({"text":"T7"})),
+    ] {
+        let mut event = Event::new(kind, group_id);
+        event.id = id.into();
+        event.by = "user".into();
+        event.data = data.as_object().expect("message data").clone();
+        call(&home, "event_append", json!({"event":event}));
+    }
+    let query = json!({"group_id":group_id,"task_id":"T7","limit":1});
+    let first = call(&home, "ledger_search", query.clone());
+    assert_eq!(ids(&first), ["text"]);
+    assert_eq!(first.result["has_more"], true);
+    let mut older = query.clone();
+    older["before"] = json!("text");
+    let older = call(&home, "ledger_search", older);
+    assert_eq!(ids(&older), ["old-ref"]);
+    assert_eq!(older.result["has_more"], false);
+    let mut with_text = query;
+    with_text["q"] = json!("starting");
+    assert_eq!(ids(&call(&home, "ledger_search", with_text)), ["old-ref"]);
+    let plain = call(
+        &home,
+        "ledger_search",
+        json!({"group_id":group_id,"kind":"chat","q":"T7","limit":1}),
+    );
+    assert_eq!(ids(&plain), ["quote"]);
+}
+
+#[test]
 fn ledger_search_rejects_invalid_recipient_and_time_filters() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path()).expect("home");
@@ -613,6 +661,9 @@ fn ledger_search_rejects_invalid_recipient_and_time_filters() {
     for patch in [
         json!({"to":17}),
         json!({"to":" "}),
+        json!({"task_id":7}),
+        json!({"task_id":"T"}),
+        json!({"task_id":" "}),
         json!({"since_ts":"yesterday"}),
         json!({"until_ts":3}),
         json!({"since_ts":"2026-10-22T10:00:00Z","until_ts":"2026-10-22T09:00:00Z"}),

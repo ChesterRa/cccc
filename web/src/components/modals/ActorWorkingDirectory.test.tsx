@@ -14,7 +14,10 @@ const api = vi.hoisted(() => ({
 vi.mock("../../services/api", () => api);
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
-    t: (key: string, values?: { path?: string }) => (values?.path ? `${key}: ${values.path}` : key),
+    t: (key: string, values?: { path?: string; directory?: string }) => {
+      const path = values?.directory || values?.path;
+      return path ? `${key}: ${path}` : key;
+    },
   }),
 }));
 
@@ -163,7 +166,7 @@ describe("Actor working directory", () => {
     it("shows where the Agent will start and hides the controls until asked", async () => {
       await renderCollapsible(scopes, "");
 
-      expect(host.textContent).toContain("followGroupDirectory · /src");
+      expect(host.textContent).toContain("workingDirectoryEffective: /src · followGroupDirectory");
       expect(host.querySelector('[role="combobox"]')).toBeNull();
       expect(button("workingDirectoryAdd")).toBeUndefined();
 
@@ -177,7 +180,7 @@ describe("Actor working directory", () => {
     it("summarises a fixed directory by its own path", async () => {
       await renderCollapsible(scopes, "s2");
 
-      expect(host.textContent).toContain("fixedDirectory · /other");
+      expect(host.textContent).toContain("workingDirectoryEffective: /other · fixedDirectory");
     });
 
     it("stays open when the chosen directory is no longer attached", async () => {

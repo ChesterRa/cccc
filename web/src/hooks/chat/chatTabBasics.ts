@@ -48,6 +48,14 @@ export function canOpenSourceMessageLocally(groups: GroupMeta[], srcGroupId: str
   return (groups || []).some((group) => String(group?.group_id || "").trim() === gid);
 }
 
+/** Leave the linked message without losing the Group or other URL parameters. */
+export function clearOpenedMessageFromUrl() {
+  const url = new URL(window.location.href);
+  url.searchParams.delete("event");
+  url.searchParams.delete("tab");
+  window.history.replaceState({}, "", url.pathname + url.search + url.hash);
+}
+
 export function shouldShowInConversation(event: LedgerEvent): boolean {
   const data =
     event.data && typeof event.data === "object"

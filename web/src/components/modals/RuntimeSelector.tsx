@@ -51,7 +51,8 @@ export function RuntimeSelector({
         : selectedKey;
   const checking = status === "idle" || status === "loading";
   // A Web Model or custom runtime has no local CLI to find, so there is nothing to recheck.
-  const showStatus = !quietWhenDetected || !["detected", "web", "custom"].includes(captionKey);
+  const showDetection = !quietWhenDetected || !["web", "custom"].includes(captionKey);
+  const showStatus = !quietWhenDetected || captionKey !== "detected";
   const modeLabel = supportsAcpMode(value)
     ? runtimeMode === "acp"
       ? "ACP"
@@ -98,36 +99,38 @@ export function RuntimeSelector({
           .sort((left, right) => Number(Boolean(left.group)) - Number(Boolean(right.group)))}
         searchable
       />
-      {showStatus ? (
+      {showDetection ? (
         <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs">
-          <span
-            role="status"
-            data-status-tone={
-              captionKey === "failed" || captionKey === "missing" ? "warning" : undefined
-            }
-            className={
-              captionKey === "failed" || captionKey === "missing"
-                ? "text-orange-700 dark:text-orange-300"
-                : "text-[var(--color-text-muted)]"
-            }
-          >
-            {modeLabel ? `${modeLabel}: ` : ""}
-            {captionKey === "deepseekSetup" ? (
-              <Trans
-                ns="actors"
-                i18nKey="runtimeDetection.deepseekSetup"
-                components={[<code key="command" className="whitespace-nowrap" />]}
-              />
-            ) : (
-              t(`runtimeDetection.${captionKey}`)
-            )}
-          </span>
+          {showStatus ? (
+            <span
+              role="status"
+              data-status-tone={
+                captionKey === "failed" || captionKey === "missing" ? "warning" : undefined
+              }
+              className={
+                captionKey === "failed" || captionKey === "missing"
+                  ? "text-orange-700 dark:text-orange-300"
+                  : "text-[var(--color-text-muted)]"
+              }
+            >
+              {modeLabel ? `${modeLabel}: ` : ""}
+              {captionKey === "deepseekSetup" ? (
+                <Trans
+                  ns="actors"
+                  i18nKey="runtimeDetection.deepseekSetup"
+                  components={[<code key="command" className="whitespace-nowrap" />]}
+                />
+              ) : (
+                t(`runtimeDetection.${captionKey}`)
+              )}
+            </span>
+          ) : null}
           <Button
             type="button"
             variant="ghost"
             data-lcd-key
             size="sm"
-            className="min-h-[44px] gap-1.5 text-xs"
+            className="ml-auto min-h-[44px] gap-1.5 text-xs"
             disabled={disabled || checking}
             onClick={() => void refresh()}
           >

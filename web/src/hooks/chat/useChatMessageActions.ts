@@ -10,16 +10,8 @@ import {
 import type { Actor, LedgerEvent } from "../../types";
 import { buildReplyComposerState } from "../../utils/chatReply";
 import { copyTextToClipboard } from "../../utils/copy";
-import { canOpenSourceMessageLocally } from "./chatTabBasics";
+import { canOpenSourceMessageLocally, clearOpenedMessageFromUrl } from "./chatTabBasics";
 import { isLiveChatBottom } from "./chatScrollFocus";
-
-/** Take the opened message out of the address, as leaving its view does. */
-function clearOpenedMessageFromUrl() {
-  const url = new URL(window.location.href);
-  url.searchParams.delete("event");
-  url.searchParams.delete("tab");
-  window.history.replaceState({}, "", url.pathname + (url.search ? url.search : ""));
-}
 
 export function useChatMessageActions(input: {
   selectedGroupId: string;

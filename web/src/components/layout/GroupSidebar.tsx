@@ -336,7 +336,7 @@ export function GroupSidebar({
           "h-full min-h-0 flex flex-col glass-sidebar",
           "fixed inset-y-0 left-0 z-50 md:relative md:inset-auto md:z-40",
           isResizing ? "transition-none" : "transition-[width,transform] duration-300 ease-out",
-          isCollapsed ? "w-[60px]" : "w-[248px] md:w-[var(--sidebar-width)]",
+          isCollapsed ? "w-[60px]" : "w-[min(85vw,320px)] md:w-[var(--sidebar-width)]",
           isOpen ? "translate-x-0" : "-translate-x-full",
           "md:translate-x-0",
         )}

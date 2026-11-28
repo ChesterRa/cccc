@@ -55,15 +55,21 @@ it("reads every page of the history, oldest first", async () => {
     .mockResolvedValueOnce(page([message("c"), message("d")], true))
     .mockResolvedValueOnce(page([message("a"), message("b")], false));
   await mount("T98");
-  expect(api.searchChatMessages).toHaveBeenNthCalledWith(1, "g1", "T98", {
-    limit: 200,
-    before: undefined,
-  });
+  expect(api.searchChatMessages).toHaveBeenNthCalledWith(
+    1,
+    "g1",
+    "",
+    { taskId: "T98", limit: 200, before: undefined },
+    { signal: expect.any(AbortSignal) },
+  );
   // The next page ends before the oldest message already read.
-  expect(api.searchChatMessages).toHaveBeenNthCalledWith(2, "g1", "T98", {
-    limit: 200,
-    before: "c",
-  });
+  expect(api.searchChatMessages).toHaveBeenNthCalledWith(
+    2,
+    "g1",
+    "",
+    { taskId: "T98", limit: 200, before: "c" },
+    { signal: expect.any(AbortSignal) },
+  );
   expect(view.events.map((event) => event.id)).toEqual(["a", "b", "c", "d"]);
   expect(view).toMatchObject({ loaded: true, loading: false, error: false, truncated: false });
 });
@@ -93,8 +99,11 @@ it("drops a slow answer for a task the view has left", async () => {
     () => new Promise((resolve) => (release = resolve)),
   );
   const mounted = await mount("T98");
+  const firstSignal = api.searchChatMessages.mock.calls[0][3].signal as AbortSignal;
   api.searchChatMessages.mockResolvedValueOnce(page([message("other")], false));
   await mounted.rerender("T99");
-  await act(async () => release(page([message("stale")], false)));
+  expect(firstSignal.aborted).toBe(true);
+  await act(async () => release(page([message("stale")], true)));
+  expect(api.searchChatMessages).toHaveBeenCalledTimes(2);
   expect(view.events.map((event) => event.id)).toEqual(["other"]);
 });

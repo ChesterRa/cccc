@@ -2,8 +2,16 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { getChatSession, useUIStore } from "../../stores/useUIStore";
+import { useGroupStore } from "../../stores/useGroupStore";
 import { TaskViewBanner } from "./TaskViewBanner";
-import { getTaskView, useEndTaskViewOnGroupChange, useTaskViewStore } from "./taskViewStore";
+import {
+  getDisplayedTaskView,
+  getTaskView,
+  openTaskConversation,
+  useEndTaskViewOnGroupChange,
+  useTaskViewStore,
+} from "./taskViewStore";
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
@@ -22,6 +30,8 @@ beforeEach(() => {
   document.body.append(host);
   root = createRoot(host);
   vi.clearAllMocks();
+  useGroupStore.setState({ selectedGroupId: "g1", chatByGroup: {} });
+  useUIStore.setState({ activeTab: "chat", chatSessions: {}, webReadOnly: false });
 });
 afterEach(() => {
   act(() => root.unmount());
@@ -118,5 +128,41 @@ it("ends the view when the chat turns to another Group, and not on the way back"
   expect(getTaskView("g1")?.taskId).toBe("T98");
   act(() => root.render(<Chat groupId="g2" />));
   act(() => root.render(<Chat groupId="g1" />));
+  expect(getTaskView("g1")).toBeNull();
+});
+
+it("opens the task on the message surface and leaves the linked message window", () => {
+  const ui = useUIStore.getState();
+  ui.setGroupWorkView("g1", "terminals");
+  ui.setChatMobileSurface("g1", "files");
+  window.history.replaceState({}, "", "/ui/?group=g1&event=old&tab=chat&keep=yes");
+  useGroupStore
+    .getState()
+    .setChatWindow(
+      {
+        groupId: "g1",
+        centerEventId: "old",
+        centerIndex: 0,
+        events: [],
+        hasMoreBefore: false,
+        hasMoreAfter: true,
+      },
+      "g1",
+    );
+
+  openTaskConversation("g1", "T98", "Ship it");
+  expect(getDisplayedTaskView("g1")?.taskId).toBe("T98");
+  const group = useGroupStore.getState().chatByGroup.g1;
+  expect(group.chatWindow).toBeNull();
+  expect(window.location.search).toBe("?group=g1&keep=yes");
+  expect(getChatSession("g1", useUIStore.getState().chatSessions)).toMatchObject({
+    workView: "messages",
+    mobileSurface: "messages",
+  });
+});
+
+it("does not enter a task conversation on an exhibit", () => {
+  useUIStore.setState({ webReadOnly: true });
+  openTaskConversation("g1", "T98");
   expect(getTaskView("g1")).toBeNull();
 });

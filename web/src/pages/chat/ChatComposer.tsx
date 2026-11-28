@@ -1017,7 +1017,7 @@ export function ChatComposer({
       ) : null}
       <div
         data-composer-surface
-        className="@container/composer chat-reading-width relative rounded-2xl border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-1 pt-1 shadow-sm transition-[border-color,box-shadow] duration-150 focus-within:border-[var(--color-border-secondary)] motion-reduce:transition-none"
+        className="@container/composer chat-reading-width rounded-2xl border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-1 pt-1 shadow-sm transition-[border-color,box-shadow] duration-150 focus-within:border-[var(--color-border-secondary)] motion-reduce:transition-none"
       >
         <ComposerFailedSends groupId={selectedGroupId} isDark={isDark} />
 

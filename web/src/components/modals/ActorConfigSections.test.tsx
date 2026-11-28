@@ -3,7 +3,7 @@ import { act, type ReactNode, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 
-import { ActorConfigAdvanced, ActorConfigForm, ActorConfigViews } from "./ActorConfigSections";
+import { ActorConfigAdvanced, ActorConfigForm } from "./ActorConfigSections";
 
 const host = document.createElement("div");
 let root: Root;
@@ -72,8 +72,7 @@ describe("ActorConfigAdvanced", () => {
     return (
       <ActorConfigAdvanced
         title="Advanced"
-        summary={changed ? "2 environment variables" : "Command · Capabilities"}
-        changed={changed}
+        summary={changed ? "2 environment variables" : undefined}
         open={open}
         onOpenChange={setOpen}
       >
@@ -84,18 +83,17 @@ describe("ActorConfigAdvanced", () => {
   const toggle = () => host.querySelector<HTMLButtonElement>("button[aria-expanded]")!;
   const panel = () => document.getElementById(toggle().getAttribute("aria-controls")!)!;
 
-  it("starts closed, says what is inside, and opens on request", async () => {
+  it("starts closed and opens without a summary when there are no staged changes", async () => {
     await render(<Fixture />);
 
     expect(toggle().getAttribute("aria-expanded")).toBe("false");
     expect(panel().hidden).toBe(true);
-    expect(toggle().textContent).toBe("AdvancedCommand · Capabilities");
+    expect(toggle().textContent).toBe("Advanced");
 
     await act(async () => toggle().click());
 
     expect(toggle().getAttribute("aria-expanded")).toBe("true");
     expect(panel().hidden).toBe(false);
-    // Once the content is visible the list of what is inside would only repeat it.
     expect(toggle().textContent).toBe("Advanced");
   });
 
@@ -121,48 +119,5 @@ describe("ActorConfigAdvanced", () => {
     await act(async () => toggle().click());
 
     expect(toggle().textContent).toBe("Advanced2 environment variables");
-  });
-});
-
-describe("ActorConfigViews", () => {
-  const view = (name: string) =>
-    host.querySelector<HTMLElement>(`[data-actor-config-view="${name}"]`)!;
-  const reachable = (name: string) => !view(name).hasAttribute("inert");
-
-  it("shows one view at a time and keeps the other out of reach of keyboard and pointer", async () => {
-    await render(
-      <ActorConfigViews showAdvanced={false} form={<input />} advanced={<textarea />} />,
-    );
-    expect([reachable("form"), reachable("advanced")]).toEqual([true, false]);
-
-    await render(<ActorConfigViews showAdvanced form={<input />} advanced={<textarea />} />);
-    expect([reachable("form"), reachable("advanced")]).toEqual([false, true]);
-  });
-
-  it("keeps drafts in both views across a switch", async () => {
-    await render(
-      <ActorConfigViews showAdvanced={false} form={<input />} advanced={<textarea />} />,
-    );
-    const name = host.querySelector("input")!;
-    const environment = host.querySelector("textarea")!;
-    name.value = "codex-3";
-    environment.value = "FIXTURE=1";
-
-    await render(<ActorConfigViews showAdvanced form={<input />} advanced={<textarea />} />);
-    await render(
-      <ActorConfigViews showAdvanced={false} form={<input />} advanced={<textarea />} />,
-    );
-
-    expect(host.querySelector("input")).toBe(name);
-    expect(name.value).toBe("codex-3");
-    expect(host.querySelector("textarea")).toBe(environment);
-    expect(environment.value).toBe("FIXTURE=1");
-  });
-
-  it("never hides the form when there are no advanced settings to show instead", async () => {
-    await render(<ActorConfigViews showAdvanced form={<input />} advanced={null} />);
-
-    expect(reachable("form")).toBe(true);
-    expect(view("advanced")).toBeNull();
   });
 });

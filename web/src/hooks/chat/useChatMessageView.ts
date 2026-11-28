@@ -105,9 +105,13 @@ export function useChatMessageView(input: {
     return dropOrphanQueuedPlaceholders(canonical, collapseActorStreamingPlaceholders(streams));
   }, [input.events, input.streamingEvents]);
 
-  const unfilteredLiveChatMessages = useMemo(
+  const unfilteredLiveEvents = useMemo(
     () => buildUnfilteredLiveChatMessages(input.events, input.outboxEntries, orderState),
     [input.events, input.outboxEntries, orderState],
+  );
+  const unfilteredLiveChatMessages = useMemo(
+    () => unfilteredLiveEvents.map(toVisibleConversationEvent),
+    [unfilteredLiveEvents],
   );
 
   const liveChatMessages = useMemo(() => {
@@ -152,12 +156,11 @@ export function useChatMessageView(input: {
   // The task's messages come from the server search over the whole history and from the
   // loaded conversation, so one sent or received while the view is open joins it at once.
   const taskConversation = useMemo(
-    () =>
-      task.active ? collectTaskConversation(task.events, unfilteredLiveChatMessages, taskId) : null,
-    [task.active, task.events, taskId, unfilteredLiveChatMessages],
+    () => (task.active ? collectTaskConversation(task.events, unfilteredLiveEvents, taskId) : null),
+    [task.active, task.events, taskId, unfilteredLiveEvents],
   );
   const displayedMessages = useMemo(() => {
-    if (taskConversation) return taskConversation.events;
+    if (taskConversation) return taskConversation.events.map(toVisibleConversationEvent);
     const projected = pending.active ? pending.events : pinned.active ? pinned.events : null;
     return projected
       ? projected.filter((event) => !senders.length || senders.includes(event.by ?? ""))

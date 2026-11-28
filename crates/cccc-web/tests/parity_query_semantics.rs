@@ -238,4 +238,26 @@ async fn ledger_search_http_forwards_recorded_recipient_and_time_filters() {
     );
 }
 
+#[tokio::test]
+async fn ledger_search_http_forwards_exact_task_filter() {
+    let (_temp, home, group_id, daemon) = running_home().await;
+    let store = GroupStore::new(home.clone()).expect("store");
+    let path = store.ledger_path(&group_id).expect("ledger");
+    for (id, text) in [("yes", "see (t7)"), ("prefix", "T701")] {
+        let mut event = Event::new("chat.message", &group_id);
+        event.id = id.into();
+        event.by = "user".into();
+        event.data.insert("text".into(), json!(text));
+        ledger::append(&path, &event).expect("append");
+    }
+    let response = get(
+        &home,
+        format!("/api/v1/groups/{group_id}/ledger/search?kind=chat&task_id=T7&limit=1"),
+    )
+    .await;
+    daemon.0.abort();
+    assert_eq!(response["result"]["events"][0]["id"], "yes");
+    assert_eq!(response["result"]["has_more"], false);
+}
+
 cccc_daemon::session_owner_test_entry!();

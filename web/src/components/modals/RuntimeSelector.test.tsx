@@ -16,11 +16,7 @@ describe("RuntimeSelector status line", () => {
   const host = document.createElement("div");
   let root: Root;
   const previous = useGroupStore.getState();
-  const show = async (available: boolean, quietWhenDetected: boolean) => {
-    useGroupStore.setState({
-      runtimes: [{ name: "codex", available } as RuntimeInfo],
-      runtimeDetectionStatus: "ready",
-    });
+  const render = async (quietWhenDetected: boolean) => {
     await act(async () =>
       root.render(
         <RuntimeSelector
@@ -31,6 +27,13 @@ describe("RuntimeSelector status line", () => {
         />,
       ),
     );
+  };
+  const show = async (available: boolean, quietWhenDetected: boolean) => {
+    useGroupStore.setState({
+      runtimes: [{ name: "codex", available } as RuntimeInfo],
+      runtimeDetectionStatus: "ready",
+    });
+    await render(quietWhenDetected);
   };
   const status = () => host.querySelector('[role="status"]')?.textContent;
   const recheck = () =>
@@ -49,11 +52,28 @@ describe("RuntimeSelector status line", () => {
     useGroupStore.setState(previous, true);
   });
 
-  it("says nothing about a runtime that was found when asked to stay quiet", async () => {
-    await show(true, true);
+  it("allows rechecking detection after reopening with an already detected selected CLI", async () => {
+    const codex = { name: "codex", available: true } as RuntimeInfo;
+    const claude = { name: "claude", available: false } as RuntimeInfo;
+    const refresh = vi.fn(async () => {
+      useGroupStore.setState({ runtimes: [codex, { ...claude, available: true }] });
+    });
+    useGroupStore.setState({
+      runtimes: [codex, claude],
+      runtimeDetectionStatus: "ready",
+      refreshRuntimes: refresh,
+    });
 
+    await render(true);
     expect(status()).toBeUndefined();
-    expect(recheck()).toBeUndefined();
+    expect(recheck()?.disabled).toBe(false);
+
+    await act(async () => root.render(null));
+    await render(true);
+    await act(async () => recheck()!.click());
+
+    expect(refresh).toHaveBeenCalledOnce();
+    expect(useGroupStore.getState().runtimes[1].available).toBe(true);
   });
 
   it("still warns about a missing runtime and offers to check again", async () => {

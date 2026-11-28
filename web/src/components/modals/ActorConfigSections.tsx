@@ -58,10 +58,8 @@ export function ActorConfigForm({
 
 interface ActorConfigAdvancedProps {
   title: string;
-  /** What the closed section holds, or what was changed inside it. */
-  summary: string;
-  /** True when `summary` reports settings the user changed, so it must not read as a hint. */
-  changed: boolean;
+  /** Edits awaiting completion or save. */
+  summary?: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   children: ReactNode;
@@ -71,7 +69,6 @@ interface ActorConfigAdvancedProps {
 export function ActorConfigAdvanced({
   title,
   summary,
-  changed,
   open,
   onOpenChange,
   children,
@@ -94,60 +91,15 @@ export function ActorConfigAdvanced({
         <span className="shrink-0 text-sm font-semibold text-[var(--color-text-primary)]">
           {title}
         </span>
-        {open && !changed ? null : (
-          <span
-            data-changed={changed || undefined}
-            className={`min-w-0 truncate text-xs ${changed ? "text-[var(--color-text-primary)]" : "text-[var(--color-text-muted)]"}`}
-          >
+        {summary ? (
+          <span data-changed className="min-w-0 truncate text-xs text-[var(--color-text-primary)]">
             {summary}
           </span>
-        )}
+        ) : null}
       </button>
       <div id={panelId} hidden={!open} className="pt-2">
         {children}
       </div>
-    </div>
-  );
-}
-
-interface ActorConfigViewsProps {
-  showAdvanced: boolean;
-  form: ReactNode;
-  advanced?: ReactNode;
-}
-
-/**
- * The main form and its advanced settings share one area and only one is shown. Both stay
- * mounted, so drafts survive a switch. Switching cross-fades with a short slide.
- */
-export function ActorConfigViews({ showAdvanced, form, advanced }: ActorConfigViewsProps) {
-  const hasAdvanced = advanced != null && advanced !== false;
-  const advancedShown = showAdvanced && hasAdvanced;
-  // Visibility is part of the transition, so the outgoing view fades and slides out before it
-  // stops being painted, and the incoming one is visible from the first frame. The view that
-  // is not shown is taken out of flow, so only the visible one decides how far the area scrolls.
-  const cell =
-    "flex min-w-0 flex-col transition-[opacity,transform,visibility] duration-200 ease-out motion-reduce:transition-none";
-  const shown = "visible flex-1 translate-x-0 opacity-100";
-  const away = "invisible absolute inset-0 overflow-hidden opacity-0";
-  return (
-    <div className="relative flex min-w-0 flex-1 flex-col overflow-x-clip">
-      <div
-        data-actor-config-view="form"
-        inert={advancedShown}
-        className={`${cell} ${advancedShown ? `${away} -translate-x-3` : shown}`}
-      >
-        {form}
-      </div>
-      {hasAdvanced ? (
-        <div
-          data-actor-config-view="advanced"
-          inert={!advancedShown}
-          className={`${cell} ${advancedShown ? shown : `${away} translate-x-3`}`}
-        >
-          {advanced}
-        </div>
-      ) : null}
     </div>
   );
 }

@@ -1824,6 +1824,15 @@
   line-height: 1.75rem;
 }
 
+/* On phones, keep the pixel title on the 2x 24px grid at enlarged text sizes so it fits
+   inside the fixed 48px header alongside touch controls without altering 70–100% or desktop. */
+@media (max-width: 767px) {
+  :root[data-ui-style="lcd"] [data-lcd-scope] [data-group-title] {
+    font-size: min(1.5rem, 24px);
+    line-height: min(1.75rem, 28px);
+  }
+}
+
 /* S3: only the pending reply is emphasised. A double frame in the "waiting on
    you" colour with the title on its top edge; a closed question ends with one
    status line instead. A message is as wide as its text, but a question keeps

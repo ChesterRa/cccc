@@ -53,3 +53,26 @@ it("hides the composer in the terminals view and keeps its draft for the return"
   expect(host.querySelector<HTMLTextAreaElement>("[data-composer]")).toBe(box);
   expect(box.value).toBe("half-written");
 });
+
+it("reveals a hidden composer when an external action targets it without affecting other Groups", async () => {
+  await act(async () => {
+    useUIStore.getState().setGroupWorkView("g1", "terminals");
+    useUIStore.getState().setGroupWorkView("g2", "terminals");
+    root.render(
+      <WorkViewComposerSlot groupId="g1">
+        <textarea data-composer />
+      </WorkViewComposerSlot>,
+    );
+  });
+  const slot = () => host.querySelector<HTMLElement>("[data-work-view-composer]")!;
+  const box = host.querySelector<HTMLTextAreaElement>("[data-composer]")!;
+  expect(slot().hidden).toBe(true);
+  expect(slot().hasAttribute("inert")).toBe(true);
+
+  await act(async () => useUIStore.getState().setGroupWorkView("g1", "messages"));
+  expect(slot().hidden).toBe(false);
+  expect(slot().hasAttribute("inert")).toBe(false);
+  box.focus();
+  expect(document.activeElement).toBe(box);
+  expect(useUIStore.getState().chatSessions.g2?.workView).toBe("terminals");
+});

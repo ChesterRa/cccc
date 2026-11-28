@@ -89,12 +89,7 @@ describe("Web Access connection drafts", () => {
 
   const render = async (view: "overview" | "tokens" = "overview") => {
     await act(async () => root.render(<WebAccessTab isDark={false} onOpenAccount={() => {}} />));
-    if (view === "overview") {
-      const overview = [...host.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(
-        (tab) => tab.textContent === "webAccess.overviewTab",
-      );
-      if (overview) await act(async () => overview.click());
-    }
+    if (view === "tokens") await click("webAccess.accessControlTitle");
   };
   const button = (text: string) => {
     const match = [...host.querySelectorAll("button")].find((item) =>
@@ -137,7 +132,7 @@ describe("Web Access connection drafts", () => {
     expect(host.contains(dialog)).toBe(false);
   });
 
-  it("opens directly on the expanded token view and keeps overview reachable by Tab", async () => {
+  it("opens and reopens on the overview and keeps token loading and access controls reachable", async () => {
     let finish!: (value: Awaited<ReturnType<typeof api.fetchAccessTokens>>) => void;
     vi.mocked(api.fetchAccessTokens).mockImplementationOnce(
       () =>
@@ -145,10 +140,12 @@ describe("Web Access connection drafts", () => {
           finish = resolve;
         }),
     );
-    await render("tokens");
+    await render();
     const tokens = button("webAccess.accessControlTitle");
     const overview = button("webAccess.overviewTab");
+    expect(overview.getAttribute("aria-selected")).toBe("true");
     expect(tokens.getAttribute("role")).toBe("tab");
+    await act(async () => tokens.click());
     expect(tokens.getAttribute("aria-selected")).toBe("true");
     const panel = [...host.querySelectorAll<HTMLElement>('[role="tabpanel"]')].find(
       (panel) => panel.getAttribute("aria-labelledby") === tokens.id,
@@ -164,6 +161,10 @@ describe("Web Access connection drafts", () => {
     expect(panel.hidden).toBe(true);
     await act(async () => tokens.click());
     expect(panel.hidden).toBe(false);
+
+    await act(async () => root.render(null));
+    await render();
+    expect(button("webAccess.overviewTab").getAttribute("aria-selected")).toBe("true");
   });
 
   it("pages tokens and keeps a valid page after deleting or creating an entry", async () => {
@@ -209,8 +210,11 @@ describe("Web Access connection drafts", () => {
     await act(async () => confirm.click());
     expect(api.deleteAccessToken).toHaveBeenCalledWith("token-10");
     expect(panel().textContent).toContain("owner");
-    expect(panel().textContent).toContain("1 / 1");
-    expect(button("capabilityCenter.pagination.next").disabled).toBe(true);
+    expect(panel().querySelector('nav[aria-label="webAccess.accessControlTitle"]')).toBeNull();
+
+    await act(async () => root.render(null));
+    await render("tokens");
+    expect(panel().querySelector('nav[aria-label="webAccess.accessControlTitle"]')).toBeNull();
 
     await click("common:create");
     const dialog = document.querySelector<HTMLElement>(

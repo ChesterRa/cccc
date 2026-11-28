@@ -43,8 +43,11 @@ export function RolePresetPicker({
   };
 
   const normalizedDraftValue = String(draftValue || "").trim();
+  const selectedPreset = getRolePresetById(selectedPresetId);
+  const matchingPresetId =
+    selectedPreset?.content.trim() === normalizedDraftValue ? selectedPresetId : "";
   const visibleNotice =
-    notice && notice.presetId === selectedPresetId && notice.draftValue === normalizedDraftValue
+    notice && notice.presetId === matchingPresetId && notice.draftValue === normalizedDraftValue
       ? t(notice.kind === "applied" ? "rolePresetAppliedNotice" : "rolePresetAlreadyMatchesDraft", {
           name: localizedPreset(notice.presetId)?.name || "",
         })
@@ -94,7 +97,7 @@ export function RolePresetPicker({
               };
             }),
           ]}
-          value={selectedPresetId}
+          value={matchingPresetId}
           onChange={(nextValue) => {
             if (nextValue === NO_PRESET_VALUE) {
               setSelectedPresetId("");

@@ -165,10 +165,17 @@ const revealFolded = async () => {
   );
   for (const node of folded) await act(async () => node.click());
 };
-const render = async (key = "g_a") => {
+const renderModal = async (key = "g_a") => {
   await act(async () => root.render(<ActorConfigModal key={key} {...props} />));
+};
+const render = async (key = "g_a") => {
+  await renderModal(key);
   await revealFolded();
 };
+const advancedDisclosure = () =>
+  document.querySelector<HTMLButtonElement>(
+    '[data-actor-config-row="advanced"] button[aria-expanded]',
+  )!;
 const choose = async (value: string) => {
   await revealFolded();
   const select = document.querySelector<HTMLSelectElement>(
@@ -248,37 +255,55 @@ it("does not silently retarget a removed selection to the remaining Group direct
   expect(create().disabled).toBe(false);
 });
 
-it("keeps create's advanced settings behind their own tab and flags what was set there", async () => {
-  await render();
-  const tab = (label: string) =>
-    [...document.querySelectorAll<HTMLElement>('[role="tab"]')].find((node) =>
-      node.textContent?.startsWith(label),
-    )!;
-  const reachable = (name: string) =>
-    !document.querySelector(`[data-actor-config-view="${name}"]`)!.hasAttribute("inert");
+it("keeps create's staged changes when folded and starts a new visit on the main form", async () => {
+  await renderModal();
+  const panel = () => document.getElementById(advancedDisclosure().getAttribute("aria-controls")!)!;
+  expect(advancedDisclosure().textContent).toBe("sectionAdvanced");
+  expect(panel().hidden).toBe(true);
+  expect(document.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe(
+    "runtimeSwitch.managed",
+  );
 
-  expect(tab("sectionAdvanced").textContent).toBe("sectionAdvanced");
-  expect([reachable("form"), reachable("advanced")]).toEqual([true, false]);
-
-  await act(async () => tab("sectionAdvanced").click());
-  expect(tab("sectionAdvanced").getAttribute("aria-selected")).toBe("true");
-  expect([reachable("form"), reachable("advanced")]).toEqual([false, true]);
-
+  await act(async () => advancedDisclosure().click());
+  expect(panel().hidden).toBe(false);
+  await act(async () => button("secretsSection")!.click());
+  const environment = panel().querySelector("textarea")!;
   props = { ...props, secretsSetText: "FIXTURE_KEY=synthetic" };
-  await render();
-  expect(tab("sectionAdvanced").textContent).toBe("sectionAdvancedadvancedChanged.environment");
+  await renderModal();
+  await act(async () => advancedDisclosure().click());
+  expect(panel().hidden).toBe(true);
+  expect(advancedDisclosure().textContent).toBe("sectionAdvancedadvancedChanged.environment");
+  await act(async () => advancedDisclosure().click());
+  expect(panel().querySelector("textarea")).toBe(environment);
+  expect(environment.value).toBe("FIXTURE_KEY=synthetic");
 
-  // Every tab is laid out under one sizing rule, so switching cannot resize the dialog.
-  const sizing = () => document.querySelector('[role="dialog"]')!.className;
-  const advancedSizing = sizing();
-  await act(async () => tab("runtimeSwitch.web").click());
-  expect(sizing()).toBe(advancedSizing);
-  await act(async () => tab("runtimeSwitch.managed").click());
-  expect(tab("runtimeSwitch.managed").getAttribute("aria-selected")).toBe("true");
-  expect(sizing()).toBe(advancedSizing);
-  expect([reachable("form"), reachable("advanced")]).toEqual([true, false]);
-  // Leaving the tab does not drop the reminder about what was set there.
-  expect(tab("sectionAdvanced").textContent).toBe("sectionAdvancedadvancedChanged.environment");
+  await act(async () => button("common:cancel")!.click());
+  expect(props.onCancel).toHaveBeenCalledOnce();
+  props = { ...props, isOpen: false, secretsSetText: "" };
+  await renderModal();
+  props = { ...props, isOpen: true };
+  await renderModal();
+
+  expect(advancedDisclosure().textContent).toBe("sectionAdvanced");
+  expect(panel().hidden).toBe(true);
+  expect(document.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe(
+    "runtimeSwitch.managed",
+  );
+});
+
+it("labels the next launch directory before and after closing without saving a new pin", async () => {
+  await renderModal();
+  expect(document.body.textContent).toContain("workingDirectoryEffective: /fixture/a");
+  await choose("s_b");
+  expect(document.body.textContent).toContain("workingDirectoryEffective: /fixture/b");
+
+  props = { ...props, isOpen: false };
+  await renderModal();
+  props = { ...props, isOpen: true };
+  await renderModal();
+
+  expect(document.body.textContent).toContain("workingDirectoryEffective: /fixture/a");
+  expect(props.onCreate).not.toHaveBeenCalled();
 });
 
 const button = (label: string) =>
@@ -582,6 +607,36 @@ async function editActor(
   await revealFolded();
   return { mutations, groupDoc, profile, fetch, saved: () => savedActor };
 }
+
+it("shows unfinished or staged advanced edits and clears the disclosure and summary on reopen", async () => {
+  const { saved } = await editActor({ capability_autoload: ["pack:fixture"] });
+  const hint = () => advancedDisclosure().querySelector("[data-changed]");
+  expect(hint()).toBeNull();
+
+  await act(async () => button("secretManager.addVariable")!.click());
+  await act(async () => advancedDisclosure().click());
+  expect(advancedDisclosure().getAttribute("aria-expanded")).toBe("false");
+  expect(hint()?.textContent).toBe("secretsSection");
+  await act(async () => advancedDisclosure().click());
+  const cancelSecret = host.querySelector<HTMLButtonElement>(
+    '[aria-label="secretManager.title"] [aria-label="common:cancel"]',
+  )!;
+  await act(async () => cancelSecret.click());
+  expect(hint()).toBeNull();
+
+  await act(async () => useFormStore.setState({ editActorCapabilityAutoloadText: "" }));
+  expect(hint()?.textContent).toBe("capabilitiesSection");
+  await stageFixtureSecret();
+  await act(async () => advancedDisclosure().click());
+  expect(advancedDisclosure().getAttribute("aria-expanded")).toBe("false");
+  expect(hint()?.textContent).toBe("secretsSection · capabilitiesSection");
+  await act(async () => advancedDisclosure().click());
+
+  await act(async () => button("common:cancel")!.click());
+  await act(async () => useModalStore.getState().openActorEditor(saved()));
+  expect(advancedDisclosure().getAttribute("aria-expanded")).toBe("false");
+  expect(hint()).toBeNull();
+});
 
 it("keeps a managed command draft when visiting the Web Model category and returning", async () => {
   await editActor({ command: ["codex", "--model", "example"] });

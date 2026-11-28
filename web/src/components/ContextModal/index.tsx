@@ -1,4 +1,4 @@
-import { useTaskViewStore } from "../../features/taskView/taskViewStore";
+import { openTaskConversation } from "../../features/taskView/taskViewStore";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -1588,14 +1588,14 @@ export function ContextModal({
       onResetTask={() => void handleResetTask()}
       onClose={closeTaskEditor}
       onViewConversation={
-        selectedTask && taskEditorMode !== "create"
+        !webReadOnly && selectedTask && taskEditorMode !== "create"
           ? () => {
               // The guarded close asks about unsaved edits; the view opens only once it closed.
               const taskId = selectedTask.id;
               const title = String(selectedTask.title || "");
               handleModalClose();
               if (!useModalStore.getState().modals.context)
-                useTaskViewStore.getState().open(groupId, taskId, title);
+                openTaskConversation(groupId, taskId, title);
             }
           : undefined
       }

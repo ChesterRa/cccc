@@ -14,7 +14,10 @@ function escapeForPattern(value: string): string {
 /** The message carries a structured reference to the task. */
 export function hasTaskRef(event: LedgerEvent, taskId: string): boolean {
   return getTaskMessageRefs(dataOf(event).refs).some(
-    (ref) => String(ref.task_id || "").trim() === taskId,
+    (ref) =>
+      typeof ref.kind === "string" &&
+      typeof ref.task_id === "string" &&
+      ref.task_id.trim() === taskId,
   );
 }
 
@@ -109,9 +112,11 @@ export function collectTaskConversation(
   // Downward: the replies to a task message, and the replies to those. An ancestor's other
   // replies stay out: one question answered by several members is not one thread.
   const queue = [...seeds];
+  const visitedReplies = new Set(seeds);
   while (queue.length) {
     for (const reply of repliesTo.get(queue.pop()!) ?? []) {
-      if (shown.has(reply)) continue;
+      if (visitedReplies.has(reply)) continue;
+      visitedReplies.add(reply);
       shown.add(reply);
       queue.push(reply);
     }

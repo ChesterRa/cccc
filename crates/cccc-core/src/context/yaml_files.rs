@@ -134,7 +134,7 @@ pub(super) fn has_tasks(path: &Path) -> io::Result<bool> {
     Ok(false)
 }
 
-pub(super) fn is_task_id(id: &str) -> bool {
+pub fn is_task_id(id: &str) -> bool {
     id.strip_prefix('T').is_some_and(|number| {
         !number.is_empty() && number.bytes().all(|byte| byte.is_ascii_digit())
     })

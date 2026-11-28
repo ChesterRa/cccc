@@ -141,6 +141,7 @@ async fn ledger_search(
             "group_id":group_id,
             "q":first_non_blank_query(&query,&["q","query"]),
             "kind":query.get("kind"),
+            "task_id":query.get("task_id"),
             "by":query.get("by"),
             "by_any":by_any,
             "to":query.get("to"),

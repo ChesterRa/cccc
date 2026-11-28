@@ -17,7 +17,7 @@ export function WebAccessSections({
   children: ReactNode;
 }) {
   const { t } = useTranslation("settings");
-  const [section, setSection] = useState(focusReach ? "overview" : "tokens");
+  const [section, setSection] = useState("overview");
 
   useEffect(() => {
     if (isActive && focusReach) setSection("overview");
@@ -43,12 +43,12 @@ export function WebAccessSections({
       activeId={section}
       onChange={setSection}
       tabs={[
-        { id: "tokens", label: t("webAccess.accessControlTitle"), panel: tokens },
         {
           id: "overview",
           label: t("webAccess.overviewTab"),
           panel: <div className="space-y-5">{children}</div>,
         },
+        { id: "tokens", label: t("webAccess.accessControlTitle"), panel: tokens },
       ]}
     />
   );

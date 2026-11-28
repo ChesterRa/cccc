@@ -67,3 +67,22 @@ it("opens a group's Automation settings from that group's menu", async () => {
     host.remove();
   }
 });
+
+it("uses a viewport-proportional mobile drawer width while keeping the desktop width variable", async () => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  try {
+    await act(async () => root.render(<GroupSidebar {...sidebar} isCollapsed={false} />));
+    const aside = host.querySelector("aside")!;
+    expect(aside.classList.contains("w-[min(85vw,320px)]")).toBe(true);
+    expect(aside.classList.contains("md:w-[var(--sidebar-width)]")).toBe(true);
+
+    await act(async () => root.render(<GroupSidebar {...sidebar} isCollapsed={true} />));
+    expect(aside.classList.contains("w-[60px]")).toBe(true);
+  } finally {
+    await act(async () => root.unmount());
+    host.remove();
+  }
+});
