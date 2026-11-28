@@ -34,6 +34,13 @@ type AttachmentPreviewState = {
   close: () => void;
 };
 
+/**
+ * The message key of pictures still waiting in the composer. They exist only as local files
+ * until sent, so they can be viewed at full size but have nothing to download or to keep open
+ * in the resource panel.
+ */
+export const COMPOSER_DRAFT_MESSAGE_KEY = "composer-draft";
+
 export function attachmentSetKey(panelGroupId: string, messageKey: string) {
   return `${panelGroupId}\n${messageKey}`;
 }

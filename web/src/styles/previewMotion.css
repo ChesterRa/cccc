@@ -1,0 +1,39 @@
+/* Preview motion: one short, quiet curve for surfaces that open and close. The pixel style
+   moves in whole steps (lcdMotion.css) and takes none of this. */
+:root[data-ui-style="preview"] {
+  --preview-motion-fast: 180ms;
+  --preview-ease-out: cubic-bezier(0.2, 0, 0, 1);
+}
+
+/* The side panel (Files, Presentation, resources) opens by growing from the edge and closes
+   by giving its width back, so the conversation beside it glides instead of jumping. */
+@keyframes preview-side-panel-in {
+  from {
+    width: 0;
+    opacity: 0;
+  }
+}
+
+@keyframes preview-side-panel-out {
+  to {
+    width: 0;
+    opacity: 0;
+  }
+}
+
+:root[data-ui-style="preview"] .side-panel-enter {
+  animation: preview-side-panel-in var(--preview-motion-fast) var(--preview-ease-out);
+}
+
+:root[data-ui-style="preview"] .side-panel-exit {
+  overflow: hidden;
+  border-left: 1px solid var(--glass-border-subtle);
+  background: var(--color-bg-secondary);
+  animation: preview-side-panel-out 160ms var(--preview-ease-out) forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-ui-style="preview"] :is(.side-panel-enter, .side-panel-exit) {
+    animation: none;
+  }
+}

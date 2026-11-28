@@ -27,6 +27,7 @@ const PROBES = `
   </div>
   <span class="lcd-member-mark" data-mark="mail" data-probe="mail"></span>
   <div data-group-pending-slot data-probe="pending-slot"></div>
+  <div data-taskboard-filters><button aria-pressed="true" data-probe="board-filter"></button></div>
   <button data-mode-choice aria-pressed="true" data-probe="mode-on"></button>
   <button data-mode-choice aria-pressed="false" data-probe="mode-off"></button>
   <span class="lcd-row-route" data-probe="route"></span>
@@ -120,7 +121,7 @@ it("gives the pending-reply card a stacked last row and a quiet send key", () =>
   expect(declared("send", "background")).toEqual(["var(--preview-quiet-key-bg)"]);
   expect(token(rules, "--preview-quiet-key-bg")).toEqual(["rgba(255, 255, 255, 0.1)"]);
   expect(token(mount("preview", "light"), "--preview-quiet-key-bg")).toEqual([
-    "rgba(15, 16, 19, 0.05)",
+    "rgba(17, 18, 20, 0.05)",
   ]);
 });
 
@@ -212,18 +213,43 @@ it("uses neutral hairlines and sets message metadata a step back", () => {
 it("gives light preview its own paper palette, separate from the dark one", () => {
   const light = mount("preview", "light");
   // Near-black ink as the one solid accent, on a soft off-white page with white cards.
-  expect(token(light, "--color-accent-primary")).toEqual(["#1c1d21"]);
+  expect(token(light, "--color-accent-primary")).toEqual(["#111214"]);
   expect(token(light, "--primary-foreground")).toEqual(["#ffffff"]);
-  expect(token(light, "--color-body-bg")).toEqual(["#f4f4f1"]);
+  expect(token(light, "--color-body-bg")).toEqual(["#f3f3f5"]);
   expect(token(light, "--glass-bubble-bg")).toEqual(["#ffffff"]);
-  expect(token(light, "--color-text-primary")).toEqual(["#17181c"]);
-  expect(token(light, "--preview-selected-text")).toEqual(["#17181c"]);
-  // Neutral hairlines, as in dark.
-  expect(token(light, "--glass-border-subtle")).toEqual(["rgba(15, 16, 19, 0.07)"]);
+  expect(token(light, "--color-text-primary")).toEqual(["#111214"]);
+  expect(token(light, "--preview-selected-text")).toEqual(["#111214"]);
+  // White surfaces are lifted by a faint shadow; dark stays flat.
+  expect(token(light, "--glass-bubble-shadow")).toEqual(["0 1px 2px rgba(17, 18, 20, 0.04)"]);
+  // One neutral ink for every line: none of the base theme's slate blue is left.
+  const lightRule = light.find((rule) => rule.selectorText.includes(":not(.dark)"))!;
+  expect(lightRule.style.cssText).not.toMatch(/rgba?\(15[ ,]+23[ ,]+42/);
+  // Hairlines as faint as in dark.
+  expect(token(light, "--glass-border-subtle")).toEqual(["rgba(17, 18, 20, 0.07)"]);
   // Dark keeps its own values; neither theme inherits the other's.
   const dark = mount("preview", "dark");
   expect(token(dark, "--color-body-bg")).toEqual(["#0a0b0d"]);
+  expect(token(dark, "--preview-card-shadow")).toEqual(["none"]);
   expect(token(dark, "--preview-selected-text")).toEqual(["#ffffff"]);
+});
+
+it("raises a chosen segment as a white key in light and keeps board filters off the solid accent", () => {
+  const light = mount("preview", "light");
+  const declared = (rules: CSSStyleRule[], name: string, property: string) => {
+    const element = document.querySelector(`[data-probe="${name}"]`)!;
+    return rules
+      .filter((rule) => element.matches(rule.selectorText))
+      .map((rule) => rule.style.getPropertyValue(property).trim())
+      .filter(Boolean);
+  };
+  // The switch rule is one long :is() list this DOM cannot match, so the tokens it reads are
+  // checked instead.
+  expect(token(light, "--preview-segment-bg")).toEqual(["#ffffff"]);
+  expect(token(light, "--preview-segment-shadow")).toEqual(["0 1px 2px rgba(17, 18, 20, 0.12)"]);
+  // The chosen board filter reads as selected, leaving "New task" the one solid key.
+  expect(declared(light, "board-filter", "background")).toEqual(["var(--preview-selected-bg)"]);
+  const dark = mount("preview", "dark");
+  expect(token(dark, "--preview-segment-shadow")).toEqual(["none"]);
 });
 
 it("restyles the preview look", () => {

@@ -1,3 +1,9 @@
+import { withTaskViewRef } from "../features/taskView/taskConversationModel";
+import {
+  getTaskView,
+  useEndTaskViewOnGroupChange,
+  useTaskView,
+} from "../features/taskView/taskViewStore";
 import { chatSetupRequirements, projectScopeRoot } from "./chat/chatSetupRequirements";
 import { groupMessagesVisible } from "../stores/useUIStore";
 import { useMemo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
@@ -213,6 +219,8 @@ export function useChatTab({
     pinned: pinnedTabOffered,
   });
   const senders = chatSenderFilter;
+  const taskView = useTaskView(selectedGroupId);
+  useEndTaskViewOnGroupChange(selectedGroupId);
   // A sent message hidden by the filters raises a notice that stays until dismissed, so it can
   // lead back from another Group. Once its own Group's view shows the message, for example
   // after Waiting for you returns to All, the notice no longer holds and is retired.
@@ -558,6 +566,12 @@ export function useChatTab({
     pinnedError,
     pinnedUnavailable,
     retryPinned,
+    taskViewActive,
+    taskViewLoading,
+    taskViewError,
+    taskViewTruncated,
+    taskViewContextIncomplete,
+    retryTaskView,
   } = useChatMessageView({
     selectedGroupId,
     liveJump,
@@ -567,6 +581,7 @@ export function useChatTab({
     chatWindow,
     chatFilter,
     senders,
+    taskId: taskView?.taskId,
     scrollSnapshot,
     hasLoadedTail,
     hasMoreHistory,
@@ -1118,7 +1133,7 @@ export function useChatTab({
       : [];
     const quotedPresentationRefSnapshot = composerStateSnapshot.quotedPresentationRef;
     const quotedVoiceDocumentRefSnapshot = composerStateSnapshot.quotedVoiceDocumentRef;
-    const refsSnapshot: MessageRef[] = [
+    const composedRefs: MessageRef[] = [
       ...(quotedPresentationRefSnapshot ? [quotedPresentationRefSnapshot] : []),
       ...(quotedVoiceDocumentRefSnapshot ? [quotedVoiceDocumentRefSnapshot] : []),
       ...buildComposerConnectGroupRefs(
@@ -1132,6 +1147,13 @@ export function useChatTab({
         groups: composerRouteGroups,
       }),
     ];
+    // A message written in a task's view belongs to that task. One that goes to another Group
+    // does not: the task is this Group's, and its ID means nothing there.
+    const sendingTaskView =
+      sendsCrossGroup || remoteReplyDstGroupId ? null : getTaskView(selectedGroupId);
+    const refsSnapshot = sendingTaskView
+      ? withTaskViewRef(composedRefs, sendingTaskView.taskId, sendingTaskView.title)
+      : composedRefs;
     const messageModeSnapshot = messageModeForRecipients(
       replyTargetSnapshot
         ? normalizeReplyMessageMode(composerStateSnapshot.messageMode)
@@ -1341,6 +1363,8 @@ export function useChatTab({
       if (
         sourceEvent?.id &&
         useGroupStore.getState().selectedGroupId === selectedGroupId &&
+        // In a task's view the sent message carries the task and is shown there.
+        !getTaskView(selectedGroupId) &&
         !matchesChatFilters(sourceEvent, currentFilter, currentSession.chatSenderFilter)
       ) {
         const eventId = sourceEvent.id;
@@ -1431,6 +1455,12 @@ export function useChatTab({
     pinnedUnavailable,
     retryPinned,
     pinnedTabOffered,
+    taskView: taskViewActive ? taskView : null,
+    taskViewLoading,
+    taskViewError,
+    taskViewTruncated,
+    taskViewContextIncomplete,
+    retryTaskView,
     toggleMessagePin: pinnedTabOffered ? toggleMessagePin : undefined,
     viewMessageContext: (eventId: string) => openSourceMessage(selectedGroupId, eventId),
     chatViewKey,
@@ -1445,13 +1475,15 @@ export function useChatTab({
     inChatWindow,
     isLoadingHistory: effectiveIsLoadingHistory,
     hasMoreHistory: effectiveHasMoreHistory,
-    loadMoreHistory: pendingActive
-      ? loadPendingPage
-      : inChatWindow || pinnedActive
-        ? undefined
-        : senders.length > 0
-          ? loadSenderHistory
-          : loadCurrentGroupHistory,
+    loadMoreHistory: taskViewActive
+      ? undefined
+      : pendingActive
+        ? loadPendingPage
+        : inChatWindow || pinnedActive
+          ? undefined
+          : senders.length > 0
+            ? loadSenderHistory
+            : loadCurrentGroupHistory,
     chatEmptyState,
 
     // UI state

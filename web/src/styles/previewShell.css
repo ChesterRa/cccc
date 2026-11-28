@@ -50,7 +50,7 @@
 
 :root[data-ui-style="preview"] [data-chat-filters] > button[aria-pressed="true"] {
   background: var(--glass-tab-bg-active);
-  box-shadow: 0 1px 3px rgb(15 23 42 / 0.08);
+  box-shadow: var(--glass-tab-shadow-active);
 }
 
 :root[data-ui-style="preview"] [data-group-run-controls] > span {

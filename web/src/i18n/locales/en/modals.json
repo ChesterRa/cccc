@@ -635,7 +635,8 @@
     "taskUpdateSource": "Update the entry…",
     "taskPutBack": "Put back in the backlog",
     "backlogProblemBlocked_one": "{{count}} entry needs its heading fixed in the file before it can be changed here.",
-    "backlogProblemMissingId_one": "{{count}} entry has no ID yet; it gets one the first time it is changed here."
+    "backlogProblemMissingId_one": "{{count}} entry has no ID yet; it gets one the first time it is changed here.",
+    "viewTaskConversation": "View conversation"
   },
   "codexVoiceExperimental": "Experimental",
   "codexVoiceChecking": "Checking…",

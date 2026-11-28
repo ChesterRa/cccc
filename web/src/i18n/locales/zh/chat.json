@@ -1155,5 +1155,17 @@
   "slashDescriptions": {
     "install": "安装或启用 Skill、MCP 工具包、能力、URL、仓库或本地路径。",
     "selfEvolution": "回顾团队的协作情况，提出最多三条改进建议，由你决定。"
+  },
+  "taskView": {
+    "viewing": "正在查看任务",
+    "count_one": "{{count}} 条消息",
+    "count_other": "{{count}} 条消息",
+    "loading": "加载中…",
+    "details": "任务详情",
+    "exit": "退出",
+    "retry": "重试",
+    "error": "未能加载这个任务的消息。",
+    "truncated": "只显示最近的一部分消息。",
+    "contextIncomplete": "部分更早的上下文未加载。"
   }
 }

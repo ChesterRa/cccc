@@ -5,6 +5,7 @@ import { readFrameProof } from "../../features/connect/protocol";
 import {
   attachmentSequence,
   attachmentSetKey,
+  COMPOSER_DRAFT_MESSAGE_KEY,
   useAttachmentPreviewStore,
 } from "../../stores/useAttachmentPreviewStore";
 import { resourceKey, useResourcePanelStore } from "../../stores/useResourcePanelStore";
@@ -51,6 +52,9 @@ export function AttachmentLightbox({
   if (!viewing || !item) return null;
   const { resource, title } = item;
   const sequence = attachmentSequence(items, resource.index);
+  // A picture still in the composer is a local file: its address ends when it is sent or
+  // removed, so it is neither downloaded nor moved into the panel.
+  const draft = resource.messageKey === COMPOSER_DRAFT_MESSAGE_KEY;
   const links = buildMessageAttachmentLinks({
     groupId: resource.blobGroupId,
     path: resource.blobPath,
@@ -71,7 +75,7 @@ export function AttachmentLightbox({
       onClose={close}
       dialogLabel={t("documentPreviewDialog")}
       title={title}
-      downloadHref={links.downloadHref}
+      downloadHref={draft ? undefined : links.downloadHref}
       downloadName={links.downloadName}
       // As in the panel: a PDF can open in the browser's own viewer, except inside a Connect
       // frame, where a new tab would leave the frame's authorization behind.
@@ -91,7 +95,7 @@ export function AttachmentLightbox({
           : undefined
       }
       leadingActions={
-        canOpenInPanel ? (
+        canOpenInPanel && !draft ? (
           <button
             type="button"
             className={dialogIconKey}

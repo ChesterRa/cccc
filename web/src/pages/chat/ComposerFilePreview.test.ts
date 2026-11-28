@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { act, createElement, StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { ComposerFilePreview } from "./ComposerFilePreview";
+import { ComposerFileTray } from "./ComposerFileTray";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
@@ -58,10 +58,12 @@ describe("composer attachment previews", () => {
     try {
       await act(async () =>
         root.render(
-          createElement(ComposerFilePreview, {
-            file,
+          // The tray owns each picture's local address and hands it to the file's preview.
+          createElement(ComposerFileTray, {
+            groupId: "g1",
+            files: [file],
             onRemove: remove,
-            removeLabel: "Remove photo",
+            removeLabel: () => "Remove photo",
           }),
         ),
       );
@@ -79,10 +81,11 @@ describe("composer attachment previews", () => {
       const documentFile = new File(["notes"], "notes.txt", { type: "text/plain" });
       await act(async () =>
         root.render(
-          createElement(ComposerFilePreview, {
-            file: documentFile,
+          createElement(ComposerFileTray, {
+            groupId: "g1",
+            files: [documentFile],
             onRemove: remove,
-            removeLabel: "Remove notes",
+            removeLabel: () => "Remove notes",
           }),
         ),
       );
@@ -119,10 +122,11 @@ describe("composer attachment previews", () => {
             createElement(
               StrictMode,
               null,
-              createElement(ComposerFilePreview, {
-                file,
+              createElement(ComposerFileTray, {
+                groupId: "g1",
+                files: [file],
                 onRemove: () => undefined,
-                removeLabel: "Remove",
+                removeLabel: () => "Remove",
               }),
             ),
           ),

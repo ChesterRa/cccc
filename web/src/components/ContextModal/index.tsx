@@ -1,3 +1,4 @@
+import { useTaskViewStore } from "../../features/taskView/taskViewStore";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -22,7 +23,7 @@ import {
   updateCoordinationTask,
   type ApiResponse,
 } from "../../services/api";
-import { useGroupStore, useUIStore } from "../../stores";
+import { useGroupStore, useModalStore, useUIStore } from "../../stores";
 import { useBacklogSignals } from "../../stores/backlogSignals";
 import { SegmentedControl } from "../ui/segmented-control";
 import { BacklogPanel, type BacklogScopeState } from "./backlog/BacklogPanel";
@@ -1586,6 +1587,18 @@ export function ContextModal({
       }
       onResetTask={() => void handleResetTask()}
       onClose={closeTaskEditor}
+      onViewConversation={
+        selectedTask && taskEditorMode !== "create"
+          ? () => {
+              // The guarded close asks about unsaved edits; the view opens only once it closed.
+              const taskId = selectedTask.id;
+              const title = String(selectedTask.title || "");
+              handleModalClose();
+              if (!useModalStore.getState().modals.context)
+                useTaskViewStore.getState().open(groupId, taskId, title);
+            }
+          : undefined
+      }
       onDeleteSelectedTask={() => {
         if (selectedTask) void handleDeleteTask(selectedTask);
       }}

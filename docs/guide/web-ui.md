@@ -403,6 +403,19 @@ page becomes visible. A read-only exhibit neither shows nor changes them, and ag
 them in messages or tools. A Group keeps up to 100 pins. When a pinned message can no longer be
 read, the tab says so and offers to remove its pin.
 
+**A task's conversation.** Click a task tag on a message, or **View conversation** in a task's
+details, and the chat shows only that task's messages. The filters make way for a bar that names
+the task, counts its messages and offers **Task details** and **Exit**; Escape also exits. The
+view holds messages that carry a reference to the task, messages whose text names its ID as a
+whole word (`T98` does not match `T981`), and the replies around them. It reads the Group's whole
+history, not only the loaded part, and a message that arrives while it is open joins it. A reply
+chain is followed only through messages already found or loaded; when an earlier message in a
+chain is missing, the bar says some context is not loaded. A task named in very many messages
+shows its most recent ones and says so. A message you send from this view carries the task's
+reference, so it stays with the task. The view is not saved: it ends when you exit, switch Groups
+or reload, and your filters are as you left them. A read-only exhibit opens the task's details
+instead.
+
 Changing a filter keeps your place. If you were reading earlier messages, the message you were
 reading travels with you: the last one you clicked, tapped or reached with Tab while it remains on
 screen, or the one across the middle of the list once you move on. If the new view contains it, it

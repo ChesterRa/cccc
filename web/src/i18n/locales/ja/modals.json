@@ -635,7 +635,8 @@
     "taskFromBacklog": "バックログから：",
     "saveTaskFirst": "先に変更を保存するか破棄してください。",
     "taskUpdateSource": "元の項目を更新…",
-    "taskPutBack": "バックログに戻す"
+    "taskPutBack": "バックログに戻す",
+    "viewTaskConversation": "関連する会話を表示"
   },
   "codexVoiceExperimental": "実験機能",
   "codexVoiceChecking": "確認中…",

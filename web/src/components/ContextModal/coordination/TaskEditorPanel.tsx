@@ -86,6 +86,8 @@ interface TaskEditorPanelProps {
   /** Drop the edits: a new task starts over, an existing one loads its latest version. */
   onResetTask: () => void;
   onClose: () => void;
+  /** Shows the task's messages in the chat; absent for a task not yet created. */
+  onViewConversation?: () => void;
   onDeleteSelectedTask: () => void;
   onSaveTask: () => void;
   onOpenTask: (taskId: string) => void;
@@ -124,6 +126,7 @@ export function TaskEditorPanel({
   onTaskTypeChange,
   onResetTask,
   onClose,
+  onViewConversation,
   onDeleteSelectedTask,
   onSaveTask,
   onOpenTask,
@@ -242,9 +245,21 @@ export function TaskEditorPanel({
             </span>
           ) : null}
         </div>
-        <button type="button" onClick={onClose} className={ui.buttonSecondaryClass}>
-          {closeLabel ?? tr("context.close", "Close")}
-        </button>
+        <div className="flex shrink-0 items-center gap-2">
+          {onViewConversation ? (
+            <button
+              type="button"
+              onClick={onViewConversation}
+              className={ui.buttonSecondaryClass}
+              data-task-view-conversation=""
+            >
+              {tr("context.viewTaskConversation", "View conversation")}
+            </button>
+          ) : null}
+          <button type="button" onClick={onClose} className={ui.buttonSecondaryClass}>
+            {closeLabel ?? tr("context.close", "Close")}
+          </button>
+        </div>
       </div>
 
       <div

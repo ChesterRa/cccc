@@ -63,13 +63,21 @@ export function ResizableSidePanel({
       />
       <div
         className={classNames(
-          "hidden min-h-0 min-w-0 flex-shrink-0 flex-col overflow-hidden border-l border-[var(--glass-border-subtle)] bg-[var(--color-bg-secondary)] md:flex",
+          "side-panel-enter hidden min-h-0 min-w-0 flex-shrink-0 flex-col overflow-hidden border-l border-[var(--glass-border-subtle)] bg-[var(--color-bg-secondary)] md:flex",
         )}
         id="group-side-panel"
         ref={panelRef}
         style={{ width: `${layout.width}px` }}
       >
-        {content}
+        {/* The content keeps its full width while the panel grows open, so it is revealed
+            rather than squeezed. */}
+        <div
+          className="flex min-h-0 flex-1 flex-col"
+          style={{ minWidth: `${layout.width}px` }}
+          data-side-panel-content
+        >
+          {content}
+        </div>
       </div>
     </>
   );

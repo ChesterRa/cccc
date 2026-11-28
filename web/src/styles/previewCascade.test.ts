@@ -71,9 +71,9 @@ it("paints light preview from its own palette: white messages, inset fields, ink
     "light",
   );
   expect(style("agent-body").backgroundColor).toBe("#ffffff");
-  expect(style("user-body").backgroundColor).toBe("#e9e9e4");
+  expect(style("user-body").backgroundColor).toBe("#eef2f7");
   expect(style("modal").backgroundColor).toBe("#ffffff");
-  expect(style("input").backgroundColor).toBe("#f6f6f3");
+  expect(style("input").backgroundColor).toBe("#f7f7f8");
 });
 
 it("keeps the dark palette for the same surfaces", () => {

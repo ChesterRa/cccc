@@ -100,6 +100,7 @@ export function ChetComposer({
   return (
     <form
       className="flex-none border-t border-[var(--glass-border-subtle)] px-4 py-3 sm:px-6"
+      data-chet-composer
       onSubmit={(event) => {
         event.preventDefault();
         onSend();
@@ -107,31 +108,34 @@ export function ChetComposer({
     >
       <div className="mx-auto flex max-w-3xl flex-col gap-2">
         {notice}
-        <Textarea
-          className="min-h-16 max-h-40 resize-none"
-          value={draft}
-          rows={2}
-          aria-label={t("chet.composer.inputLabel")}
-          placeholder={t("chet.composer.placeholder")}
-          title={t("chet.composer.sendHint")}
-          onChange={(event) => onText(event.target.value)}
-          onKeyDown={(event) => {
-            const native = event.nativeEvent as KeyboardEvent & { keyCode?: number };
-            if (native.isComposing || native.keyCode === 229) return;
-            if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
-              event.preventDefault();
-              onSend();
-            }
-          }}
-        />
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">{voiceStatus}</div>
-          <div className="ml-auto flex flex-none flex-wrap items-center justify-end gap-2">
-            {voiceActions}
-            <Button type="submit" size="sm" className="max-sm:min-h-11" disabled={!draft.trim()}>
-              <SendIcon size={15} aria-hidden="true" />
-              {t("chet.composer.send")}
-            </Button>
+        {/* One box for the text and its actions; a style may draw it as a single surface. */}
+        <div className="flex flex-col gap-2" data-chet-composer-box>
+          <Textarea
+            className="min-h-16 max-h-40 resize-none"
+            value={draft}
+            rows={2}
+            aria-label={t("chet.composer.inputLabel")}
+            placeholder={t("chet.composer.placeholder")}
+            title={t("chet.composer.sendHint")}
+            onChange={(event) => onText(event.target.value)}
+            onKeyDown={(event) => {
+              const native = event.nativeEvent as KeyboardEvent & { keyCode?: number };
+              if (native.isComposing || native.keyCode === 229) return;
+              if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+                event.preventDefault();
+                onSend();
+              }
+            }}
+          />
+          <div className="flex min-w-0 flex-wrap items-center gap-2" data-chet-composer-actions>
+            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">{voiceStatus}</div>
+            <div className="ml-auto flex flex-none flex-wrap items-center justify-end gap-2">
+              {voiceActions}
+              <Button type="submit" size="sm" className="max-sm:min-h-11" disabled={!draft.trim()}>
+                <SendIcon size={15} aria-hidden="true" />
+                {t("chet.composer.send")}
+              </Button>
+            </div>
           </div>
         </div>
       </div>

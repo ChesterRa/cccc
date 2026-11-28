@@ -9,10 +9,16 @@ import {
 
 export function ComposerFilePreview({
   file,
+  previewUrl = "",
+  onEnlarge,
   onRemove,
   removeLabel,
 }: {
   file: File;
+  /** A local address for a picture; without one the file shows by name. */
+  previewUrl?: string;
+  /** Opens the picture at full size. */
+  onEnlarge?: () => void;
   onRemove: () => void;
   removeLabel: string;
 }) {
@@ -20,17 +26,8 @@ export function ComposerFilePreview({
   const [previewPosition, setPreviewPosition] = useState({ left: 12, top: 12 });
   const rootRef = useRef<HTMLDivElement | null>(null);
   const canPreviewImage = isPreviewableComposerImageFile(file);
-  const [preview, setPreview] = useState<{ file: File; url: string } | null>(null);
   const [failedUrl, setFailedUrl] = useState("");
-  const previewUrl = preview?.file === file ? preview.url : "";
   const showThumbnail = Boolean(previewUrl && previewUrl !== failedUrl);
-
-  useEffect(() => {
-    if (!canPreviewImage || typeof URL.createObjectURL !== "function") return;
-    const url = URL.createObjectURL(file);
-    setPreview({ file, url });
-    return () => URL.revokeObjectURL(url);
-  }, [canPreviewImage, file]);
 
   const updatePreviewPosition = useCallback(() => {
     const root = rootRef.current;
@@ -79,11 +76,15 @@ export function ComposerFilePreview({
       {showThumbnail ? (
         <button
           type="button"
-          className="h-16 w-20 overflow-hidden rounded-md focus-visible:outline-2 focus-visible:outline-offset-2"
-          onClick={openPreview}
+          className="h-16 w-20 cursor-zoom-in overflow-hidden rounded-md focus-visible:outline-2 focus-visible:outline-offset-2"
+          // Hover and focus show the small preview; a click opens the picture at full size.
+          onClick={() => {
+            setIsPreviewOpen(false);
+            onEnlarge?.();
+          }}
           title={file.name}
           aria-label={file.name}
-          aria-expanded={isPreviewOpen}
+          aria-haspopup="dialog"
         >
           <img
             src={previewUrl}

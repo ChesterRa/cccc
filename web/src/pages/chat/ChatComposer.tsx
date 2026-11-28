@@ -35,7 +35,7 @@ import {
   type SlashCommandItem,
 } from "../../utils/slashCommands";
 import { getComposerCanSend, hasConcreteReplyRecipients } from "./chatComposerActions";
-import { ComposerFilePreview } from "./ComposerFilePreview";
+import { ComposerFileTray } from "./ComposerFileTray";
 import { ComposerMentionOverlay } from "./ComposerMentionOverlay";
 import {
   getComposerMenuAnchorRect,
@@ -1017,7 +1017,7 @@ export function ChatComposer({
       ) : null}
       <div
         data-composer-surface
-        className="@container/composer chat-reading-width rounded-2xl border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-1 pt-1 shadow-sm transition-[border-color,box-shadow] duration-150 focus-within:border-[var(--color-border-secondary)] motion-reduce:transition-none"
+        className="@container/composer chat-reading-width relative rounded-2xl border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-1 pt-1 shadow-sm transition-[border-color,box-shadow] duration-150 focus-within:border-[var(--color-border-secondary)] motion-reduce:transition-none"
       >
         <ComposerFailedSends groupId={selectedGroupId} isDark={isDark} />
 
@@ -1144,19 +1144,12 @@ export function ChatComposer({
           </div>
         )}
 
-        {/* File list */}
-        {composerFiles.length > 0 && (
-          <div className="mb-2 flex max-h-40 flex-wrap gap-2 overflow-y-auto px-2 pt-2 pb-1">
-            {composerFiles.map((f, idx) => (
-              <ComposerFilePreview
-                key={`${f.name}:${idx}`}
-                file={f}
-                onRemove={() => onRemoveComposerFile(idx)}
-                removeLabel={t("removeAttachment", { name: f.name })}
-              />
-            ))}
-          </div>
-        )}
+        <ComposerFileTray
+          groupId={selectedGroupId}
+          files={composerFiles}
+          onRemove={onRemoveComposerFile}
+          removeLabel={(file) => t("removeAttachment", { name: file.name })}
+        />
 
         <input
           ref={fileInputRef as RefObject<HTMLInputElement>}

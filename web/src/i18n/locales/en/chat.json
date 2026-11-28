@@ -1155,5 +1155,17 @@
   "slashDescriptions": {
     "install": "Install or enable a skill, MCP toolpack, capability, URL, repo, or local path.",
     "selfEvolution": "Review how the team works and propose up to three changes for you to choose."
+  },
+  "taskView": {
+    "viewing": "Viewing task",
+    "count_one": "{{count}} message",
+    "count_other": "{{count}} messages",
+    "loading": "Loading…",
+    "details": "Task details",
+    "exit": "Exit",
+    "retry": "Retry",
+    "error": "Couldn't load this task's messages.",
+    "truncated": "Only the most recent messages are shown.",
+    "contextIncomplete": "Some earlier context is not loaded."
   }
 }

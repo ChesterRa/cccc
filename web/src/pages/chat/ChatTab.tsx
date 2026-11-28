@@ -37,6 +37,9 @@ import { buttonVariants } from "../../components/ui/button-variants";
 import { ChatComposer } from "./ChatComposer";
 import { ComposerFailedSends } from "./ComposerFailedSends";
 import { ChatFilterTabs } from "./ChatFilterTabs";
+import { SidePanelPresence } from "../../components/layout/SidePanelPresence";
+import { TaskViewBanner } from "../../features/taskView/TaskViewBanner";
+import { useTaskViewStore } from "../../features/taskView/taskViewStore";
 import { usePinnedIds } from "../../features/pins/pinStore";
 import { GroupWorkArea, type RuntimeActorRenderer } from "./GroupWorkArea";
 import { WorkViewComposerSlot } from "./WorkViewComposerSlot";
@@ -292,6 +295,12 @@ export function ChatTab({
     pinnedUnavailable,
     retryPinned,
     pinnedTabOffered,
+    taskView,
+    taskViewLoading,
+    taskViewError,
+    taskViewTruncated,
+    taskViewContextIncomplete,
+    retryTaskView,
     toggleMessagePin,
     viewMessageContext,
     chatViewKey,
@@ -400,6 +409,8 @@ export function ChatTab({
     (state) => state.clearPresentationSlotAttention,
   );
   const openContextTask = useModalStore((state) => state.openContextTask);
+  const openTaskView = useTaskViewStore((state) => state.open);
+  const closeTaskView = useTaskViewStore((state) => state.close);
   const mobileSurface = useUIStore((state) =>
     selectedGroupId
       ? getChatSession(selectedGroupId, state.chatSessions).mobileSurface
@@ -794,9 +805,12 @@ export function ChatTab({
     (ref: TaskMessageRef, _event?: LedgerEvent) => {
       const taskId = String(ref.task_id || "").trim();
       if (!taskId) return;
-      openContextTask(taskId);
+      // In the conversation a task opens its own conversation; the banner leads to its details.
+      // An exhibit or a Group not yet chosen keeps the details, which need no chat view.
+      if (readOnly || !selectedGroupId) openContextTask(taskId);
+      else openTaskView(selectedGroupId, taskId, String(ref.title || ""));
     },
-    [openContextTask],
+    [openContextTask, openTaskView, readOnly, selectedGroupId],
   );
 
   const pinPresentationSlot = useCallback(
@@ -1055,7 +1069,7 @@ export function ChatTab({
     selectedGroupId,
     chatFilter === "pending_user",
   );
-  const hasChatFilter = chatFilter !== "all" || chatSenderFilter.length > 0;
+  const hasChatFilter = chatFilter !== "all" || chatSenderFilter.length > 0 || taskView !== null;
   const showMessageFilters =
     !readOnly &&
     !chatWindowProps &&
@@ -1332,18 +1346,35 @@ export function ChatTab({
                         role="group"
                         aria-label={t("chatFilters")}
                       >
-                        <ChatFilterTabs
-                          filter={chatFilter}
-                          onChange={setChatFilter}
-                          waiting={waitingIndicator}
-                          pinned={pinnedTabOffered ? { count: pinnedCount } : null}
-                          isSmallScreen={isSmallScreen}
-                        />
-                        <ChatSenderFilter
-                          value={chatSenderFilter}
-                          actors={actors}
-                          onChange={setChatSenderFilter}
-                        />
+                        {taskView ? (
+                          <TaskViewBanner
+                            taskId={taskView.taskId}
+                            title={taskView.title}
+                            count={chatMessages.length}
+                            loading={taskViewLoading}
+                            error={taskViewError}
+                            truncated={taskViewTruncated}
+                            contextIncomplete={taskViewContextIncomplete}
+                            onDetails={() => openContextTask(taskView.taskId)}
+                            onRetry={retryTaskView}
+                            onExit={closeTaskView}
+                          />
+                        ) : (
+                          <>
+                            <ChatFilterTabs
+                              filter={chatFilter}
+                              onChange={setChatFilter}
+                              waiting={waitingIndicator}
+                              pinned={pinnedTabOffered ? { count: pinnedCount } : null}
+                              isSmallScreen={isSmallScreen}
+                            />
+                            <ChatSenderFilter
+                              value={chatSenderFilter}
+                              actors={actors}
+                              onChange={setChatSenderFilter}
+                            />
+                          </>
+                        )}
                       </div>
                       {senderHistoryError ? (
                         <div
@@ -1745,68 +1776,70 @@ export function ChatTab({
             </section>
           ) : null}
 
-          {showSplitSurface && columnSurface ? (
-            <ResizableSidePanel
-              groupId={selectedGroupId}
-              surface={columnSurface}
-              container={splitLayoutRef}
-              isDark={isDark}
-            >
-              {({ compact, toggleCompact }) => (
-                <>
-                  {columnSurface === "resources" ? (
-                    // The docked panel is mounted once and laid over this slot; it never moves
-                    // into the column, because moving an iframe reloads it.
-                    <div
-                      ref={setResourceColumnSlot}
-                      className="flex min-h-0 min-w-0 flex-1"
-                      data-resource-panel-slot
-                    />
-                  ) : null}
-                  {activeSidePanel === "files" ? (
-                    // The tree stays mounted under a panel docked over the column, so coming back
-                    // to it finds the same scroll position and typed path. The wrapper hides the
-                    // loading placeholder too.
-                    <div
-                      className="flex min-h-0 min-w-0 flex-1 flex-col"
-                      hidden={columnSurface === "resources"}
-                    >
-                      <Suspense fallback={<ChatLazyFallback className="flex-1" />}>
-                        <WorkspaceFilesPanel
-                          files={panelWorkspaceFiles}
-                          isDark={isDark}
-                          readOnly={!!readOnly}
-                          // Routed through the selector so closing clears the column instead of
-                          // letting the other surface pop up in its place.
-                          onClose={() => selectSidePanel("files")}
-                          onAttachPath={attachWorkspacePath}
-                          onPinPath={pinWorkspacePath}
-                        />
-                      </Suspense>
-                    </div>
-                  ) : columnSurface === "presentation" ? (
-                    // Presentation: the slot list that phones already use; a slot opens as a tab.
-                    <Suspense fallback={<ChatLazyFallback className="flex-1" />}>
-                      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-                        <PresentationRail
-                          groupId={selectedGroupId}
-                          compact={compact}
-                          onToggleCompact={toggleCompact}
-                          presentation={groupPresentation}
-                          isDark={isDark}
-                          readOnly={readOnly}
-                          attentionSlots={presentationAttention}
-                          onOpenSlot={openPresentationSlot}
-                          onPinSlot={pinPresentationSlot}
-                          onClose={() => selectSidePanel("presentation")}
-                        />
+          <SidePanelPresence open={!!(showSplitSurface && columnSurface)}>
+            {showSplitSurface && columnSurface ? (
+              <ResizableSidePanel
+                groupId={selectedGroupId}
+                surface={columnSurface}
+                container={splitLayoutRef}
+                isDark={isDark}
+              >
+                {({ compact, toggleCompact }) => (
+                  <>
+                    {columnSurface === "resources" ? (
+                      // The docked panel is mounted once and laid over this slot; it never moves
+                      // into the column, because moving an iframe reloads it.
+                      <div
+                        ref={setResourceColumnSlot}
+                        className="flex min-h-0 min-w-0 flex-1"
+                        data-resource-panel-slot
+                      />
+                    ) : null}
+                    {activeSidePanel === "files" ? (
+                      // The tree stays mounted under a panel docked over the column, so coming back
+                      // to it finds the same scroll position and typed path. The wrapper hides the
+                      // loading placeholder too.
+                      <div
+                        className="flex min-h-0 min-w-0 flex-1 flex-col"
+                        hidden={columnSurface === "resources"}
+                      >
+                        <Suspense fallback={<ChatLazyFallback className="flex-1" />}>
+                          <WorkspaceFilesPanel
+                            files={panelWorkspaceFiles}
+                            isDark={isDark}
+                            readOnly={!!readOnly}
+                            // Routed through the selector so closing clears the column instead of
+                            // letting the other surface pop up in its place.
+                            onClose={() => selectSidePanel("files")}
+                            onAttachPath={attachWorkspacePath}
+                            onPinPath={pinWorkspacePath}
+                          />
+                        </Suspense>
                       </div>
-                    </Suspense>
-                  ) : null}
-                </>
-              )}
-            </ResizableSidePanel>
-          ) : null}
+                    ) : columnSurface === "presentation" ? (
+                      // Presentation: the slot list that phones already use; a slot opens as a tab.
+                      <Suspense fallback={<ChatLazyFallback className="flex-1" />}>
+                        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+                          <PresentationRail
+                            groupId={selectedGroupId}
+                            compact={compact}
+                            onToggleCompact={toggleCompact}
+                            presentation={groupPresentation}
+                            isDark={isDark}
+                            readOnly={readOnly}
+                            attentionSlots={presentationAttention}
+                            onOpenSlot={openPresentationSlot}
+                            onPinSlot={pinPresentationSlot}
+                            onClose={() => selectSidePanel("presentation")}
+                          />
+                        </div>
+                      </Suspense>
+                    ) : null}
+                  </>
+                )}
+              </ResizableSidePanel>
+            ) : null}
+          </SidePanelPresence>
 
           {!isSmallScreen &&
           selectedGroupId &&

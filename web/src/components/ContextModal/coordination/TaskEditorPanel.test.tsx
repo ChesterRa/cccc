@@ -376,3 +376,15 @@ it("suggests a result for a finished task without requiring one", () => {
   expect(current?.outcome).toBe("Shipped to all three platforms");
   expect(host.textContent).not.toContain("Add a short result");
 });
+
+it("offers the task's conversation for an existing task only", () => {
+  const onViewConversation = vi.fn();
+  render({ onViewConversation });
+  const open = host.querySelector<HTMLButtonElement>("[data-task-view-conversation]")!;
+  expect(open.textContent).toBe("View conversation");
+  act(() => open.click());
+  expect(onViewConversation).toHaveBeenCalledTimes(1);
+  // A task being created has no conversation yet, so its editor is given no handler.
+  render({ onViewConversation: undefined });
+  expect(host.querySelector("[data-task-view-conversation]")).toBeNull();
+});

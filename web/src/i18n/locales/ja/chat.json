@@ -1155,5 +1155,17 @@
   "slashDescriptions": {
     "install": "Skill、MCP ツールパック、能力、URL、リポジトリ、ローカルパスをインストールまたは有効化します。",
     "selfEvolution": "チームの協働を振り返り、改善案を最大 3 件提案します。採否はあなたが決めます。"
+  },
+  "taskView": {
+    "viewing": "表示中のタスク",
+    "count_one": "{{count}} 件のメッセージ",
+    "count_other": "{{count}} 件のメッセージ",
+    "loading": "読み込み中…",
+    "details": "タスクの詳細",
+    "exit": "終了",
+    "retry": "再試行",
+    "error": "このタスクのメッセージを読み込めませんでした。",
+    "truncated": "最近のメッセージのみ表示しています。",
+    "contextIncomplete": "以前の文脈の一部は読み込まれていません。"
   }
 }

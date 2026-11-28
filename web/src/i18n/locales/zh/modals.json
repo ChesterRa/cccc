@@ -635,7 +635,8 @@
     "taskFromBacklog": "来自 Backlog：",
     "saveTaskFirst": "请先保存或放弃修改。",
     "taskUpdateSource": "更新来源条目…",
-    "taskPutBack": "放回 Backlog"
+    "taskPutBack": "放回 Backlog",
+    "viewTaskConversation": "查看相关对话"
   },
   "codexVoiceExperimental": "实验功能",
   "codexVoiceChecking": "正在检查…",
