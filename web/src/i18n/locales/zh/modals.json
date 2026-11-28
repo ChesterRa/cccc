@@ -1023,6 +1023,34 @@
       "invalid": "消息没有被接受（{{detail}}）。"
     },
     "activity": "工作过程",
-    "runtime": "运行环境"
+    "runtime": "运行环境",
+    "groupMessageUnfold": "展开全文",
+    "groupMessageFold": "收起"
+  },
+  "chetDecisions": {
+    "title": "待你决定",
+    "entryCount_one": "各工作组共 {{count}} 个问题",
+    "entryCount_other": "各工作组共 {{count}} 个问题",
+    "entryHint": "在这里集中处理",
+    "filterAll": "全部",
+    "filterFresh": "需要决定",
+    "filterStale": "可能已过期",
+    "refresh": "刷新",
+    "back": "返回对话",
+    "today": "今天",
+    "daysAgo_one": "{{count}} 天前",
+    "daysAgo_other": "{{count}} 天前",
+    "maybeExpired": "可能已过期",
+    "openInGroup": "在工作组中打开",
+    "showMore": "展开",
+    "showLess": "收起",
+    "staleHint": "提出已超过 {{days}} 天。这里不会替你关闭任何问题：可以回答，也可以先放着。",
+    "someFailed_one": "{{count}} 个工作组读取失败。",
+    "someFailed_other": "{{count}} 个工作组读取失败。",
+    "somePartial_one": "{{count}} 个工作组只显示了最近的一部分问题。",
+    "somePartial_other": "{{count}} 个工作组只显示了最近的一部分问题。",
+    "loading": "加载中…",
+    "empty": "没有等你决定的问题。",
+    "unavailable": "这里无法使用待答问题。"
   }
 }

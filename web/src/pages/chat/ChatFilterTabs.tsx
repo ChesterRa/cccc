@@ -4,6 +4,7 @@ import { PendingIndicatorText } from "../../features/pendingReplies/PendingIndic
 import type { PendingIndicator } from "../../features/pendingReplies/indicator";
 import type { ChatFilter } from "../../stores/useUIStore";
 import { classNames } from "../../utils/classNames";
+import { runChatViewTransition } from "./chatViewTransition";
 
 const FADE_PX = 24;
 // A few pixels past an edge are a tab's own padding, not a tab out of view.
@@ -86,7 +87,10 @@ export function ChatFilterTabs({
               ? "font-semibold text-[var(--color-text-primary)] shadow-[inset_0_-2px_0_var(--color-text-primary)]"
               : "font-medium text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)]",
           )}
-          onClick={() => onChange(key)}
+          // Choosing the filter already shown changes nothing, so nothing is animated.
+          onClick={() =>
+            key === filter ? onChange(key) : runChatViewTransition(() => onChange(key))
+          }
           onFocus={(event) => {
             // Only keyboard focus. A mouse focuses the tab on press, and scrolling the strip
             // then would move the tab from under the pointer before the click completes;

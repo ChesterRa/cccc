@@ -591,3 +591,20 @@
   background: var(--preview-selected-bg);
   color: var(--preview-selected-text);
 }
+
+/* Chet's conclusion is the page's main text: no rule beside it, a step larger than the
+   Group message it answers, which sits quietly above as a folded source. */
+:root[data-ui-style="preview"] [data-chet-answer] {
+  padding-left: 0;
+  border-left: 0;
+}
+
+:root[data-ui-style="preview"] [data-chet-answer] > div {
+  font-size: 0.9375rem;
+  line-height: 1.7;
+}
+
+:root[data-ui-style="preview"] [data-chet-group-message] {
+  border-color: transparent;
+  background: var(--glass-tab-bg);
+}

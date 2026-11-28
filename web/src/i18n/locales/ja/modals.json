@@ -1023,6 +1023,34 @@
       "invalid": "メッセージは受け付けられませんでした（{{detail}}）。"
     },
     "activity": "作業状況",
-    "runtime": "ランタイム"
+    "runtime": "ランタイム",
+    "groupMessageUnfold": "全文を表示",
+    "groupMessageFold": "折りたたむ"
+  },
+  "chetDecisions": {
+    "title": "あなたの判断待ち",
+    "entryCount_one": "全グループで {{count}} 件の質問",
+    "entryCount_other": "全グループで {{count}} 件の質問",
+    "entryHint": "ここでまとめて対応",
+    "filterAll": "すべて",
+    "filterFresh": "要判断",
+    "filterStale": "期限切れの可能性",
+    "refresh": "更新",
+    "back": "会話に戻る",
+    "today": "今日",
+    "daysAgo_one": "{{count}} 日前",
+    "daysAgo_other": "{{count}} 日前",
+    "maybeExpired": "期限切れの可能性",
+    "openInGroup": "グループで開く",
+    "showMore": "もっと見る",
+    "showLess": "閉じる",
+    "staleHint": "{{days}} 日以上前の質問です。ここで自動的に閉じられることはありません。回答するか、そのままにできます。",
+    "someFailed_one": "{{count}} 件のグループを読み込めませんでした。",
+    "someFailed_other": "{{count}} 件のグループを読み込めませんでした。",
+    "somePartial_one": "{{count}} 件のグループは最近の質問のみ表示しています。",
+    "somePartial_other": "{{count}} 件のグループは最近の質問のみ表示しています。",
+    "loading": "読み込み中…",
+    "empty": "判断待ちの質問はありません。",
+    "unavailable": "ここでは判断待ちの質問を利用できません。"
   }
 }

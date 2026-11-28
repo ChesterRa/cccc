@@ -112,7 +112,11 @@
     "openComposer": "会話で返信",
     "addNote": "＋補足を書く（任意）",
     "note": "補足",
-    "notePlaceholder": "この選択への補足（任意）…"
+    "notePlaceholder": "この選択への補足（任意）…",
+    "dismiss": "不要にする",
+    "dismissing": "取り下げ中…",
+    "dismissHint": "この質問を不要として取り下げます。質問者には取り下げとして表示され、元に戻せません。",
+    "dismissFailed": "質問を取り下げられませんでした。もう一度お試しください。"
   },
   "pins": {
     "pin": "ピン留め",

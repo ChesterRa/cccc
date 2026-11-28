@@ -1,3 +1,7 @@
+import { useUiStylePrefs } from "../../utils/uiStyle";
+import { ChetDecisionQueue } from "../chetDecisions/ChetDecisionQueue";
+import { ChetDecisionsEntry } from "../chetDecisions/ChetDecisionsEntry";
+import { useChetDecisionsStore } from "../chetDecisions/chetDecisionsStore";
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { StopIcon } from "../../components/Icons";
@@ -67,6 +71,10 @@ export function ChetConversationPane({
   onOpenGroupMessage?: (groupId: string, eventId: string) => void;
 }) {
   const { t } = useTranslation("modals");
+  // The queue is a preview-style feature: switching to the pixel style leaves it.
+  const { style } = useUiStylePrefs();
+  const decisionsOpen = useChetDecisionsStore((state) => state.open) && style === "preview";
+  const setDecisionsOpen = useChetDecisionsStore((state) => state.setOpen);
   const hasUnknownSend = chet.items.some(
     (item) => item.kind === "request" && item.state === "send_unknown",
   );
@@ -110,6 +118,7 @@ export function ChetConversationPane({
         </div>
       ) : null}
       {sources}
+      {decisionsOpen ? null : <ChetDecisionsEntry />}
       {/* Above the scrolling timeline, so a reader at its end still sees them. */}
       {notices.length ? (
         <div
@@ -122,35 +131,42 @@ export function ChetConversationPane({
           ))}
         </div>
       ) : null}
-      <ChetTimeline
-        items={chet.items}
-        liveTurns={unsavedLiveTurns(chet.items, controller.conversation)}
-        liveCallId={controller.call?.generation ?? null}
-        loaded={chet.loaded}
-        hasOlder={chet.hasOlder}
-        loadingOlder={chet.loadingOlder}
-        onLoadOlder={chet.loadOlder}
-        isDark={isDark}
-        onOpenGroupMessage={onOpenGroupMessage}
-        notices={
-          chet.skipped ? (
-            <p className="text-xs text-[var(--color-text-muted)]">
-              {t("chet.skipped", { count: chet.skipped })}
-            </p>
-          ) : null
-        }
-        actions={{
-          problems: chet.problems,
-          storageAvailable: chet.storageAvailable,
-          sendAgainDisabled: hasUnknownSend,
-          resentIds: chet.resentIds,
-          onSendAgain: chet.sendAgain,
-          onRetry: chet.retry,
-          onPutBack: chet.putBack,
-          onDismiss: chet.dismiss,
-          onReviewRecovery,
-        }}
-      />
+      {decisionsOpen ? (
+        <ChetDecisionQueue
+          onOpenGroupMessage={onOpenGroupMessage}
+          onClose={() => setDecisionsOpen(false)}
+        />
+      ) : (
+        <ChetTimeline
+          items={chet.items}
+          liveTurns={unsavedLiveTurns(chet.items, controller.conversation)}
+          liveCallId={controller.call?.generation ?? null}
+          loaded={chet.loaded}
+          hasOlder={chet.hasOlder}
+          loadingOlder={chet.loadingOlder}
+          onLoadOlder={chet.loadOlder}
+          isDark={isDark}
+          onOpenGroupMessage={onOpenGroupMessage}
+          notices={
+            chet.skipped ? (
+              <p className="text-xs text-[var(--color-text-muted)]">
+                {t("chet.skipped", { count: chet.skipped })}
+              </p>
+            ) : null
+          }
+          actions={{
+            problems: chet.problems,
+            storageAvailable: chet.storageAvailable,
+            sendAgainDisabled: hasUnknownSend,
+            resentIds: chet.resentIds,
+            onSendAgain: chet.sendAgain,
+            onRetry: chet.retry,
+            onPutBack: chet.putBack,
+            onDismiss: chet.dismiss,
+            onReviewRecovery,
+          }}
+        />
+      )}
       {controller.analystWorking ? (
         <div
           className="flex flex-none flex-wrap items-center gap-2 border-t border-[var(--glass-border-subtle)] px-4 py-1.5 text-xs text-[var(--color-text-muted)] lg:hidden"

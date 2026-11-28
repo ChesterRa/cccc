@@ -39,6 +39,8 @@ type PendingReplyStore = {
   fail: (key: string, clientId: string, error: string, uncertain: boolean) => void;
   complete: (key: string, clientId: string) => void;
   close: (key: string, clientId: string, state: "answered" | "withdrawn") => void;
+  /** The user withdrew the question: it is closed, whatever draft it held. */
+  withdraw: (key: string) => void;
   clear: (key: string) => void;
   retainGroups: (groupIds: readonly string[]) => void;
   clearAll: () => void;
@@ -105,6 +107,14 @@ export function createPendingReplyStore(): PendingReplyStoreApi {
             ...state.entries,
             [key]: { ...current, attempt: null, error: null, closed: "answered", confirmed: true },
           },
+        };
+      }),
+    withdraw: (key) =>
+      set((state) => {
+        const current = state.entries[key] ?? EMPTY_REPLY_ENTRY;
+        if (current.attempt || current.closed) return state;
+        return {
+          entries: { ...state.entries, [key]: { ...current, error: null, closed: "withdrawn" } },
         };
       }),
     close: (key, clientId, closed) =>

@@ -16,6 +16,19 @@ import {
 } from "../../utils/composerHeight";
 import { resizeComposerTextarea } from "./useComposerTextareaAutoResize";
 
+/**
+ * The nearest ancestor that has a box of its own. A `display: contents` wrapper around the
+ * composer has no height and no message list beside it, so measuring it would leave the
+ * composer no room to grow.
+ */
+function layoutParent(node: HTMLElement): HTMLElement | null {
+  let parent = node.parentElement;
+  while (parent && window.getComputedStyle(parent).display === "contents") {
+    parent = parent.parentElement;
+  }
+  return parent;
+}
+
 export function useComposerHeightResize({
   footerRef,
   composerRef,
@@ -45,7 +58,7 @@ export function useComposerHeightResize({
   useLayoutEffect(() => {
     if (!enabled) return;
     const footer = footerRef.current;
-    const panel = footer?.parentElement;
+    const panel = footer ? layoutParent(footer) : null;
     const textarea = composerRef.current;
     if (!panel || !footer || !textarea) return;
     const messages = panel.querySelector(":scope > [data-chat-work-surface]");

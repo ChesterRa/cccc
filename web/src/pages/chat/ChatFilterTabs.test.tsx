@@ -190,3 +190,43 @@ it("names Waiting for you briefly on a phone, in full for screen readers", async
     host.remove();
   }
 });
+
+it("changes the filter inside a view transition, and starts none for the filter already shown", async () => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  const host = document.createElement("div");
+  // The message list a filter change animates, as VirtualMessageList marks it.
+  const list = document.createElement("div");
+  list.className = "chat-message-view";
+  list.setAttribute("data-chat-view-settled", "true");
+  list.getClientRects = () => [{}] as unknown as DOMRectList;
+  document.body.append(host, list);
+  const root = createRoot(host);
+  const pressedDuringUpdate: (string | null | undefined)[] = [];
+  const start = vi.fn((update: () => void | Promise<void>) => {
+    void update();
+    // The filter is already applied when the browser takes its picture of the new view.
+    pressedDuringUpdate.push(host.querySelector('[aria-pressed="true"]')?.textContent);
+    return { finished: Promise.resolve() };
+  });
+  Object.assign(document, { startViewTransition: start });
+  const tab = (label: string) =>
+    [...host.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent === label,
+    )!;
+  try {
+    await act(async () => root.render(<Fixture summary={{ state: "fresh", pending: 0 }} />));
+
+    await act(async () => tab("filterAll").click());
+    expect(start).not.toHaveBeenCalled();
+
+    await act(async () => tab("filterUser").click());
+    expect(start).toHaveBeenCalledOnce();
+    expect(pressedDuringUpdate).toEqual(["filterUser"]);
+    expect(tab("filterUser").getAttribute("aria-pressed")).toBe("true");
+  } finally {
+    await act(async () => root.unmount());
+    host.remove();
+    list.remove();
+    Reflect.deleteProperty(document, "startViewTransition");
+  }
+});

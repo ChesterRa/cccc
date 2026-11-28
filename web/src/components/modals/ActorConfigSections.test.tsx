@@ -49,6 +49,30 @@ describe("ActorConfigForm", () => {
     expect(host.textContent).toBe("nameruntimedirectorynotesadvanced");
   });
 
+  it("stacks directory and notes with identity, and keeps advanced across both columns", async () => {
+    await render(
+      <ActorConfigForm
+        identityLabel="Basics"
+        runtimeLabel="Runtime"
+        identity="name"
+        runtime="runtime"
+        directory="directory"
+        notes="notes"
+        advanced="advanced"
+      />,
+    );
+    const grid = host.querySelector("[data-actor-config-grid]")!;
+    const row = (id: string) => host.querySelector(`[data-actor-config-row="${id}"]`)!;
+    // Directory and notes share the two-column grid with identity and runtime, so they sit
+    // under identity instead of leaving that column empty beside a long runtime column.
+    expect(row("directory").parentElement).toBe(grid);
+    expect(row("notes").parentElement).toBe(grid);
+    expect(grid.querySelectorAll("section")).toHaveLength(2);
+    // Advanced is a row of its own under the grid.
+    expect(grid.contains(row("advanced"))).toBe(false);
+    expect(grid.nextElementSibling).toBe(row("advanced"));
+  });
+
   it("leaves no empty row behind for a part the Agent does not have", async () => {
     await render(
       <ActorConfigForm

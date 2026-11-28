@@ -12,10 +12,13 @@ function Probe({
   value = longText,
   enabled = true,
   scale = 1,
+  wrapped = false,
 }: {
   value?: string;
   enabled?: boolean;
   scale?: number;
+  /** Put the composer inside a box-less wrapper, as the work view's composer slot does. */
+  wrapped?: boolean;
 }) {
   const footerRef = useRef<HTMLElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
@@ -26,21 +29,21 @@ function Probe({
     minHeight: enabled ? resize.minHeight : 52,
     maxHeight: enabled ? resize.maxHeight : 128,
   });
+  const footer = (
+    <footer ref={footerRef}>
+      {enabled ? <ComposerResizeHandle {...resize} label="Input height" /> : null}
+      <textarea
+        ref={composerRef}
+        value={value}
+        readOnly
+        style={{ minHeight: "var(--composer-min-height)", maxHeight: "var(--composer-max-height)" }}
+      />
+    </footer>
+  );
   return (
     <section data-panel>
       <div data-chat-work-surface />
-      <footer ref={footerRef}>
-        {enabled ? <ComposerResizeHandle {...resize} label="Input height" /> : null}
-        <textarea
-          ref={composerRef}
-          value={value}
-          readOnly
-          style={{
-            minHeight: "var(--composer-min-height)",
-            maxHeight: "var(--composer-max-height)",
-          }}
-        />
-      </footer>
+      {wrapped ? <div style={{ display: "contents" }}>{footer}</div> : footer}
     </section>
   );
 }
@@ -140,6 +143,17 @@ describe("composer height interaction", () => {
     expect(host.querySelector("textarea")!.style.height).toBe("124px");
     await render({ value: "" });
     expect(host.querySelector("textarea")!.style.height).toBe("64px");
+  });
+  it("can still be dragged taller when the composer sits inside a box-less wrapper", async () => {
+    await render({ wrapped: true });
+    const handle = host.querySelector('[role="separator"]')!;
+    // The room to grow comes from the panel, not from the wrapper, which has no height.
+    expect(Number(handle.getAttribute("aria-valuemax"))).toBeGreaterThan(64);
+    await pointer("pointerdown", 600, handle);
+    await pointer("pointermove", 400);
+    expect(host.querySelector("textarea")!.style.height).toBe("264px");
+    await pointer("pointerup", 400);
+    expect(useUIStore.getState().composerHeight).toBe(264);
   });
   it("supports keyboard bounds, resize clamping, font scale, and double-click reset", async () => {
     await render({ scale: 1.25 });

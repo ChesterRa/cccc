@@ -1,0 +1,92 @@
+/* Preview only: files waiting to be sent float on the composer's top edge, over the
+   conversation, so attaching one never changes the composer's height. The pixel style keeps
+   them inside the composer. On phones they also stay inside, where a floating row would cut
+   off later files and their remove buttons. */
+@media (min-width: 768px) {
+  :root[data-ui-style="preview"] [data-composer-surface] {
+    position: relative;
+  }
+
+  :root[data-ui-style="preview"] [data-composer-file-tray] {
+    position: absolute;
+    left: 0.5rem;
+    bottom: calc(100% - 0.5rem);
+    z-index: 1;
+    max-width: min(100% - 1rem, 34rem);
+    max-height: none;
+    flex-wrap: nowrap;
+    align-items: flex-end;
+    margin: 0;
+    /* Room for the lean, the drift and the remove button, which reach past a file's box. */
+    padding: 0.75rem 0.5rem 0.25rem;
+    overflow: auto hidden;
+    scrollbar-width: none;
+    /* Only the files take the pointer; the gaps stay clickable for what lies underneath. */
+    pointer-events: none;
+  }
+
+  :root[data-ui-style="preview"] [data-composer-file-tray] > li {
+    flex: none;
+    max-width: 14rem;
+    pointer-events: auto;
+    rotate: var(--tray-lean, 0deg);
+    transition:
+      rotate var(--preview-motion-fast) ease-out,
+      translate var(--preview-motion-fast) ease-out;
+    animation:
+      preview-file-arrive 360ms cubic-bezier(0.2, 1.4, 0.4, 1) both,
+      preview-file-drift 4.2s ease-in-out 360ms infinite;
+  }
+
+  /* Each file leans and drifts a little differently, so a row does not move as one block. */
+  :root[data-ui-style="preview"] [data-composer-file-tray] > li:nth-child(3n + 1) {
+    --tray-lean: -1.6deg;
+  }
+
+  :root[data-ui-style="preview"] [data-composer-file-tray] > li:nth-child(3n) {
+    --tray-lean: 1.6deg;
+    animation-delay: 0ms, -1.4s;
+  }
+
+  :root[data-ui-style="preview"] [data-composer-file-tray] > li:nth-child(3n + 2) {
+    animation-delay: 0ms, -2.8s;
+  }
+
+  :root[data-ui-style="preview"] [data-composer-file-tray] > li:hover,
+  :root[data-ui-style="preview"] [data-composer-file-tray] > li:focus-within {
+    z-index: 1;
+    rotate: 0deg;
+    translate: 0 -3px;
+    animation-play-state: paused;
+  }
+
+  /* Over the conversation a file needs an opaque face and a shadow to read as lifted. */
+  :root[data-ui-style="preview"] [data-composer-file-tray] [data-composer-file-preview] {
+    background: var(--color-bg-primary);
+    box-shadow:
+      0 6px 16px -6px rgb(0 0 0 / 0.28),
+      0 1px 2px rgb(0 0 0 / 0.14);
+  }
+
+  /* Motion turned off in the appearance settings, or reduced by the system: files still
+     float, but hold still. */
+  :root[data-ui-style="preview"][data-lcd-motion="off"] [data-composer-file-tray] > li {
+    rotate: none;
+    animation: none;
+    transition: none;
+  }
+}
+
+@keyframes preview-file-arrive {
+  from {
+    opacity: 0;
+    scale: 0.82;
+    translate: 0 14px;
+  }
+}
+
+@keyframes preview-file-drift {
+  50% {
+    translate: 0 -2px;
+  }
+}

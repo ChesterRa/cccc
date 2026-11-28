@@ -58,6 +58,10 @@ import {
 } from "./virtualMessageList/useForcedBottomFollow";
 import { useViewChangeAutoFollow } from "./virtualMessageList/useViewChangeAutoFollow";
 import { VirtualMessageListEmptyState } from "./virtualMessageList/VirtualMessageListEmptyState";
+import {
+  CHAT_MESSAGE_VIEW_CLASS,
+  CHAT_VIEW_SETTLED_ATTRIBUTE,
+} from "../pages/chat/chatViewTransition";
 
 export type { VirtualMessageListProps } from "./virtualMessageList/types";
 
@@ -1415,7 +1419,11 @@ const VirtualMessageListInner = function VirtualMessageListInner({
       : "";
 
   return (
-    <div className="relative flex-1 min-h-0 flex flex-col overflow-hidden">
+    <div
+      className={`${CHAT_MESSAGE_VIEW_CLASS} relative flex-1 min-h-0 flex flex-col overflow-hidden`}
+      // A view change waits for this before it shows the new messages.
+      {...{ [CHAT_VIEW_SETTLED_ATTRIBUTE]: displayMessages.length > 0 || !isLoadingHistory }}
+    >
       <div
         ref={(el) => {
           parentRef.current = el;

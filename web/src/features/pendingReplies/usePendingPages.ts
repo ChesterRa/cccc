@@ -74,7 +74,7 @@ function mergeChronological(
   return !shared && direction === "older" ? [...additions, ...result] : [...result, ...additions];
 }
 
-function checkedPage(page: PendingReplyPage, groupId: string): LedgerEvent[] {
+export function checkedPage(page: PendingReplyPage, groupId: string): LedgerEvent[] {
   if (
     !page ||
     !Array.isArray(page.events) ||

@@ -1,3 +1,4 @@
+import { ChetGroupMessageText } from "./ChetGroupMessageText";
 import { useLayoutEffect, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { ChevronDownIcon, MessageSquareQuoteIcon, VoiceWaveformIcon } from "../../components/Icons";
@@ -204,9 +205,7 @@ function GroupMessageBlock({ item, onOpen }: { item: ChetRequestItem; onOpen?: O
         ) : null}
       </Meta>
       {shown ? (
-        <div className="mt-0.5 whitespace-pre-wrap break-words text-sm leading-6 text-[var(--color-text-primary)]">
-          {shown.text}
-        </div>
+        <ChetGroupMessageText text={shown.text} />
       ) : (
         <p className="mt-0.5 text-xs text-[var(--color-text-muted)]">
           {t("chet.groupMessageUnavailable")}
@@ -673,6 +672,9 @@ export function ChetTimeline({
     <div
       ref={scrollRef}
       className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6"
+      // The containing block of the screen-reader-only labels inside it, so they cannot
+      // stretch Chet's outer body into a second scroll area that hides the composer.
+      style={{ position: "relative" }}
       data-chet-timeline
       onScroll={(event) => {
         const element = event.currentTarget;

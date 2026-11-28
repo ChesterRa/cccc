@@ -1023,6 +1023,34 @@
       "invalid": "The message wasn't accepted ({{detail}})."
     },
     "activity": "Activity",
-    "runtime": "Runtime"
+    "runtime": "Runtime",
+    "groupMessageUnfold": "Show full message",
+    "groupMessageFold": "Fold"
+  },
+  "chetDecisions": {
+    "title": "Waiting for you",
+    "entryCount_one": "{{count}} question across your Groups",
+    "entryCount_other": "{{count}} questions across your Groups",
+    "entryHint": "Answer them here",
+    "filterAll": "All",
+    "filterFresh": "To decide",
+    "filterStale": "Possibly expired",
+    "refresh": "Refresh",
+    "back": "Back to conversation",
+    "today": "today",
+    "daysAgo_one": "{{count}} day ago",
+    "daysAgo_other": "{{count}} days ago",
+    "maybeExpired": "Possibly expired",
+    "openInGroup": "Open in Group",
+    "showMore": "Show more",
+    "showLess": "Show less",
+    "staleHint": "Asked more than {{days}} days ago. Nothing here is closed for you: answer it, or leave it.",
+    "someFailed_one": "{{count}} Group could not be read.",
+    "someFailed_other": "{{count}} Groups could not be read.",
+    "somePartial_one": "{{count}} Group shows only its most recent questions.",
+    "somePartial_other": "{{count}} Groups show only their most recent questions.",
+    "loading": "Loading…",
+    "empty": "Nothing is waiting for you.",
+    "unavailable": "Waiting questions are not available here."
   }
 }

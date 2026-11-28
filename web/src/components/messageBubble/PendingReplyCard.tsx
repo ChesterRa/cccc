@@ -13,6 +13,7 @@ import { Textarea } from "../ui/textarea";
 import { SendIcon } from "../Icons";
 import { LcdSpinner } from "../LcdSpinner";
 import { classNames } from "../../utils/classNames";
+import { DismissReplyButton } from "./DismissReplyButton";
 import { PendingReplyEditingContext } from "./PendingReplyEditingContext";
 import type {
   ReplyAnswer,
@@ -40,6 +41,8 @@ export function PendingReplyCard({
   onSubmit,
   onRetry,
   onUseComposer,
+  onDismiss,
+  dismissing,
 }: {
   question?: ReplyQuestion | null;
   state: ReplyState;
@@ -58,6 +61,9 @@ export function PendingReplyCard({
   onSubmit: (answer: ReplyAnswer) => void;
   onRetry?: () => void;
   onUseComposer?: () => void;
+  /** Withdraws the question as no longer needed; absent where it cannot be withdrawn. */
+  onDismiss?: () => void;
+  dismissing?: boolean;
 }) {
   const { t } = useTranslation("chat");
   const groupName = useId();
@@ -229,6 +235,13 @@ export function PendingReplyCard({
     </Button>
   );
 
+  // An answer being sent or awaiting its outcome is the user's decision already: withdrawing
+  // is offered only before one is given.
+  const dismiss =
+    onDismiss && !readOnly && state === "pending" && !locked ? (
+      <DismissReplyButton disabled={checking} busy={dismissing} onDismiss={onDismiss} />
+    ) : null;
+
   const addNote =
     selectedId !== null && !noteOpen && !locked ? (
       <button
@@ -324,6 +337,7 @@ export function PendingReplyCard({
         <div className="lcd-ask-other">
           {otherChoice}
           <div className="lcd-ask-action flex items-center gap-[1ch]">
+            {dismiss}
             {addNote}
             {action}
           </div>
@@ -385,6 +399,7 @@ export function PendingReplyCard({
             {t(other ? "pendingReply.answer" : "pendingReply.note")}
           </label>
           {editor}
+          {dismiss}
           {action}
         </div>
       )}

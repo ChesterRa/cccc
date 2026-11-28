@@ -464,7 +464,7 @@
     }
   },
   "runtimeSwitch": {
-    "category": "Runtime",
+    "category": "Run type",
     "managed": "CCCC managed",
     "native": "Native session",
     "web": "Web Model",

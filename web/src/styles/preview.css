@@ -3,5 +3,6 @@
 @import "./previewDock.css";
 @import "./previewContext.css";
 @import "./previewMotion.css";
+@import "./previewComposerTray.css";
 /* Last, so the theme refines the layout rules above that it shares a specificity with. */
 @import "./previewTheme.css";

@@ -1,0 +1,30 @@
+/* Switching what the conversation shows: the old messages lift away, then the new ones rise
+   into place. Only the message list takes part; the rest of the page changes at once. */
+::view-transition-old(chat-messages),
+::view-transition-new(chat-messages) {
+  mix-blend-mode: normal;
+}
+::view-transition-old(chat-messages) {
+  animation: chat-view-leave 130ms ease-in both;
+}
+::view-transition-new(chat-messages) {
+  animation: chat-view-arrive 240ms cubic-bezier(0.2, 0.8, 0.2, 1) 90ms both;
+}
+@keyframes chat-view-leave {
+  to {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+}
+@keyframes chat-view-arrive {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-old(chat-messages),
+  ::view-transition-new(chat-messages) {
+    animation: none;
+  }
+}

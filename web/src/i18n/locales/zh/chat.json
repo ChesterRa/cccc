@@ -116,7 +116,11 @@
     "openComposer": "在聊天中回复",
     "addNote": "＋补充说明（可选）",
     "note": "补充说明",
-    "notePlaceholder": "给这个选择补充几句（可选）…"
+    "notePlaceholder": "给这个选择补充几句（可选）…",
+    "dismiss": "废弃",
+    "dismissing": "正在废弃…",
+    "dismissHint": "把这个问题标为已过期并撤回，提问方会看到它已撤回；无法撤销。",
+    "dismissFailed": "未能撤回这个问题，请重试。"
   },
   "pins": {
     "pin": "固定",

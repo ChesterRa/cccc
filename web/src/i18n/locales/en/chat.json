@@ -116,7 +116,11 @@
     "openComposer": "Reply in chat",
     "addNote": "+ Add a note (optional)",
     "note": "Your note",
-    "notePlaceholder": "Add a note to your choice (optional)…"
+    "notePlaceholder": "Add a note to your choice (optional)…",
+    "dismiss": "Mark obsolete",
+    "dismissing": "Withdrawing…",
+    "dismissHint": "Withdraw this question as no longer needed. The asker sees it withdrawn; this cannot be undone.",
+    "dismissFailed": "The question could not be withdrawn. Try again."
   },
   "pins": {
     "pin": "Pin message",

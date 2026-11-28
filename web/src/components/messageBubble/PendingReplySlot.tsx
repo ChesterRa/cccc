@@ -1,4 +1,4 @@
-import { useContext } from "react";
+import { useContext, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
 import { PendingSummaryContext } from "../../features/pendingReplies/context";
@@ -15,11 +15,13 @@ import {
 } from "../../features/pendingReplies/store";
 import type { ReplyAnswer } from "../../features/pendingReplies/types";
 import { answerPendingReply, type PendingReplyAnswer } from "../../services/api/pendingReplies";
+import { cancelReplyRequest } from "../../services/api/context";
 import { useGroupStore } from "../../stores";
 import { useUIStore } from "../../stores/useUIStore";
 import type { ChatMessageData, LedgerEvent } from "../../types";
 import { CHET_PRINCIPAL, isChetAnswer } from "../../utils/chetIdentity";
 import { newClientId } from "../../utils/clientId";
+import { useUiStylePrefs } from "../../utils/uiStyle";
 import { PendingReplyCard } from "./PendingReplyCard";
 
 function ReplyEntry({
@@ -151,6 +153,22 @@ function ReplyEntry({
     store.getState().fail(key, attempt.clientId, error, uncertain);
     if (definite) summary?.refresh();
   };
+  const [dismissing, setDismissing] = useState(false);
+  // Withdrawing from the card is tried in the preview style first; the pixel style keeps
+  // its card as it was.
+  const canDismiss = useUiStylePrefs().style === "preview";
+  const dismiss = async () => {
+    if (dismissing || entry.attempt || entry.closed) return;
+    setDismissing(true);
+    const response = await cancelReplyRequest(groupId, eventId).catch(() => null);
+    setDismissing(false);
+    if (response?.ok) {
+      store.getState().withdraw(key);
+      summary?.refresh();
+      return;
+    }
+    store.getState().setError(key, "dismissFailed");
+  };
   // A choice without a note stays the original answer, which every daemon accepts.
   const submit = (answer: ReplyAnswer) =>
     void send(
@@ -189,6 +207,8 @@ function ReplyEntry({
         if (entry.attempt) void send(entry.attempt.answer);
       }}
       onUseComposer={onUseComposer}
+      onDismiss={canDismiss ? () => void dismiss() : undefined}
+      dismissing={dismissing}
     />
   );
 }

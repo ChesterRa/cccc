@@ -8,15 +8,16 @@ interface ActorConfigFormProps {
   identity: ReactNode;
   /** How the Agent runs. */
   runtime: ReactNode;
-  /** Full-width rows under the two columns; an absent row leaves no divider behind. */
+  /** Rows under identity in the left column; an absent row leaves no divider behind. */
   directory?: ReactNode;
   notes?: ReactNode;
   advanced?: ReactNode;
 }
 
 /**
- * The Agent form as one flat sheet: identity and runtime side by side on wide screens, then
- * full-width rows separated by hairlines. Narrow screens stack the same order.
+ * The Agent form as one flat sheet. On wide screens the left column holds who the Agent is,
+ * where it works and its notes, and the right column how it runs; advanced settings span
+ * both below. Narrow screens stack identity, runtime, directory, notes, advanced.
  */
 export function ActorConfigForm({
   identityLabel,
@@ -32,26 +33,52 @@ export function ActorConfigForm({
     { id: "notes", node: notes },
     { id: "advanced", node: advanced },
   ].filter((row) => row.node != null && row.node !== false && row.node !== "");
+  const row = (id: string) => rows.find((item) => item.id === id);
+  const directoryRow = row("directory");
+  const notesRow = row("notes");
+  const advancedRow = row("advanced");
+  // Wide screens: who the Agent is and where it works stack on the left, how it runs fills
+  // the right, so neither column is left mostly empty. The document order stays identity,
+  // runtime, directory, notes, which is also the order a narrow screen stacks them in.
+  const leftRow = "min-w-0 border-t border-[var(--glass-border-subtle)] py-4 lg:col-start-1";
   return (
-    <div className="flex min-w-0 flex-1 flex-col divide-y divide-[var(--glass-border-subtle)]">
-      <div className="grid grid-cols-1 gap-x-8 gap-y-5 pb-5 lg:grid-cols-2">
-        <section aria-label={identityLabel} className="min-w-0">
+    <div className="flex min-w-0 flex-1 flex-col">
+      <div
+        className="grid min-w-0 flex-1 grid-cols-1 gap-x-8 lg:grid-cols-[minmax(0,5fr)_minmax(0,6fr)] lg:grid-rows-[auto_auto_minmax(0,1fr)]"
+        data-actor-config-grid
+      >
+        <section aria-label={identityLabel} className="min-w-0 pb-5 lg:col-start-1 lg:row-start-1">
           {identity}
         </section>
-        <section aria-label={runtimeLabel} className="min-w-0">
+        <section
+          aria-label={runtimeLabel}
+          className="min-w-0 pb-5 lg:col-start-2 lg:row-span-3 lg:row-start-1"
+        >
           {runtime}
         </section>
+        {directoryRow ? (
+          <div data-actor-config-row="directory" className={`${leftRow} lg:row-start-2`}>
+            {directoryRow.node}
+          </div>
+        ) : null}
+        {notesRow ? (
+          <div
+            data-actor-config-row="notes"
+            // The notes take whatever height the left column has left.
+            className={`${leftRow} flex flex-col lg:row-start-3`}
+          >
+            {notesRow.node}
+          </div>
+        ) : null}
       </div>
-      {rows.map((row) => (
+      {advancedRow ? (
         <div
-          key={row.id}
-          data-actor-config-row={row.id}
-          // The notes take whatever height the form has left; every other row keeps its own.
-          className={`min-w-0 py-4 last:pb-0 ${row.id === "notes" ? "flex flex-1 flex-col" : ""}`}
+          data-actor-config-row="advanced"
+          className="min-w-0 border-t border-[var(--glass-border-subtle)] pt-4"
         >
-          {row.node}
+          {advancedRow.node}
         </div>
-      ))}
+      ) : null}
     </div>
   );
 }
