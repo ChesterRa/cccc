@@ -63,7 +63,7 @@ impl Fixture {
 }
 
 #[test]
-fn removed_actor_loses_open_task_references_and_working_state_before_recreation() {
+fn removed_actor_hands_open_tasks_to_the_foreman_and_loses_working_state_before_recreation() {
     let fixture = Fixture::new();
     fixture.call(
         "context_sync",
@@ -94,14 +94,15 @@ fn removed_actor_loses_open_task_references_and_working_state_before_recreation(
             .find(|task| task["title"] == title)
             .expect("task")
     };
-    assert_eq!(task("owned")["assignee"], Value::Null);
+    // Unfinished work it owned passes to the Foreman instead of being left unowned.
+    assert_eq!(task("owned")["assignee"], "coordinator");
     assert_eq!(task("owned")["handoff_to"], "staying");
     assert_eq!(task("owned")["status"], "active");
     assert_eq!(task("owned")["notes"], "work already started");
     assert_eq!(task("handoff only")["handoff_to"], Value::Null);
     assert_eq!(task("handoff only")["assignee"], "staying");
     assert_eq!(task("handoff only")["status"], "planned");
-    assert_eq!(task("both references")["assignee"], Value::Null);
+    assert_eq!(task("both references")["assignee"], "coordinator");
     assert_eq!(task("both references")["handoff_to"], Value::Null);
     for title in ["owned", "handoff only", "both references"] {
         assert_eq!(task(title)["rev"], 2, "one semantic update for {title}");
@@ -133,6 +134,32 @@ fn removed_actor_loses_open_task_references_and_working_state_before_recreation(
         !matches!(task["status"].as_str(), Some("planned" | "active"))
             || task.get("handoff_to").and_then(Value::as_str) != Some("leaving")
     }));
+}
+
+#[test]
+fn a_removed_foreman_hands_its_open_tasks_to_its_successor() {
+    let fixture = Fixture::new();
+    fixture.call(
+        "context_sync",
+        json!({"by":"user","ops":[
+            {"op":"task.create","title":"lead work","status":"active","assignee":"coordinator"}
+        ]}),
+    );
+
+    fixture.call(
+        "actor_remove",
+        json!({"actor_id":"coordinator","by":"user"}),
+    );
+
+    let after = fixture.context();
+    let task = after
+        .tasks
+        .iter()
+        .find(|task| task["title"] == "lead work")
+        .expect("task");
+    // "leaving" is the next member, so it is the Foreman once "coordinator" is gone.
+    assert_eq!(task["assignee"], "leaving");
+    assert_eq!(task["status"], "active");
 }
 
 #[test]

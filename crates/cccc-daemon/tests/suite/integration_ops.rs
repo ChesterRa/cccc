@@ -1633,7 +1633,7 @@ fn raw_call(home: &HomeLayout, op: &str, args: Value) -> DaemonResponse {
 }
 
 #[test]
-fn actor_removal_returns_its_open_tasks_to_the_board() {
+fn actor_removal_hands_its_open_tasks_to_the_foreman() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
     let created = call(&home, "group_create", json!({"title":"task release"}));
@@ -1688,12 +1688,18 @@ fn actor_removal_returns_its_open_tasks_to_the_board() {
             .expect("task")
     };
     let assignee = |title: &str| task(title).get("assignee").cloned().unwrap_or(Value::Null);
+    // Unfinished work passes to the Foreman ("staying", once "leaving" is gone)
+    // instead of being left on the board with nobody responsible for it.
     assert_eq!(
         assignee("in progress"),
-        Value::Null,
-        "active work is released"
+        "staying",
+        "active work passes to the Foreman"
     );
-    assert_eq!(assignee("queued"), Value::Null, "planned work is released");
+    assert_eq!(
+        assignee("queued"),
+        "staying",
+        "planned work passes to the Foreman"
+    );
     assert_eq!(assignee("finished"), "leaving", "history keeps its author");
     assert_eq!(assignee("someone else's"), "staying");
     assert_eq!(task("in progress")["notes"], "half done; see branch");
